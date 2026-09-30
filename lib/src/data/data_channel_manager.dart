@@ -329,24 +329,42 @@ class DataChannelManager {
     final requested = _stillBound(batch, 'subscribe');
     if (requested.isEmpty) return;
     await _establish();
-    final response = await _port.callBroker(
-      () => _port.broker.newDataChannels(
-        _sessionId,
-        DataChannelsRequest(
-          dataChannels: [
-            for (final item in requested)
-              if (item.channel case final RemoteDataChannel channel)
-                DataChannelObject.remote(
-                  sessionId: channel.remoteSessionId,
-                  dataChannelName: channel.name,
-                  ordered: channel.profile.ordered,
-                  maxRetransmits: channel.profile.maxRetransmits,
-                  canReply: channel.canReply ? true : null,
-                ),
-          ],
+    final DataChannelsResponse response;
+    try {
+      response = await _port.callBrokerNamingRemotes(
+        () => _port.broker.newDataChannels(
+          _sessionId,
+          DataChannelsRequest(
+            dataChannels: [
+              for (final item in requested)
+                if (item.channel case final RemoteDataChannel channel)
+                  DataChannelObject.remote(
+                    sessionId: channel.remoteSessionId,
+                    dataChannelName: channel.name,
+                    ordered: channel.profile.ordered,
+                    maxRetransmits: channel.profile.maxRetransmits,
+                    canReply: channel.canReply ? true : null,
+                  ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } on RemoteSessionGoneException catch (e) {
+      // A publisher's session is gone, not ours: fail just these
+      // subscriptions, as per-channel errors.
+      for (final item in requested) {
+        item.fail(
+          this,
+          SfuDataChannelException(
+            operation: 'datachannels/new',
+            name: item.channel.name,
+            errorCode: e.errorCode,
+            errorDescription: e.errorDescription,
+          ),
+        );
+      }
+      return;
+    }
     await _open(
       requested,
       response,

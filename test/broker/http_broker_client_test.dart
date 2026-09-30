@@ -510,18 +510,20 @@ void main() {
       expect(header(server.last, 'X-Realtime-Session-Token'), isNull);
     });
 
-    test('is dropped when the session is gone', () async {
+    test('is kept when a call reports the session gone', () async {
+      // A pull can report a *publisher's* session gone; the session layer
+      // then confirms its own session, which needs the token.
       server
         ..reply(201, {'sessionId': 's1'}, {'X-Realtime-Session-Token': 'tok'})
         ..reply(410, {'errorCode': 'session_error'})
         ..reply(200, {});
       await client.newSession();
       await expectLater(
-        client.getSessionState('s1'),
+        client.newTracks('s1', const TracksRequest(tracks: [])),
         throwsA(isA<SessionGoneException>()),
       );
       await client.getSessionState('s1');
-      expect(header(server.last, 'X-Realtime-Session-Token'), isNull);
+      expect(header(server.last, 'X-Realtime-Session-Token'), 'tok');
     });
   });
 

@@ -25,6 +25,14 @@ See [docs/design.md](docs/design.md) for the architecture, the broker contract a
 
 To try a real call across devices from your laptop, use the DEV ONLY local broker and WebSocket signaling in [tools/dev-server/](tools/dev-server/README.md). It needs just your Cloudflare SFU credentials in environment variables. Reference brokers for deployment are in [broker/](broker/README.md).
 
+## Testing your app
+
+Widget tests (`testWidgets`, or anything under `fake_async`) run in fake time, and a `Room` does real asynchronous work: it cancels stream subscriptions, closes streams and runs timers. In fake time, an awaited `StreamSubscription.cancel()` can hang the test. So:
+
+- Advance time with a duration, `await tester.pump(const Duration(milliseconds: 100))`, rather than relying on `pumpAndSettle()`.
+- Run calls that really wait, such as `join` and `room.leave()`, inside `await tester.runAsync(() => room.leave())`.
+- `ParticipantVideoView.defaultRendererFactory` swaps in a fake renderer, since `flutter_webrtc`'s plugin doesn't run in `flutter test`.
+
 ## Docs
 
 | | |
