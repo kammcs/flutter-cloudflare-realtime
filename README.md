@@ -2,7 +2,7 @@
 
 An **unofficial** Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/), built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc). It targets Android, iOS, macOS, Windows and Web.
 
-> **Status: pre-release.** The design is written and the implementation has started: so far, the `Signaling` interface with an in-memory implementation, and an example app shell in [`example/`](example/). The package is not on pub.dev yet.
+> **Status: pre-release.** The design is written and the implementation has started: so far, the broker client, the SFU session (`SfuSession`: publish, subscribe, simulcast layer switching), the `Signaling` interface with an in-memory implementation, and an example app in [`example/`](example/). The package is not on pub.dev yet.
 
 This project isn't affiliated with or endorsed by Cloudflare.
 
