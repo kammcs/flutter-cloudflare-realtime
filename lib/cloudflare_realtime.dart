@@ -48,3 +48,16 @@ export 'src/signaling/in_memory_signaling.dart'
 export 'src/signaling/participant_state.dart'
     show ParticipantState, TrackInfo, TrackKind, TrackSource;
 export 'src/signaling/signaling.dart' show Signaling;
+
+// Quality: active speaker and simulcast layer selection (design.md §6, §7).
+// The detectors, the stats poller and the layer controller stay internal:
+// the Room owns them and exposes their results.
+export 'src/quality/active_speaker_config.dart' show ActiveSpeakerConfig;
+export 'src/quality/layer_selection.dart' show LayerSelectionConfig, TileDemand;
+export 'src/quality/layer_selection_controller.dart' show LayerDemandReporter;
+export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
+
+// Reconnection tuning (design.md §8). The decision logic stays internal.
+export 'src/reconnect/backoff.dart' show BackoffConfig;
+export 'src/reconnect/reconnect_trigger.dart'
+    show ReconnectReason, ReconnectTriggerConfig;
