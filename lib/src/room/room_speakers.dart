@@ -60,7 +60,7 @@ class _RoomSpeakers {
     monitor.stop();
     final changes = _localChanges;
     _localChanges = null;
-    await changes?.cancel();
+    unawaited(changes?.cancel());
     await monitor.dispose();
   }
 
@@ -93,7 +93,6 @@ extension _RoomSessionHooks on Room {
   /// changed; layer selection sends `tracks/update` for pulls on whatever
   /// session they are on, and re-applies the chosen layer after each
   /// (re)pull. This only makes the switch immediate.
-  // ignore: unused_element
   void _onSessionReplaced() {
     _speakers.rebind();
   }

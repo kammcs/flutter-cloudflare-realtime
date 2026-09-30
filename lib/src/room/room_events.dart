@@ -187,9 +187,10 @@ final class RoomConnectionStateChangedEvent extends RoomEvent {
   String toString() => 'RoomConnectionStateChangedEvent(${state.name})';
 }
 
-/// The room's SFU session failed. The room is
-/// [RoomConnectionState.disconnected] (until roadmap M5 reconnects
-/// automatically); see [Room.failure].
+/// The room's SFU session failed; see [Room.failure]. With automatic
+/// reconnection ([ReconnectOptions.enabled], the default) a
+/// [RoomReconnectingEvent] follows; otherwise the room is
+/// [RoomConnectionState.disconnected].
 final class RoomSessionFailedEvent extends RoomEvent {
   /// Creates the event.
   const RoomSessionFailedEvent(this.failure);
@@ -199,6 +200,72 @@ final class RoomSessionFailedEvent extends RoomEvent {
 
   @override
   String toString() => 'RoomSessionFailedEvent($failure)';
+}
+
+/// The room started replacing its SFU session: it is
+/// [RoomConnectionState.reconnecting] until a [RoomReconnectedEvent] or a
+/// [RoomReconnectFailedEvent].
+final class RoomReconnectingEvent extends RoomEvent {
+  /// Creates the event.
+  const RoomReconnectingEvent(this.reason);
+
+  /// Why the session is being replaced.
+  final ReconnectReason reason;
+
+  @override
+  String toString() => 'RoomReconnectingEvent(${reason.name})';
+}
+
+/// The room is on a new SFU session: its tracks and DataChannels were moved
+/// onto it under the same names, the new session was announced, and its
+/// subscriptions were pulled again. The room is
+/// [RoomConnectionState.connected].
+final class RoomReconnectedEvent extends RoomEvent {
+  /// Creates the event.
+  const RoomReconnectedEvent({
+    required this.reason,
+    required this.duration,
+    required this.attempts,
+  });
+
+  /// Why the session was replaced.
+  final ReconnectReason reason;
+
+  /// How long it took, from [RoomReconnectingEvent] to now.
+  final Duration duration;
+
+  /// How many new sessions were tried, including the one that worked.
+  final int attempts;
+
+  @override
+  String toString() =>
+      'RoomReconnectedEvent(${reason.name}, ${duration.inMilliseconds} ms, '
+      'attempts: $attempts)';
+}
+
+/// The room gave up replacing its SFU session ([ReconnectOptions.backoff]
+/// ran out). It is [RoomConnectionState.disconnected] and still in
+/// signaling: call [Room.reconnect] to try again, or [Room.leave].
+final class RoomReconnectFailedEvent extends RoomEvent {
+  /// Creates the event.
+  const RoomReconnectFailedEvent({
+    required this.reason,
+    required this.attempts,
+    this.error,
+  });
+
+  /// Why the session was being replaced.
+  final ReconnectReason reason;
+
+  /// How many new sessions were tried.
+  final int attempts;
+
+  /// What made the last attempt fail, if anything did.
+  final Object? error;
+
+  @override
+  String toString() =>
+      'RoomReconnectFailedEvent(${reason.name}, attempts: $attempts, $error)';
 }
 
 /// A background operation failed without breaking the room, for example a

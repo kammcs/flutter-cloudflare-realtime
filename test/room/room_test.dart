@@ -817,8 +817,12 @@ void main() {
   });
 
   group('connection state', () {
-    test('follows the session; a failure disconnects with an event', () async {
-      final room = await h.join('alice');
+    test('follows the session; without automatic reconnection a failure '
+        'disconnects with an event', () async {
+      final room = await h.join(
+        'alice',
+        options: const RoomOptions(reconnect: ReconnectOptions.disabled),
+      );
       final events = _record(room);
       final states = <RoomConnectionState>[];
       room.connectionState.listen(states.add);

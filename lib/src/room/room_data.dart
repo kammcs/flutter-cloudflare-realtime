@@ -20,19 +20,50 @@ class RoomData {
 
   final Room _room;
   final Set<RemoteDataSubscription> _subscriptions = {};
+  // Published channels, moved to the new session when the room reconnects.
+  final Set<LocalDataChannel> _published = {};
 
   /// Publishes the channel [name] from this participant. Everyone who
   /// subscribes to it receives what is sent on it. See
   /// [SfuSession.publishDataChannel].
   ///
-  /// The returned channel belongs to the app: close it when done. Leaving
-  /// the room interrupts it.
+  /// The returned channel belongs to the app: close it when done. When the
+  /// room reconnects, the channel moves to the new session under the same
+  /// name (it is `interrupted` meanwhile; [SfuDataChannel.messages] carries
+  /// on). Leaving the room interrupts it.
   Future<LocalDataChannel> publish(
     String name, {
     DataChannelProfile profile = DataChannelProfile.reliable,
-  }) {
+  }) async {
     _room._checkNotLeft();
-    return _room._session.publishDataChannel(name, profile: profile);
+    if (_room.isReconnecting) {
+      await _room._whenNotReconnecting();
+      _room._checkNotLeft();
+    }
+    final channel = await _room._session.publishDataChannel(
+      name,
+      profile: profile,
+    );
+    _published.add(channel);
+    return channel;
+  }
+
+  /// Moves every published channel that isn't on a session to [next].
+  List<Future<void>> _republishAll(SfuSession next) {
+    _published.removeWhere((c) => c.state == SfuDataChannelState.closed);
+    return [
+      for (final channel in _published.toList())
+        if (channel.session == null) _republish(next, channel),
+    ];
+  }
+
+  Future<void> _republish(SfuSession next, LocalDataChannel channel) async {
+    try {
+      await next.republishDataChannel(channel);
+    } on SfuDataChannelException catch (error) {
+      // The SFU rejected this one channel: report it and carry on.
+      _room._emit(RoomErrorEvent('data.republish ${channel.name}', error));
+    }
   }
 
   /// Subscribes to the channel [name] that [participant] publishes.
@@ -58,6 +89,10 @@ class RoomData {
         'is not in this room',
       );
     }
+    if (_room.isReconnecting) {
+      await _room._whenNotReconnecting();
+      _room._checkNotLeft();
+    }
     final channel = await _room._session.subscribeDataChannel(
       participant.sessionId,
       name,
@@ -81,6 +116,7 @@ class RoomData {
       subscription._dispose();
     }
     _subscriptions.clear();
+    _published.clear();
   }
 }
 
@@ -177,13 +213,19 @@ class RemoteDataSubscription {
     });
   }
 
-  /// Moves the subscription to the publisher's current session.
+  /// Moves the subscription to the publisher's current session, on the
+  /// room's current session: after the publisher reconnected, and after
+  /// the room did (the channel is then off any session).
   Future<void> _follow() async {
     if (_closed || _room._left || !participant.isPresent) return;
     final remoteSessionId = participant.sessionId;
     final current = _channel;
-    if (current.remoteSessionId == remoteSessionId) return;
     final session = _room._session;
+    if (current.remoteSessionId == remoteSessionId &&
+        (current.session != null ||
+            current.state == SfuDataChannelState.closed)) {
+      return; // Up to date (or on its way), or closed by the app.
+    }
     if (!session.isUsable) return;
     try {
       if (current.session == null &&

@@ -80,7 +80,11 @@ export 'src/quality/layer_selection.dart' show LayerSelectionConfig, TileDemand;
 export 'src/quality/layer_selection_controller.dart' show LayerDemandReporter;
 export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
 
-// Reconnection tuning (design.md §8). The decision logic stays internal.
+// Reconnection tuning and event sources (design.md §8). The decision logic
+// stays internal.
+export 'src/reconnect/app_lifecycle_source.dart'
+    show AppLifecycleSource, FlutterAppLifecycleSource;
 export 'src/reconnect/backoff.dart' show BackoffConfig;
+export 'src/reconnect/network_change_source.dart' show NetworkChangeSource;
 export 'src/reconnect/reconnect_trigger.dart'
     show ReconnectReason, ReconnectTriggerConfig;

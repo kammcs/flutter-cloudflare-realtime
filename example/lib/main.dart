@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'call_page.dart';
 import 'dev_config.dart';
 import 'local_media_page.dart';
+import 'network_changes.dart';
 import 'presence_page.dart';
 import 'ws_signaling.dart';
 
@@ -138,6 +139,8 @@ class _JoinPageState extends State<JoinPage> {
             await CloudflareRealtime(
               broker: setup.broker,
               mediaBackend: widget.mediaBackend,
+              // Faster recovery when the network changes (docs/design.md §8).
+              networkChanges: createNetworkChangeSource(),
             ).join(
               roomId,
               signaling: setup.signaling,

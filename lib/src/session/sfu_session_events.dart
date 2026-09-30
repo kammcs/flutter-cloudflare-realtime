@@ -33,7 +33,7 @@ enum SfuConnectionState {
 /// The session is dead after a failure: operations fail fast with an
 /// [SfuSessionFailedException]. To recover, connect a new session and move
 /// the publications and subscriptions to it with `republish` and
-/// `resubscribe` (roadmap M5).
+/// `resubscribe`; a `Room` does this by itself (`docs/design.md` §8).
 sealed class SfuSessionFailure {
   const SfuSessionFailure();
 
@@ -76,6 +76,10 @@ enum PeerConnectionFailureKind {
   /// back failed (or isn't supported on this platform), so no further
   /// negotiation is possible.
   signalingStuck,
+
+  /// `SfuSession.debugSimulateFailure` was called: a test or demo of
+  /// reconnection.
+  simulated,
 }
 
 /// The session's peer connection failed.

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/session/sfu_session.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack;
 
@@ -106,17 +109,33 @@ class RoomHarness {
   /// Makes the next session connections throw [error].
   Object? connectError;
 
+  /// When set, session connections wait for it before connecting.
+  Completer<void>? connectGate;
+
+  /// How many session connections were started (including failed ones).
+  int connectAttempts = 0;
+
+  /// Network changes the rooms see.
+  final FakeNetworkChanges network = FakeNetworkChanges();
+
+  /// The app lifecycle the rooms see.
+  final FakeAppLifecycle lifecycle = FakeAppLifecycle();
+
   late final CloudflareRealtime realtime = CloudflareRealtime(
     broker: BrokerConfig(
       baseUrl: Uri.parse('https://broker.test/realtime'),
       headers: () async => const {},
     ),
     mediaBackend: media,
+    networkChanges: network,
+    appLifecycle: lifecycle,
     createBrokerClient: (config, roomId) {
       brokerRooms.add(roomId);
       return broker;
     },
     connectSession: (broker, options) async {
+      connectAttempts++;
+      await connectGate?.future;
       final error = connectError;
       if (error != null) throw error;
       final session = await connectSfuSession(
@@ -181,4 +200,29 @@ class RoomHarness {
     }
     return null;
   }
+}
+
+/// A [NetworkChangeSource] driven by the test.
+class FakeNetworkChanges implements NetworkChangeSource {
+  final StreamController<void> _changes = StreamController.broadcast(
+    sync: true,
+  );
+
+  /// Reports a network change.
+  void change() => _changes.add(null);
+
+  @override
+  Stream<void> get changes => _changes.stream;
+}
+
+/// An [AppLifecycleSource] driven by the test.
+class FakeAppLifecycle implements AppLifecycleSource {
+  final StreamController<AppLifecycleState> _states =
+      StreamController.broadcast(sync: true);
+
+  /// Reports a lifecycle state.
+  void emit(AppLifecycleState state) => _states.add(state);
+
+  @override
+  Stream<AppLifecycleState> get states => _states.stream;
 }
