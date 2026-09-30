@@ -143,6 +143,9 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   }
 
   @override
+  Future<List<webrtc.StatsReport>> getStats() => _pc.getStats();
+
+  @override
   Future<PeerDataChannel> createDataChannel(
     String label, {
     required int id,

@@ -10,7 +10,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         MediaStreamTrack,
         RTCIceConnectionState,
         RTCPeerConnectionState,
-        RTCSignalingState;
+        RTCSignalingState,
+        StatsReport;
 
 import '../broker/broker_client.dart';
 import '../broker/broker_exception.dart';
@@ -508,6 +509,19 @@ class SfuSession {
   /// The DataChannels on this session, published and subscribed, including
   /// ones still being set up.
   List<SfuDataChannel> get dataChannels => _dataChannels?.channels ?? const [];
+
+  /// The peer connection's WebRTC statistics (`getStats()`): every
+  /// sender's and receiver's reports, such as `inbound-rtp` with
+  /// `audioLevel`, `frameWidth` and `framesPerSecond`, or `outbound-rtp`
+  /// per simulcast layer.
+  ///
+  /// Runs outside the operation queue, so it can be called at any time; it
+  /// may fail briefly during renegotiation. Throws an
+  /// [SfuSessionClosedException] after [close].
+  Future<List<StatsReport>> getStats() {
+    if (_closed) return Future.error(const SfuSessionClosedException());
+    return _pc.getStats();
+  }
 
   /// Closes the peer connection and releases the session.
   ///

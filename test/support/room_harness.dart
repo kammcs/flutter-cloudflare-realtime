@@ -25,6 +25,10 @@ class FakeWrappedStream extends MediaStream {
   /// Whether [dispose] was called.
   bool disposed = false;
 
+  /// The calls that change the stream: `addTrack(id)`, `removeTrack(id)`
+  /// and `dispose`, in order.
+  final List<String> calls = [];
+
   @override
   bool? get active => !disposed;
 
@@ -32,14 +36,16 @@ class FakeWrappedStream extends MediaStream {
   Future<void> getMediaTracks() async {}
 
   @override
-  Future<void> addTrack(MediaStreamTrack track, {bool addToNative = true}) =>
-      throw UnimplementedError();
+  Future<void> addTrack(
+    MediaStreamTrack track, {
+    bool addToNative = true,
+  }) async => calls.add('addTrack(${track.id})');
 
   @override
   Future<void> removeTrack(
     MediaStreamTrack track, {
     bool removeFromNative = true,
-  }) => throw UnimplementedError();
+  }) async => calls.add('removeTrack(${track.id})');
 
   @override
   List<MediaStreamTrack> getTracks() => [track];
@@ -51,7 +57,10 @@ class FakeWrappedStream extends MediaStream {
   List<MediaStreamTrack> getVideoTracks() => [if (track.kind == 'video') track];
 
   @override
-  Future<void> dispose() async => disposed = true;
+  Future<void> dispose() async {
+    calls.add('dispose');
+    disposed = true;
+  }
 }
 
 /// Several [Room]s in one process: they share a [FakeBrokerClient] (a

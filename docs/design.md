@@ -106,6 +106,7 @@ final sub = await session.subscribe(remoteSessionId: id, trackName: name, prefer
 sub.track; sub.trackStream;             // MediaStreamTrack? / Stream<MediaStreamTrack>
 await sub.setPreferredRid('c');         // tracks/update
 
+await session.getStats();               // List<StatsReport>, outside the queue (M4)
 await pub.unpublish(); await sub.unsubscribe();   // tracks/close
 await session.republish(pub); await session.resubscribe(sub, remoteSessionId: newId);  // on a new session
 await session.close();
@@ -146,7 +147,7 @@ await session.close();
   - `SfuPeerConnectionFailed` when the connection state becomes `failed`, the ICE state `failed`, the connection closes unexpectedly, or ICE stays `disconnected` longer than `iceDisconnectedTimeout` (7 s, as in partytracks; null disables it).
 
   Its publications and subscriptions become `interrupted` and detach from it; they survive the session. M5 connects a new session and calls `republish` (same `trackName`, current track and encodings) and `resubscribe` (optionally with the publisher's new `sessionId`); `trackStream` then emits the new remote track. `close()` also leaves them `interrupted`, fails queued operations with `SfuSessionClosedException`, and calls `BrokerClient.forgetSession`. partytracks instead re-creates the session inside `session$` and re-pushes automatically; here that policy belongs to M5.
-- **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface: `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The interface also creates negotiated DataChannels (`PeerDataChannel`, §9); the DataChannel layer reaches the session's queue, broker and peer connection through an internal `SfuSessionPort`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
+- **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface (including `getStats()`, M4): `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The interface also creates negotiated DataChannels (`PeerDataChannel`, §9); the DataChannel layer reaches the session's queue, broker and peer connection through an internal `SfuSessionPort`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
 - **Not done here:** rendering a remote track needs a `MediaStream` for `RTCVideoRenderer`; the Room wraps it (§4.3). Automatic push retries (partytracks retries each push/pull with backoff) are left to M5; the Room retries pulls.
 
 ### 4.3 `Room`
@@ -168,18 +169,23 @@ await session.close();
   - `subscribe()` / `unsubscribe()` (an explicit switch), or
   - a `RemoteTrackLease` from `retain()`; `ParticipantVideoView` holds one while mounted, so several views of a track share one pull.
 
-  Video is pulled with `preferredRid` only when the publisher advertises simulcast layers; the first layer is `RoomOptions.defaultVideoLayer` (default `b`). `setPreferredLayer(SimulcastLayer.high/medium/low)` sends `tracks/update` with `a`/`b`/`c`, or picks by rank among the advertised rids.
+  Video is pulled with `preferredRid` only when the publisher advertises simulcast layers (or the app picked a layer), with the `ridNotAvailable`/`priorityOrdering` of `RoomOptions.layerSelection`. The layer comes from the views' sizes (§6.1); before any view reports, it is `RoomOptions.defaultVideoLayer` (default `b`). `setPreferredLayer(SimulcastLayer.high/medium/low)` overrides it with `a`/`b`/`c`, or picks by rank among the advertised rids.
+  - **Lease grace (M4).** A released lease keeps the pull for `RoomOptions.leaseReleaseGrace` (500 ms), so a view that is unmounted and mounted again (a layout change, a rebuild with a new key) doesn't close and re-pull. `Duration.zero` releases at once.
 - **Following publishers.**
   - A track that disappears from the publisher's state is closed (`tracks/close`) and removed; a participant that leaves has all its pulls closed.
   - **Session change** (they reconnected): every wanted track is pulled from the new session. A pull that is live on the old session is closed first and pulled afresh, because a live `RemoteTrackSubscription` can't be moved (`resubscribe` requires it to be off its session); a failed or interrupted one is moved with `resubscribe(remoteSessionId: new)`. **Deviation:** the task sketch said "resubscribe every active subscription"; the session API only allows that for detached subscriptions.
   - **Retries.** A failed pull is retried with `RoomOptions.pullRetry` (full-jitter backoff; default 250 ms to 4 s, 8 attempts), and again at once whenever the publisher's state for it changes (unmute, new session). Failures are reported as `TrackSubscriptionFailedEvent` with `willRetry`.
-- **Rendering.** A pulled track is wrapped in a `MediaStream` (`createLocalMediaStream('local')` plus `addTrack`) so `RTCVideoRenderer.srcObject` can show it: `RemoteTrackPublication.track` is a replaying `Stream<RenderableTrack?>` (track + stream). The label `local` matters: native `flutter_webrtc` uses it as the stream's `ownerTag`, and renderers look up `local`-tagged streams among the local streams, where this one lives. Disposing the wrapper doesn't stop the remote track. Each replaced or unsubscribed wrapper is disposed.
-- **`ParticipantVideoView`**: `.remote(publication, subscribe: true)` or `.local(mediaSource)`, with `fit` (`VideoViewFit.cover`/`contain`), `mirror` (default: local cameras), a `placeholder` (shown while not pulled, muted or not capturing), and `filterQuality`. Native calls sit behind `VideoRenderer` (`FlutterWebrtcVideoRenderer` by default; `rendererFactory` or the static `defaultRendererFactory` swap in a fake for widget tests), and the renderer is created only once there is video. **Layer-selection hook:** pass a `LayerDemandReporter` as `layerReporter` (with `visible`); the view then wraps itself in `SimulcastLayerReporter` keyed by `RemoteTrackPublication.id` (`participantId/trackName`, stable across the publisher's sessions). M4 makes the Room provide that reporter (§6.1).
+- **Rendering.** A pulled track is wrapped in a `MediaStream` (`createLocalMediaStream('local')` plus `addTrack`) so `RTCVideoRenderer.srcObject` can show it: `RemoteTrackPublication.track` is a replaying `Stream<RenderableTrack?>` (track + stream). The label `local` matters: native `flutter_webrtc` uses it as the stream's `ownerTag`, and renderers look up `local`-tagged streams among the local streams, where this one lives. Each replaced or unsubscribed wrapper is disposed.
+  - **Disposing the wrapper is safe for the remote track** (checked in the `flutter_webrtc` 1.6.2+hotfix.3 sources, M4). `streamDispose` never stops or disposes a track: Android removes the tracks from the Java stream and drops their IDs from `localTracks` and the capturer map (a pulled track is in neither); Darwin drops the stream from `localStreams`; Windows removes the tracks from the stream and erases their IDs from `local_tracks_`. The receiver keeps the track alive, so a later re-pull or re-render works. On the web, `dispose()` does nothing.
+  - **Don't remove the track first.** `mediaStreamRemoveTrack` looks the track up among local tracks only on Android and Darwin, so it fails for a pulled track (Darwin even answers the call twice). Unwrapping therefore only calls `dispose()`; a unit test pins that.
+  - **One Darwin side effect.** `streamDispose` also detaches the first renderer showing each of the stream's video track IDs. A new pull has a new receiver and so a new track ID, but if a pulled track ever reappears under a new Dart object with the same ID, the room keeps the existing wrapper instead of disposing it, so the renderer isn't blanked.
+- **`ParticipantVideoView`**: `.remote(publication, subscribe: true)` or `.local(mediaSource)`, with `fit` (`VideoViewFit.cover`/`contain`), `mirror` (default: local cameras), a `placeholder` (shown while not pulled, muted or not capturing), and `filterQuality`. Native calls sit behind `VideoRenderer` (`FlutterWebrtcVideoRenderer` by default; `rendererFactory` or the static `defaultRendererFactory` swap in a fake for widget tests), and the renderer is created only once there is video. **Layer selection** (M4): a remote video view wraps itself in `SimulcastLayerReporter` keyed by `RemoteTrackPublication.id` (`participantId/trackName`, stable across the publisher's sessions) and reports to `Room.layerReporter` by default (§6.1), with `visible`. `automaticLayers: false` opts out; `layerReporter` reports elsewhere.
 - **Connection state** (`RoomConnectionState`), from the session: `initial` (nothing negotiated yet) and `connected` → `connected`; `connecting` → `connecting`; ICE `disconnected` → `reconnecting`; a failure → `disconnected` plus `RoomSessionFailedEvent` and `Room.failure`. Until M5 re-sessions, the app leaves and rejoins; the room stays in signaling so M5 can recover in place.
 - **`leave()`**: stops listening, leaves signaling (so others stop pulling), unpublishes every local track in one `tracks/close`, closes the session, disposes the sources and device list the Room created, releases remote wrappers, disposes the broker client, ends `disconnected` and completes its streams. Idempotent; failures along the way are ignored.
 - **Events** (`Room.events`, sealed `RoomEvent`): participant joined/left/updated, track published/unpublished/muted/subscribed/subscription-failed, local track published/unpublished, connection-state changed, session failed, and non-fatal `RoomErrorEvent`s.
 - **`data`** (`RoomData`, §9): `publish(name, profile:)` returns the session's `LocalDataChannel`; `subscribe(participant, name, profile:, canReply:)` returns a `RemoteDataSubscription` whose `messages` carry `RoomDataMessage.participantId`. The sender is the participant that announced the channel's session in signaling (the Room remembers every session a participant announced, and a session claimed by two participants maps to none), **never the payload**. The subscription follows the publisher to a new session: a detached channel moves with `resubscribeDataChannel`, a live one is closed and subscribed afresh; `messages` carries on.
-- **Not done yet:** `activeSpeakers` and wiring layer selection (M4), re-sessioning (M5). Remote audio on the web needs an audio element; native platforms play pulled audio by themselves.
+- **Layer selection and active speaker** (M4): §6.1 and §7.
+- **Not done yet:** re-sessioning (M5). Remote audio on the web needs an audio element; native platforms play pulled audio by themselves.
 
 ### 4.4 `Signaling` (app-provided)
 
@@ -316,22 +322,22 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
   - `c` = ¼.
 
   This lets subscribers use the SFU's `asciibetical` ordering, where 'a' is the most desirable.
-- **Subscribe:**
+- **Subscribe** (implemented in M4, §6.1):
   - Pick `preferredRid` from the rendered tile size: the stage gets `a`, a gallery tile `b`, a thumbnail `c`.
   - Change it with `tracks/update`.
-  - Set `ridNotAvailable: "asciibetical"` so a subscriber falls back when a layer stops, for example when the publisher's CPU throttles.
+  - Set `ridNotAvailable: "asciibetical"` so a subscriber falls back when a layer stops, for example when the publisher's CPU throttles. Every Room pull sends it (`LayerSelectionConfig.ridNotAvailable`), and `tracks/update` keeps it.
   - **`priorityOrdering` is left at the SFU default (`none`)**, so a subscriber gets exactly the layer the client chose. That keeps layer switching predictable for the week-6 checkpoint. `LayerSelectionConfig.priorityOrdering` opts in to `asciibetical` (the SFU may step down under bandwidth pressure). Revisit after measuring on constrained links.
 - **Screen share:** open question. It could be a single high-quality layer, or simulcast with a low layer for thumbnails. Measure both.
 - **Codec:** **default to VP8 on Windows.** H.264 crashes have been reported there (flutter-webrtc #982). Use `setCodecPreferences` on the transceiver.
 
 ### 6.1 Layer selection
 
-The building blocks are implemented in `lib/src/quality/`, but not yet wired. The Room (M3/M4) will own a `LayerSelectionController`, send its changes with `tracks/update`, and hand the app a `LayerDemandReporter`.
+The building blocks are in `lib/src/quality/`; the Room wires them (M4, `lib/src/room/remote_track_layers.dart`). The Room owns one `LayerSelectionController` and hands it to the views as `Room.layerReporter`.
 
 - **Publisher ladder** (`SimulcastLadder`, internal): the layers a publisher sends, highest first. `SimulcastLadder.fromPreset(VideoPreset.h720)` is `a`=1280×720, `b`=640×360, `c`=320×180.
   - **Encoder layer limit.** libwebrtc's legacy simulcast limit sends 3 layers from 960×540 up, 2 from 480×270 up, and otherwise 1. It drops the **lowest** layers, so a 360p publisher sends only `a` and `b`. The ladder applies this limit by default, so the policy never asks for a layer the publisher doesn't send.
   - This is an expectation, not a guarantee: capture can come out smaller than requested, and libwebrtc versions differ. `ridNotAvailable: asciibetical` covers the remaining mismatch. **Check it on devices.**
-  - Publishers announce their layers in `TrackInfo.simulcast` (§4.4). The internal `simulcastLadderFor(info)` (`lib/src/room/simulcast_hint.dart`) turns that into a ladder (16:9 and 1/2/4 when not stated, with the encoder limit). Tracks without a size keep the controller's `defaultLadder` (`h720`).
+  - Publishers announce their layers in `TrackInfo.simulcast` (§4.4). The internal `simulcastLadderFor(info)` (`lib/src/room/simulcast_hint.dart`) turns that into a ladder (16:9 and 1/2/4 when not stated, with the encoder limit). A hint without a size is read as a 720p capture with the hint's rids. The Room sets each publication's ladder when it appears and again whenever its hint changes. Video without a hint gets no rid: only the hidden-view release below applies to it.
 - **Demand** (`TileDemand`, public): the tile's size in **physical** pixels (logical size × device-pixel ratio), plus whether it is visible.
 - **Policy** (`SimulcastLayerPolicy`, internal), for a visible `w×h` tile:
   1. **Required lines:** `max(h, w × layerHeight / layerWidth)`. This assumes the video fills the tile ("cover"), which errs towards quality.
@@ -350,7 +356,14 @@ The building blocks are implemented in `lib/src/quality/`, but not yet wired. Th
   - After each frame, it reports the child's laid-out size × `MediaQuery.devicePixelRatioOf`, and only when the demand changed.
   - The view counts as hidden when `visible` is `false` (the app knows about scrolling and tabs) or when `TickerMode` is off (a covered route).
   - It removes its view on dispose, and when its subscription ID or reporter changes.
-  - It talks only to the `LayerDemandReporter` interface, which the Room will implement.
+  - It talks only to the `LayerDemandReporter` interface. `ParticipantVideoView.remote` uses it with `Room.layerReporter` by default.
+- **In the Room** (M4):
+  - **Target layer**, per remote video publication: the manual `setPreferredLayer` if set; else the controller's choice; else, while every view is hidden (paused), the ladder's lowest layer; else, before any view reported, `RoomOptions.defaultVideoLayer`. A new pull starts with it; a live pull is switched with `tracks/update` (failures are reported as `RoomErrorEvent('tracks/update')` and retried on the next change); a pull that is off its session only remembers it. After every (re)pull the target is applied again, so a change made while the pull was in flight is not lost.
+  - **Hidden or paused tiles:** the track drops to its lowest layer as soon as the controller reports paused (after the debounce), and after `RoomOptions.hiddenVideoLinger` (default 5 s; `null` never) the pull is released: leases stop counting (`RemoteTrackLayerState.released`) and the pull is closed. A view that becomes visible again sooner just gets its layer back; one that does so later is pulled again at once, at its layer. This avoids pull/close churn when scrolling. An explicit `subscribe()` (or `AutoSubscribe.video`) keeps a hidden track pulled at its lowest layer.
+  - **Lease grace:** see §4.3 (`RoomOptions.leaseReleaseGrace`, 500 ms).
+  - **Manual override:** `RemoteTrackPublication.setPreferredLayer(layer)` wins until `clearPreferredLayer()` (or `setPreferredLayer(null)`); the automatic choice then applies again.
+  - **Debug UIs:** `RemoteTrackPublication.currentRid` (the rid the live pull asks for), `layerState` and the replaying `layerChanges` (`RemoteTrackLayerState`: current and target rid, automatic rid, manual layer, hidden, released). The received resolution is in `Room.session.getStats()` (`inbound-rtp` `frameWidth`/`frameHeight` for the pull's `mid`), as the example's tile overlay shows.
+  - Reports for tracks the room doesn't show as video (closed, audio, unknown IDs) are ignored.
 
 ## 7. Active speaker
 
@@ -359,7 +372,19 @@ The building blocks are implemented in `lib/src/quality/`, but not yet wired. Th
 - Include the local microphone level, so "you are speaking while muted" hints are possible.
 - Emit an ordered list of participant IDs.
 
-The building blocks are implemented in `lib/src/quality/`, but not yet wired. The Room will own an `ActiveSpeakerMonitor` and expose `activeSpeakers`. Only `ActiveSpeakerConfig` is public.
+The building blocks are in `lib/src/quality/`; the Room wires them (M4, `lib/src/room/room_speakers.dart` and `room_audio_levels.dart`). Only `ActiveSpeakerConfig` (as `RoomOptions.activeSpeaker`) and the Room's outputs are public.
+
+- **API** (M4):
+  - `Room.activeSpeakers` (`Stream<List<String>>`, replaying) and `currentActiveSpeakers`; `Room.dominantSpeaker` (`Stream<String?>`) and `currentDominantSpeaker`.
+  - `RemoteParticipant.isSpeaking`/`speakingChanges`, and `audioLevel`/`audioLevels` (smoothed, `0..1`, for meters).
+  - `LocalParticipant.isSpeaking`/`speakingChanges`, and `isSpeakingWhileMuted`/`speakingWhileMutedChanges` with `canDetectSpeakingWhileMuted` (see below).
+  - `RoomOptions.activeSpeaker` (default `ActiveSpeakerConfig()`); `null` turns detection off (no stats polls, empty outputs).
+- **Room wiring:**
+  - One `ActiveSpeakerMonitor` per room, started when the room joins and disposed on `leave()` (the poll timer stops before anything else).
+  - **It polls for as long as the room is joined, not only while someone listens.** The synchronous getters must be right without a listener, and the detector's smoothing and hold times need a continuous series of samples; a listener-driven start would make the first seconds after subscribing wrong. The cost is one `getStats()` per poll, and **none while there is no audio to measure** (no microphone pulled and no local microphone sending).
+  - **Levels** come from `RoomAudioLevelSource` over `SfuSession.getStats()`: remote `inbound-rtp` reports map to participants by `mid`, then `trackIdentifier`, through the room's microphone publications whose pull is on the current session (screen-share audio doesn't count). The local level is the `media-source` of the microphone's current track; without one (no microphone, or muted), local audio never counts, so screen-share audio can't make the local participant "speak".
+  - **Session replacement (M5):** the source reads `Room._session` on every poll and rebuilds its stats reader when the session object changed, so energy baselines never mix two peer connections. `Room._onSessionReplaced()` (a private extension in `room_speakers.dart`) forces that at once; nothing else is needed.
+  - A participant who leaves is removed from the detector at once.
 
 - **Levels** (`AudioLevelSource`; `StatsAudioLevelSource` reads a peer connection's `getStats()`):
   - **Remote:** audio `inbound-rtp` reports. The Room maps each report's `trackIdentifier`/`mid` to a participant. It returns `null` for streams that shouldn't count, such as screen-share audio. When several streams map to one participant, the loudest wins.
@@ -382,10 +407,10 @@ The building blocks are implemented in `lib/src/quality/`, but not yet wired. Th
   5. **Dominant speaker:** the first speaker is dominant at once. A new loudest speaker takes over after staying loudest for `dominantSwitchTime`. A dominant speaker who falls silent stays dominant until someone else takes over, or leaves. The local participant can't be dominant unless `localCanBeDominant` is set.
   6. **Muted local participant:** left out of `speakers`, because nobody hears them. The same state machine, with `mutedActivationTime`, drives `localSpeakingWhileMuted` instead. Muting or unmuting restarts the local speaking state, so the hint doesn't pop up the moment someone mutes mid-sentence.
 - **Defaults** (`ActiveSpeakerConfig`): poll every 250 ms, τ 300 ms, speaking threshold 0.04 (about −28 dBFS), silence threshold 0.02, activation 200 ms (two loud polls in a row), release 800 ms, reorder margin 0.02, dominant switch 1.5 s, local not dominant, muted-hint activation 500 ms.
-- **Open for M4: the muted microphone's level.**
-  - With `MutePolicy.keepCapture` the mic keeps capturing, but M2 plans `replaceTrack(null)` on the sender (§4.5).
-  - A sender without a track has no `media-source` report, and a disabled track reports silence. So `getStats` alone can't see a muted user talking.
-  - M4 must pick a way: for example, a second, local-only level source for the captured track. Otherwise the hint only works where such a source exists.
+- **The muted microphone's level: not supported yet** (`LocalParticipant.canDetectSpeakingWhileMuted` is `false`, and `isSpeakingWhileMuted` stays `false`).
+  - With `MutePolicy.keepCapture` the mic keeps capturing, but muting is `replaceTrack(null)` on the sender (§4.2), and a sender without a track has no `media-source` report.
+  - **`flutter_webrtc` 1.6.x has no other way to read a local track's level** (checked in 1.6.2+hotfix.3): `getStats(track)` only finds tracks attached to a sender or receiver, and the native audio sinks and processing hooks (`AudioProcessingAdapter`, `FlutterRTCAudioSink`) have no Dart API.
+  - Options for later, each needing device checks: mute a `keepCapture` microphone with `track.enabled = false` and keep it on the sender (native libwebrtc appears to measure the `media-source` level before the send-side mute, but that changes the mute model of §4.5); a second, local-only peer connection that sends the captured track (costly); on the web, a Web Audio `AnalyserNode` on the track.
 
 ## 8. Reconnection
 
@@ -513,7 +538,7 @@ await session.republishDataChannel(input); await session.resubscribeDataChannel(
 
 ## 11. Public API sketch
 
-The room API is implemented (M3, §4.3); `activeSpeakers` (M4) and automatic re-sessioning (M5) are still to come. Not a frozen contract before M8.
+The room API is implemented (M3, §4.3), with layer selection and active speaker (M4, §6.1, §7); automatic re-sessioning (M5) is still to come. Not a frozen contract before M8.
 
 ```dart
 final rt = CloudflareRealtime(
@@ -528,7 +553,13 @@ final room = await rt.join(
   signaling: mySignaling,             // app-provided Signaling
   participantId: currentUserId,
   metadata: {'displayName': 'Ada'},
-  options: const RoomOptions(autoSubscribe: AutoSubscribe(audio: true, video: false)),
+  options: const RoomOptions(
+    autoSubscribe: AutoSubscribe(audio: true, video: false),
+    // Defaults: hide-to-release after 5 s, 500 ms lease grace, 250 ms speaker polls.
+    hiddenVideoLinger: Duration(seconds: 5),
+    leaseReleaseGrace: Duration(milliseconds: 500),
+    activeSpeaker: ActiveSpeakerConfig(),
+  ),
 );
 
 final local = room.localParticipant;
@@ -541,15 +572,21 @@ await cam.unpublish();
 room.participants;                     // Stream<List<RemoteParticipant>> (+ currentParticipants)
 room.events;                           // Stream<RoomEvent>: joined/left/updated, track published/muted/subscribed, ...
 room.connectionState;                  // Stream<RoomConnectionState>: connecting/connected/reconnecting/disconnected
-room.activeSpeakers;                   // M4
+room.activeSpeakers;                   // Stream<List<String>>, loudest first (+ currentActiveSpeakers)
+room.dominantSpeaker;                  // Stream<String?>: who goes on the stage (+ currentDominantSpeaker)
+room.layerReporter;                    // LayerDemandReporter: views report their size here
 
 final remote = room.currentParticipants.first;
 remote.microphone?.muted;              // camera / microphone / screen / screenAudio, trackPublications
 await remote.camera?.subscribe();      // pull on demand; or ParticipantVideoView.remote(remote.camera!)
-await remote.camera?.setPreferredLayer(SimulcastLayer.low);
+await remote.camera?.setPreferredLayer(SimulcastLayer.low);   // overrides the automatic layer
+await remote.camera?.clearPreferredLayer();                    // back to automatic
+remote.camera?.currentRid;             // the rid asked for; layerState / layerChanges for debug UIs
 remote.camera?.track;                  // Stream<RenderableTrack?>: track + MediaStream for RTCVideoRenderer
+remote.isSpeaking; remote.speakingChanges; remote.audioLevel;
+local.isSpeaking; local.speakingChanges;
 
-ParticipantVideoView.remote(remote.camera!, layerReporter: reporter);  // subscribes while mounted
+ParticipantVideoView.remote(remote.camera!, visible: onScreen);  // subscribes while mounted, picks its layer
 ParticipantVideoView.local(cam.mediaSource);                           // mirrored self-view
 
 final input = await room.data.publish('input', profile: DataChannelProfile.unreliable);

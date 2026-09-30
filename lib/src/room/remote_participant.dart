@@ -15,6 +15,9 @@ class RemoteParticipant {
   /// The participant's ID, unique in the room.
   final String participantId;
 
+  /// The room the participant is in.
+  Room get room => _room;
+
   ParticipantState _state;
   final Map<String, RemoteTrackPublication> _publications = {};
   final StreamController<RemoteParticipant> _changes =
@@ -57,6 +60,29 @@ class RemoteParticipant {
   /// Emits this participant whenever its state changes: session, metadata,
   /// tracks added or removed, mute state. Completes when they leave.
   Stream<RemoteParticipant> get changes => _changes.stream;
+
+  /// Whether the participant is speaking now: they are in
+  /// [Room.activeSpeakers].
+  bool get isSpeaking =>
+      _room._speakers.monitor.currentSpeakers.contains(participantId);
+
+  /// [isSpeaking], replaying the current value to each new listener and
+  /// then emitting its changes.
+  Stream<bool> get speakingChanges => _room._speakers.monitor.speakers
+      .map((speakers) => speakers.contains(participantId))
+      .distinct();
+
+  /// The participant's smoothed microphone level, `0..1` (0 while not
+  /// pulled or silent), for a level meter. Updated every
+  /// [ActiveSpeakerConfig.pollInterval].
+  double get audioLevel =>
+      _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
+
+  /// [audioLevel], replaying the current value to each new listener and
+  /// then emitting its changes.
+  Stream<double> get audioLevels => _room._speakers.monitor.snapshots
+      .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
+      .distinct();
 
   RemoteTrackPublication? _first(TrackSource source) {
     for (final publication in _publications.values) {
@@ -213,7 +239,10 @@ class RemoteTrackPublication {
   int _wrapGeneration = 0;
   Timer? _retryTimer;
   Object? _error;
-  SimulcastLayer? _layer;
+  // Simulcast layers and hidden-view release (remote_track_layers.dart).
+  late final _TrackLayers _layers = _TrackLayers(this);
+  // Lease releases waiting out RoomOptions.leaseReleaseGrace.
+  final Set<Timer> _releaseTimers = {};
 
   Room get _room => participant._room;
 
@@ -245,7 +274,11 @@ class RemoteTrackPublication {
   /// Whether the track should be pulled: auto-subscribed, [subscribe]d or
   /// held by a lease. The pull itself may still be in progress or failed;
   /// see [subscriptionState] and [error].
-  bool get isSubscribed => !_closed && (_wanted || _leases > 0);
+  ///
+  /// Leases don't count while the views holding them have stayed hidden
+  /// for [RoomOptions.hiddenVideoLinger] ([RemoteTrackLayerState.released]).
+  bool get isSubscribed =>
+      !_closed && (_wanted || (_leases > 0 && !_layers.released));
 
   /// The state of the pull, or `null` when there is none.
   SfuTrackState? get subscriptionState => _subscription?.state;
@@ -260,8 +293,23 @@ class RemoteTrackPublication {
   /// Whether the publisher unpublished the track, or left.
   bool get isClosed => _closed;
 
-  /// The layer asked for with [setPreferredLayer], if any.
-  SimulcastLayer? get preferredLayer => _layer;
+  /// The layer asked for with [setPreferredLayer], if any. It overrides the
+  /// automatic choice until cleared.
+  SimulcastLayer? get preferredLayer => _layers.manual;
+
+  /// The simulcast RID the live pull asks the SFU for, or `null` while not
+  /// pulled (or pulled without simulcast). See
+  /// [RemoteTrackLayerState.currentRid].
+  String? get currentRid => _layers.state.value.currentRid;
+
+  /// The simulcast layer state: current and target RID, the automatic
+  /// choice, the manual override, and whether the views are hidden. For
+  /// debug overlays.
+  RemoteTrackLayerState get layerState => _layers.state.value;
+
+  /// [layerState], replaying the current value to each new listener and
+  /// emitting its changes. Completes when the track is closed.
+  Stream<RemoteTrackLayerState> get layerChanges => _layers.state.stream;
 
   /// The pulled track, ready to render, or `null` while not subscribed (or
   /// not pulled yet).
@@ -300,10 +348,15 @@ class RemoteTrackPublication {
 
   /// Keeps the track subscribed until the returned lease is released, even
   /// if [unsubscribe] is called meanwhile. For widgets that show the track.
+  ///
+  /// A released lease keeps the track pulled for
+  /// [RoomOptions.leaseReleaseGrace], so a view that is unmounted and
+  /// mounted again right away doesn't close and pull it again.
   RemoteTrackLease retain() {
     final lease = RemoteTrackLease._(this);
     _leases++;
     if (_leases == 1 && !_closed) {
+      _layers.onRetained();
       _notify();
       unawaited(_kick());
     }
@@ -311,6 +364,20 @@ class RemoteTrackPublication {
   }
 
   void _releaseLease() {
+    final grace = _room.options.leaseReleaseGrace;
+    if (_closed || grace <= Duration.zero) {
+      _dropLease();
+      return;
+    }
+    late final Timer timer;
+    timer = Timer(grace, () {
+      _releaseTimers.remove(timer);
+      _dropLease();
+    });
+    _releaseTimers.add(timer);
+  }
+
+  void _dropLease() {
     _leases--;
     if (_leases == 0 && !_closed) {
       _notify();
@@ -322,34 +389,33 @@ class RemoteTrackPublication {
   /// [SimulcastLayer.medium] and [SimulcastLayer.low] (or the publisher's
   /// advertised layers by rank). Sent with `tracks/update` when pulled, and
   /// used for the next pull otherwise.
-  Future<void> setPreferredLayer(SimulcastLayer layer) async {
+  ///
+  /// This overrides the layer the room picks from the views' sizes until it
+  /// is cleared with [clearPreferredLayer] (or a `null` [layer]); the
+  /// automatic choice then applies again.
+  Future<void> setPreferredLayer(SimulcastLayer? layer) async {
     if (_closed) return;
-    _layer = layer;
-    final subscription = _subscription;
-    if (subscription == null || subscription.state == SfuTrackState.closed) {
-      return;
-    }
-    await subscription.setPreferredRid(_ridFor(layer));
+    await _layers.setManual(layer);
   }
+
+  /// Clears [setPreferredLayer]: the room picks the layer from the views'
+  /// sizes again.
+  Future<void> clearPreferredLayer() => setPreferredLayer(null);
 
   String _ridFor(SimulcastLayer layer) =>
       layer.ridIn(_info.simulcast?.rids ?? const []);
 
   /// The `preferredRid` for a new pull: only for simulcast video (or when
   /// the app picked a layer).
-  String? _initialRid() {
-    if (_info.kind != TrackKind.video) return null;
-    final layer = _layer;
-    if (layer != null) return _ridFor(layer);
-    if (_info.simulcast == null) return null;
-    return _ridFor(_room.options.defaultVideoLayer);
-  }
+  String? _initialRid() => _layers.targetRid();
 
   void _notify() {
+    _layers.publish();
     if (!_changes.isClosed) _changes.add(this);
   }
 
   void _start() {
+    _room._layers.add(this);
     if (isSubscribed) unawaited(_runner.run());
   }
 
@@ -364,6 +430,7 @@ class RemoteTrackPublication {
   void _updateInfo(TrackInfo info) {
     final wasMuted = _info.muted;
     _info = info;
+    _layers.updateHint();
     if (!_muted.isClosed) _muted.set(info.muted);
     if (wasMuted != info.muted) {
       _room._emit(TrackMutedEvent(this, muted: info.muted));
@@ -441,10 +508,15 @@ class RemoteTrackPublication {
     if (!isSubscribed || room._left) return;
 
     try {
+      final layerConfig = room.options.layerSelection;
       final subscription = await session.subscribe(
         remoteSessionId: remoteSessionId,
         trackName: trackName,
         preferredRid: _initialRid(),
+        // design.md section 6: fall back to another layer when the
+        // preferred one stops; no bandwidth stepping unless configured.
+        ridNotAvailable: layerConfig.ridNotAvailable,
+        priorityOrdering: layerConfig.priorityOrdering,
       );
       _subscription = subscription;
       await _onPulled(subscription);
@@ -466,12 +538,24 @@ class RemoteTrackPublication {
       if (identical(_track.value?.track, track)) return;
       unawaited(_wrap(subscription, track));
     });
+    // The layer may have changed while the pull was on its way (or a moved
+    // subscription kept the layer of its previous pull).
+    unawaited(_layers.apply());
   }
 
   Future<void> _wrap(
     RemoteTrackSubscription subscription,
     MediaStreamTrack track,
   ) async {
+    final current = _track.value;
+    if (current != null && track.id != null && current.track.id == track.id) {
+      // The same native track under a new Dart object: keep its stream.
+      // Disposing a stream on iOS/macOS detaches the renderer that shows its
+      // video track's ID, which would now blank this track
+      // (docs/design.md section 4.3, Rendering).
+      _wrapGeneration++;
+      return;
+    }
     final generation = ++_wrapGeneration;
     final MediaStream stream;
     try {
@@ -543,6 +627,8 @@ class RemoteTrackPublication {
     if (_closed) return;
     _closed = true;
     _cancelRetry();
+    _cancelLayerTimers();
+    _room._layers.remove(this);
     unawaited(_runner.run().whenComplete(_closeStreams));
   }
 
@@ -552,13 +638,23 @@ class RemoteTrackPublication {
     if (_closed) return;
     _closed = true;
     _cancelRetry();
+    _cancelLayerTimers();
     _subscription = null;
     _detachTrack();
     unawaited(_closeStreams());
   }
 
+  void _cancelLayerTimers() {
+    for (final timer in _releaseTimers) {
+      timer.cancel();
+    }
+    _releaseTimers.clear();
+    _layers.cancelTimers();
+  }
+
   Future<void> _closeStreams() async {
     _detachTrack();
+    await _layers.close();
     await _track.close();
     await _muted.close();
     await _changes.close();

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
@@ -20,6 +21,11 @@ import '../media/media_device_list.dart';
 import '../media/media_errors.dart';
 import '../media/media_types.dart';
 import '../media/screen_share_source.dart';
+import '../quality/active_speaker_config.dart';
+import '../quality/active_speaker_monitor.dart';
+import '../quality/layer_selection.dart';
+import '../quality/layer_selection_controller.dart';
+import '../quality/simulcast_ladder.dart';
 import '../reconnect/app_lifecycle_source.dart';
 import '../reconnect/backoff.dart';
 import '../reconnect/network_change_source.dart';
@@ -34,14 +40,17 @@ import '../signaling/signaling.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'participant_diff.dart';
+import 'room_audio_levels.dart';
 import 'room_options.dart';
 import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
 part 'remote_participant.dart';
+part 'remote_track_layers.dart';
 part 'room_data.dart';
 part 'room_events.dart';
 part 'room_reconnection.dart';
+part 'room_speakers.dart';
 
 /// Connects a new [SfuSession] through a broker: the room's session
 /// factory, used when joining and on every re-session.
@@ -49,9 +58,6 @@ typedef _Connector = Future<SfuSession> Function(
   BrokerClient broker,
   SfuSessionOptions options,
 );
-
-/// A session replacement: [Room.session] moved from `previous` to `next`.
-typedef _SessionReplacement = ({SfuSession previous, SfuSession next});
 
 /// A call: one SFU session tied to one room on the app's [Signaling].
 ///
@@ -72,7 +78,10 @@ typedef _SessionReplacement = ({SfuSession previous, SfuSession next});
 ///   new one, moves its tracks and DataChannels onto it under the same
 ///   names (local capture keeps running), announces the new session ID and
 ///   pulls its subscriptions again. See [RoomOptions.reconnect],
-///   [RoomReconnectingEvent] and [RoomReconnectedEvent].
+///   [RoomReconnectingEvent] and [RoomReconnectedEvent];
+/// - picks each pulled video's simulcast layer from the size of the views
+///   that show it ([layerReporter]), and detects who is speaking
+///   ([activeSpeakers]).
 class Room {
   Room._({
     required this.roomId,
@@ -134,10 +143,12 @@ class Room {
   final List<StreamSubscription<Object?>> _subscriptions = [];
   // Listeners on the current session only; replaced with it.
   final List<StreamSubscription<Object?>> _sessionListeners = [];
-  final StreamController<_SessionReplacement> _sessionReplacedController =
-      StreamController.broadcast(sync: true);
   late final _Reconnection _reconnection = _Reconnection(this);
   late final CoalescingRunner _announcer = CoalescingRunner(_announce);
+  // Layer selection and active speaker (M4): remote_track_layers.dart and
+  // room_speakers.dart.
+  late final _RoomLayers _layers = _RoomLayers(this);
+  late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -222,6 +233,39 @@ class Room {
     _session.debugSimulateFailure();
   }
 
+  /// Where video views report their on-screen size, so the room pulls the
+  /// simulcast layer that fits (`docs/design.md` §6.1).
+  ///
+  /// [ParticipantVideoView.remote] reports here by default. Custom video
+  /// widgets can wrap themselves in a `SimulcastLayerReporter` with this
+  /// reporter and [RemoteTrackPublication.id]. The biggest visible view of
+  /// a track wins; when all of its views are hidden, the track drops to its
+  /// lowest layer and, after [RoomOptions.hiddenVideoLinger], its pull is
+  /// released. [RemoteTrackPublication.setPreferredLayer] overrides the
+  /// automatic choice.
+  LayerDemandReporter get layerReporter => _layers;
+
+  /// The participants speaking now, loudest first, by participant ID
+  /// (`docs/design.md` §7). Includes the local participant while their
+  /// microphone is unmuted and they speak. Replays the current list to each
+  /// new listener and emits on every change. Empty when
+  /// [RoomOptions.activeSpeaker] is `null`. Completes after [leave].
+  Stream<List<String>> get activeSpeakers => _speakers.monitor.speakers;
+
+  /// The current value of [activeSpeakers].
+  List<String> get currentActiveSpeakers => _speakers.monitor.currentSpeakers;
+
+  /// The participant to put on the stage: the loudest speaker, switching
+  /// only after [ActiveSpeakerConfig.dominantSwitchTime], and kept while
+  /// everyone is silent. The local participant only when
+  /// [ActiveSpeakerConfig.localCanBeDominant]. `null` until someone spoke,
+  /// and after the dominant speaker left. Replays the current value.
+  Stream<String?> get dominantSpeaker => _speakers.monitor.dominantSpeaker;
+
+  /// The current value of [dominantSpeaker].
+  String? get currentDominantSpeaker =>
+      _speakers.monitor.currentDominantSpeaker;
+
   /// Leaves the room and releases everything it holds.
   ///
   /// In order: stops listening to signaling and leaves it (so others stop
@@ -276,37 +320,32 @@ class Room {
         source.states.listen(_reconnection.lifecycle, onError: (Object _) {}),
       );
     }
+    _speakers.start();
   }
 
   // ---------------------------------------------------------------------------
   // The session lifecycle
   // ---------------------------------------------------------------------------
 
-  /// Fires synchronously each time [session] changes: `previous` is the
-  /// session the room left (it is closed right after), `next` the one
-  /// [session] returns from now on.
-  ///
-  /// Internal hook for room components bound to the session (stats, layer
-  /// selection, active speaker): re-bind to `next` here. It fires when the
-  /// new session is created, **before** tracks and DataChannels are moved
-  /// onto it; [RoomReconnectedEvent] marks the end of a successful
-  /// re-session. A failed attempt can be followed by another replacement.
-  // Listened to by the room's session-bound components (roadmap M4).
-  // ignore: unused_element
-  Stream<_SessionReplacement> get _sessionReplaced =>
-      _sessionReplacedController.stream;
-
   /// Makes [next] the room's session: stops following the old one, follows
-  /// [next], and fires [_sessionReplaced]. The only place the session
-  /// changes. Returns the previous session, which the caller closes.
+  /// [next], and tells the room's session-bound components to re-bind. The
+  /// only place [session] changes. Returns the previous session, which the
+  /// caller closes.
+  ///
+  /// It runs when a re-session has created the new session, **before**
+  /// tracks and DataChannels are moved onto it; [RoomReconnectedEvent]
+  /// marks the end of a successful re-session. A failed attempt can be
+  /// followed by another replacement.
+  ///
+  /// Components bound to the session re-bind synchronously here: active
+  /// speaker (`_onSessionReplaced`, room_speakers.dart). Add a call here
+  /// for any new one.
   SfuSession _replaceSession(SfuSession next) {
     final previous = _session;
     _stopListeningToSession();
     _session = next;
     _listenToSession(next);
-    if (!_sessionReplacedController.isClosed) {
-      _sessionReplacedController.add((previous: previous, next: next));
-    }
+    _onSessionReplaced();
     return previous;
   }
 
@@ -411,6 +450,7 @@ class Room {
         _emit(TrackUnpublishedEvent(publication));
       }
       remote._close();
+      _speakers.removeParticipant(remote.participantId);
       _emit(ParticipantLeftEvent(remote));
     }
     for (final state in diff.joined) {
@@ -433,6 +473,9 @@ class Room {
 
   Future<void> _leave() async {
     _left = true;
+    // Stop the stats polls and the layer timers before anything else.
+    _speakers.stop();
+    _layers.dispose();
     // A reconnection in progress notices [_left] and stops; a session it
     // was connecting is closed by it.
     _reconnection.dispose();
@@ -441,6 +484,7 @@ class Room {
       unawaited(subscription.cancel());
     }
     _subscriptions.clear();
+    await _speakers.dispose();
 
     // Remote tracks and DataChannel subscriptions: closing the session
     // releases them, so only the local state is torn down here.
@@ -472,7 +516,6 @@ class Room {
     await _participants.close();
     await _state.close();
     await _events.close();
-    await _sessionReplacedController.close();
   }
 
   @override
