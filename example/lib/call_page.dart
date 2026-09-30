@@ -40,8 +40,14 @@ class CallSetup {
   final Future<void> Function()? addSimulatedParticipant;
 }
 
-/// A call: a grid of video tiles for everyone, with mute, screen share and
-/// leave controls.
+/// A call: video tiles for everyone, with mute, screen share and leave
+/// controls.
+///
+/// For the week-6 checkpoint it shows simulcast layer switching: a
+/// gallery/stage toggle (the stage pulls the full layer, thumbnails the
+/// lowest), a per-tile overlay with the RID asked for and the resolution
+/// received, and a menu to override the layer. Speaking participants are
+/// outlined, and the dominant speaker gets a star.
 class CallPage extends StatefulWidget {
   const CallPage({
     super.key,
@@ -68,6 +74,12 @@ class _CallPageState extends State<CallPage> {
   late final StreamSubscription<RoomEvent> _events;
   bool _left = false;
   bool _busy = false;
+
+  /// Stage layout (one big tile and thumbnails) instead of the gallery.
+  bool _stageLayout = false;
+
+  /// The tile the user put on the stage, if any.
+  String? _pinned;
 
   Room get _room => widget.room;
   LocalParticipant get _local => _room.localParticipant;
@@ -200,6 +212,11 @@ class _CallPageState extends State<CallPage> {
               room: _room,
               signalingStatus: widget.setup.signalingStatus,
             ),
+            IconButton(
+              tooltip: _stageLayout ? 'Gallery layout' : 'Stage layout',
+              icon: Icon(_stageLayout ? Icons.grid_view : Icons.view_agenda),
+              onPressed: () => setState(() => _stageLayout = !_stageLayout),
+            ),
             if (widget.setup.addSimulatedParticipant case final add?)
               IconButton(
                 tooltip: 'Add simulated participant',
@@ -220,7 +237,7 @@ class _CallPageState extends State<CallPage> {
               stream: _room.participants,
               initialData: _room.currentParticipants,
               builder: (context, snapshot) =>
-                  _buildGrid(snapshot.data ?? const []),
+                  _buildLayout(snapshot.data ?? const []),
             ),
           ),
         ),
@@ -232,19 +249,25 @@ class _CallPageState extends State<CallPage> {
     );
   }
 
-  Widget _buildGrid(List<RemoteParticipant> remotes) {
+  /// Everyone's tiles, in order: you, your screen, then each remote
+  /// participant's camera and screen.
+  List<_TileData> _tiles(List<RemoteParticipant> remotes) {
     final camera = _local.camera;
     final screen = _local.screen;
-    final tiles = <Widget>[
-      _Tile(
+    return [
+      _TileData(
+        id: 'local',
         label: '${widget.setup.displayName} (you)',
+        participantId: _local.participantId,
         micMuted: _local.microphone?.muted ?? true,
+        speaking: _local.speakingChanges,
         video: camera == null
             ? null
             : ParticipantVideoView.local(camera.mediaSource),
       ),
       if (screen != null)
-        _Tile(
+        _TileData(
+          id: 'local-screen',
           label: 'Your screen',
           video: ParticipantVideoView.local(
             screen.mediaSource,
@@ -252,16 +275,22 @@ class _CallPageState extends State<CallPage> {
           ),
         ),
       for (final remote in remotes) ...[
-        _Tile(
+        _TileData(
+          id: remote.camera?.id ?? remote.participantId,
           label: _nameOf(remote),
+          participantId: remote.participantId,
           micMuted: remote.microphone?.muted ?? true,
+          speaking: remote.speakingChanges,
+          publication: remote.camera,
           video: remote.camera == null
               ? null
               : ParticipantVideoView.remote(remote.camera!),
         ),
         if (remote.screen case final share?)
-          _Tile(
+          _TileData(
+            id: share.id,
             label: "${_nameOf(remote)}'s screen",
+            publication: share,
             video: ParticipantVideoView.remote(
               share,
               fit: VideoViewFit.contain,
@@ -269,13 +298,112 @@ class _CallPageState extends State<CallPage> {
           ),
       ],
     ];
+  }
+
+  Widget _buildLayout(List<RemoteParticipant> remotes) {
+    // Rebuilt when the dominant speaker changes: it gets the highlight, and
+    // the stage in the stage layout.
+    return StreamBuilder<String?>(
+      stream: _room.dominantSpeaker,
+      initialData: _room.currentDominantSpeaker,
+      builder: (context, snapshot) {
+        final dominant = snapshot.data;
+        final tiles = _tiles(remotes);
+        return _stageLayout
+            ? _buildStage(tiles, dominant)
+            : _buildGrid(tiles, dominant);
+      },
+    );
+  }
+
+  Widget _buildGrid(List<_TileData> tiles, String? dominant) {
     return GridView.extent(
       padding: const EdgeInsets.all(8),
       maxCrossAxisExtent: 480,
       childAspectRatio: 16 / 9,
       mainAxisSpacing: 8,
       crossAxisSpacing: 8,
-      children: tiles,
+      children: [
+        for (final tile in tiles)
+          _Tile(
+            key: ValueKey(tile.id),
+            data: tile,
+            session: () => _room.session,
+            dominant:
+                tile.participantId != null && tile.participantId == dominant,
+          ),
+      ],
+    );
+  }
+
+  /// One big tile (the pinned one, else a remote screen share, else the
+  /// dominant speaker, else the first remote) and a strip of thumbnails.
+  /// The stage pulls the full layer (`a`), the thumbnails the lowest (`c`).
+  Widget _buildStage(List<_TileData> tiles, String? dominant) {
+    _TileData? pick(bool Function(_TileData) test) {
+      for (final tile in tiles) {
+        if (test(tile)) return tile;
+      }
+      return null;
+    }
+
+    final stage =
+        pick((t) => t.id == _pinned) ??
+        pick((t) => t.publication?.source == TrackSource.screen) ??
+        pick((t) => t.participantId != null && t.participantId == dominant) ??
+        pick((t) => t.publication != null) ??
+        tiles.first;
+    final others = [
+      for (final tile in tiles)
+        if (tile.id != stage.id) tile,
+    ];
+    return Column(
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: GestureDetector(
+              onDoubleTap: () => setState(() => _pinned = null),
+              child: _Tile(
+                key: ValueKey(stage.id),
+                data: stage,
+                session: () => _room.session,
+                dominant: stage.participantId == dominant,
+                pinned: stage.id == _pinned,
+              ),
+            ),
+          ),
+        ),
+        if (others.isNotEmpty)
+          SizedBox(
+            height: 112,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              children: [
+                for (final tile in others)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _pinned = tile.id),
+                        child: _Tile(
+                          key: ValueKey(tile.id),
+                          data: tile,
+                          session: () => _room.session,
+                          dominant:
+                              tile.participantId != null &&
+                              tile.participantId == dominant,
+                          compact: true,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -361,60 +489,321 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
-/// One participant's (or screen's) video, with a name label.
-class _Tile extends StatelessWidget {
-  const _Tile({required this.label, this.video, this.micMuted = false});
+/// What one tile shows.
+class _TileData {
+  const _TileData({
+    required this.id,
+    required this.label,
+    this.participantId,
+    this.video,
+    this.micMuted = false,
+    this.speaking,
+    this.publication,
+  });
 
+  /// Stable across rebuilds (the publication ID for remote tracks).
+  final String id;
   final String label;
+
+  /// Whose tile this is, for the speaking highlight. `null` for screens.
+  final String? participantId;
   final Widget? video;
   final bool micMuted;
+  final Stream<bool>? speaking;
+
+  /// The remote video shown, for the layer overlay.
+  final RemoteTrackPublication? publication;
+}
+
+/// One participant's (or screen's) video, with a name label, a speaking
+/// highlight, and for remote video the simulcast layer overlay.
+class _Tile extends StatelessWidget {
+  const _Tile({
+    super.key,
+    required this.data,
+    required this.session,
+    this.dominant = false,
+    this.pinned = false,
+    this.compact = false,
+  });
+
+  final _TileData data;
+  final SfuSession Function() session;
+
+  /// The dominant speaker: a thicker highlight and a star.
+  final bool dominant;
+  final bool pinned;
+
+  /// A thumbnail: smaller labels, no layer menu.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          video ??
-              ColoredBox(
-                color: const Color(0xFF202124),
-                child: Center(
-                  child: CircleAvatar(
-                    radius: 28,
-                    child: Text(
-                      label.isEmpty
-                          ? '?'
-                          : label.characters.first.toUpperCase(),
+    return StreamBuilder<bool>(
+      stream: data.speaking,
+      initialData: false,
+      builder: (context, snapshot) {
+        final speaking = snapshot.data ?? false;
+        final Color? borderColor = speaking
+            ? Colors.greenAccent
+            : dominant
+            ? Colors.amber
+            : null;
+        return Container(
+          foregroundDecoration: borderColor == null
+              ? null
+              : BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: borderColor,
+                    width: dominant ? 4 : 2,
+                  ),
+                ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                data.video ?? _Avatar(label: data.label),
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  right: 6,
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    child: _Label(
+                      label: data.label,
+                      micMuted: data.micMuted,
+                      speaking: speaking,
+                      dominant: dominant,
+                      pinned: pinned,
+                      compact: compact,
                     ),
                   ),
                 ),
+                if (data.publication case final publication?
+                    when data.video != null)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: _LayerOverlay(
+                      publication: publication,
+                      session: session,
+                      compact: compact,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xFF202124),
+    child: Center(
+      child: CircleAvatar(
+        radius: 28,
+        child: Text(label.isEmpty ? '?' : label.characters.first.toUpperCase()),
+      ),
+    ),
+  );
+}
+
+class _Label extends StatelessWidget {
+  const _Label({
+    required this.label,
+    required this.micMuted,
+    required this.speaking,
+    required this.dominant,
+    required this.pinned,
+    required this.compact,
+  });
+
+  final String label;
+  final bool micMuted;
+  final bool speaking;
+  final bool dominant;
+  final bool pinned;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 12.0 : 16.0;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 4,
+          children: [
+            if (micMuted)
+              Icon(Icons.mic_off, size: size, color: Colors.white)
+            else if (speaking)
+              Icon(Icons.graphic_eq, size: size, color: Colors.greenAccent),
+            if (dominant) Icon(Icons.star, size: size, color: Colors.amber),
+            if (pinned) Icon(Icons.push_pin, size: size, color: Colors.white),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.white, fontSize: size - 2),
               ),
-          Positioned(
-            left: 8,
-            bottom: 8,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (micMuted) ...[
-                      const Icon(Icons.mic_off, size: 16, color: Colors.white),
-                      const SizedBox(width: 4),
-                    ],
-                    Text(label, style: const TextStyle(color: Colors.white)),
-                  ],
-                ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Debug overlay for a remote video: the simulcast layer asked for, the
+/// resolution actually received (from `getStats()`), and a menu to override
+/// the automatic layer.
+class _LayerOverlay extends StatefulWidget {
+  const _LayerOverlay({
+    required this.publication,
+    required this.session,
+    this.compact = false,
+  });
+
+  final RemoteTrackPublication publication;
+  final SfuSession Function() session;
+  final bool compact;
+
+  @override
+  State<_LayerOverlay> createState() => _LayerOverlayState();
+}
+
+class _LayerOverlayState extends State<_LayerOverlay> {
+  Timer? _timer;
+  String? _resolution;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _readStats());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// The received size and frame rate, from the pull's `inbound-rtp`.
+  Future<void> _readStats() async {
+    final mid = widget.publication.subscription?.mid;
+    String? resolution;
+    if (mid != null) {
+      try {
+        for (final report in await widget.session().getStats()) {
+          final values = report.values;
+          if (report.type != 'inbound-rtp' ||
+              values['kind'] != 'video' ||
+              values['mid'] != mid) {
+            continue;
+          }
+          final width = values['frameWidth'];
+          final height = values['frameHeight'];
+          final fps = values['framesPerSecond'];
+          if (width is num && height is num) {
+            resolution =
+                '${width.round()}×${height.round()}'
+                '${fps is num ? ' ${fps.round()}fps' : ''}';
+          }
+        }
+      } catch (_) {
+        // Stats can fail briefly (renegotiation, a closed session).
+      }
+    }
+    if (mounted && resolution != _resolution) {
+      setState(() => _resolution = resolution);
+    }
+  }
+
+  Future<void> _choose(SimulcastLayer? layer) async {
+    try {
+      await widget.publication.setPreferredLayer(layer);
+    } on Exception catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Layer change failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<RemoteTrackLayerState>(
+      stream: widget.publication.layerChanges,
+      initialData: widget.publication.layerState,
+      builder: (context, snapshot) {
+        final state = snapshot.data!;
+        final manual = state.preferredLayer;
+        final rid = state.currentRid ?? '-';
+        final mode = manual == null ? 'auto' : manual.name;
+        final text = [
+          'rid $rid ($mode)',
+          if (state.hidden) 'hidden',
+          ?_resolution,
+        ].join(' · ');
+        final chip = DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: Text(
+              text,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: widget.compact ? 10 : 12,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
-        ],
-      ),
+        );
+        if (widget.compact || widget.publication.simulcast == null) {
+          return chip;
+        }
+        // A null value would read as "cancelled", so "auto" is a string.
+        return PopupMenuButton<String>(
+          tooltip: 'Simulcast layer',
+          onSelected: (choice) => _choose(
+            choice == 'auto' ? null : SimulcastLayer.values.byName(choice),
+          ),
+          itemBuilder: (context) => [
+            CheckedPopupMenuItem(
+              value: 'auto',
+              checked: manual == null,
+              child: const Text('Auto (from tile size)'),
+            ),
+            for (final layer in SimulcastLayer.values)
+              CheckedPopupMenuItem(
+                value: layer.name,
+                checked: manual == layer,
+                child: Text(
+                  '${layer.name[0].toUpperCase()}${layer.name.substring(1)}'
+                  ' (${layer.ridIn(widget.publication.simulcast!.rids)})',
+                ),
+              ),
+          ],
+          child: chip,
+        );
+      },
     );
   }
 }

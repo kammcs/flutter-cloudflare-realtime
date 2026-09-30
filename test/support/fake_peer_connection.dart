@@ -10,7 +10,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         RTCDataChannelState,
         RTCIceConnectionState,
         RTCPeerConnectionState,
-        RTCSignalingState;
+        RTCSignalingState,
+        StatsReport;
 
 import 'fake_broker_client.dart';
 
@@ -343,6 +344,26 @@ class FakePeerConnection implements PeerConnection {
     }
     dataChannels.add(channel);
     return channel;
+  }
+
+  /// What [getStats] returns: [statsProvider]'s result if set, else
+  /// [stats].
+  List<StatsReport> stats = [];
+
+  /// Computes each [getStats] result, for stats that change between polls.
+  List<StatsReport> Function()? statsProvider;
+
+  /// How many times [getStats] was called. Stats polls are not added to
+  /// [log], so they don't disturb sequencing checks.
+  int statsCalls = 0;
+
+  @override
+  Future<List<StatsReport>> getStats() async {
+    statsCalls++;
+    final error = _failures.remove('getStats');
+    if (error != null) throw error;
+    if (closed) throw StateError('FakePeerConnection is closed');
+    return statsProvider?.call() ?? stats;
   }
 
   @override

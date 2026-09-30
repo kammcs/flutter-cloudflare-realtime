@@ -5,6 +5,8 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack;
 
@@ -18,6 +20,11 @@ import '../media/media_device_list.dart';
 import '../media/media_errors.dart';
 import '../media/media_types.dart';
 import '../media/screen_share_source.dart';
+import '../quality/active_speaker_config.dart';
+import '../quality/active_speaker_monitor.dart';
+import '../quality/layer_selection.dart';
+import '../quality/layer_selection_controller.dart';
+import '../quality/simulcast_ladder.dart';
 import '../reconnect/backoff.dart';
 import '../rendering/renderable_track.dart';
 import '../session/publish_options.dart';
@@ -29,13 +36,16 @@ import '../signaling/signaling.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'participant_diff.dart';
+import 'room_audio_levels.dart';
 import 'room_options.dart';
 import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
 part 'remote_participant.dart';
+part 'remote_track_layers.dart';
 part 'room_data.dart';
 part 'room_events.dart';
+part 'room_speakers.dart';
 
 /// A call: one SFU session tied to one room on the app's [Signaling].
 ///
@@ -50,7 +60,10 @@ part 'room_events.dart';
 ///   [RemoteTrackPublication.subscribe] and [ParticipantVideoView]);
 /// - follows remote participants to their new session when they reconnect,
 ///   and closes pulls of tracks that go away;
-/// - reports [connectionState], driven by the SFU session.
+/// - reports [connectionState], driven by the SFU session;
+/// - picks each pulled video's simulcast layer from the size of the views
+///   that show it ([layerReporter]), and detects who is speaking
+///   ([activeSpeakers]).
 ///
 /// Automatic reconnection is roadmap M5. Until then, a failed session makes
 /// the room [RoomConnectionState.disconnected] with a [failure], and the app
@@ -108,6 +121,10 @@ class Room {
   final StreamController<RoomEvent> _events = StreamController.broadcast();
   final List<StreamSubscription<Object?>> _subscriptions = [];
   late final CoalescingRunner _announcer = CoalescingRunner(_announce);
+  // Layer selection and active speaker (M4): remote_track_layers.dart and
+  // room_speakers.dart.
+  late final _RoomLayers _layers = _RoomLayers(this);
+  late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   ParticipantState? _announced;
   MediaDeviceList? _deviceList;
   bool _left = false;
@@ -149,6 +166,39 @@ class Room {
 
   /// Whether [leave] has been called.
   bool get hasLeft => _left;
+
+  /// Where video views report their on-screen size, so the room pulls the
+  /// simulcast layer that fits (`docs/design.md` §6.1).
+  ///
+  /// [ParticipantVideoView.remote] reports here by default. Custom video
+  /// widgets can wrap themselves in a `SimulcastLayerReporter` with this
+  /// reporter and [RemoteTrackPublication.id]. The biggest visible view of
+  /// a track wins; when all of its views are hidden, the track drops to its
+  /// lowest layer and, after [RoomOptions.hiddenVideoLinger], its pull is
+  /// released. [RemoteTrackPublication.setPreferredLayer] overrides the
+  /// automatic choice.
+  LayerDemandReporter get layerReporter => _layers;
+
+  /// The participants speaking now, loudest first, by participant ID
+  /// (`docs/design.md` §7). Includes the local participant while their
+  /// microphone is unmuted and they speak. Replays the current list to each
+  /// new listener and emits on every change. Empty when
+  /// [RoomOptions.activeSpeaker] is `null`. Completes after [leave].
+  Stream<List<String>> get activeSpeakers => _speakers.monitor.speakers;
+
+  /// The current value of [activeSpeakers].
+  List<String> get currentActiveSpeakers => _speakers.monitor.currentSpeakers;
+
+  /// The participant to put on the stage: the loudest speaker, switching
+  /// only after [ActiveSpeakerConfig.dominantSwitchTime], and kept while
+  /// everyone is silent. The local participant only when
+  /// [ActiveSpeakerConfig.localCanBeDominant]. `null` until someone spoke,
+  /// and after the dominant speaker left. Replays the current value.
+  Stream<String?> get dominantSpeaker => _speakers.monitor.dominantSpeaker;
+
+  /// The current value of [dominantSpeaker].
+  String? get currentDominantSpeaker =>
+      _speakers.monitor.currentDominantSpeaker;
 
   /// Leaves the room and releases everything it holds.
   ///
@@ -197,6 +247,7 @@ class Room {
               _emit(RoomErrorEvent('signaling.participants', error)),
         ),
       );
+    _speakers.start();
   }
 
   void _setState(RoomConnectionState state) {
@@ -268,6 +319,7 @@ class Room {
         _emit(TrackUnpublishedEvent(publication));
       }
       remote._close();
+      _speakers.removeParticipant(remote.participantId);
       _emit(ParticipantLeftEvent(remote));
     }
     for (final state in diff.joined) {
@@ -290,10 +342,14 @@ class Room {
 
   Future<void> _leave() async {
     _left = true;
+    // Stop the stats polls and the layer timers before anything else.
+    _speakers.stop();
+    _layers.dispose();
     for (final subscription in _subscriptions) {
       await subscription.cancel();
     }
     _subscriptions.clear();
+    await _speakers.dispose();
 
     // Remote tracks and DataChannel subscriptions: closing the session
     // releases them, so only the local state is torn down here.

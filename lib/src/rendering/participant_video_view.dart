@@ -31,10 +31,12 @@ import 'video_renderer.dart';
 /// nothing is subscribed. Tests can replace it through [rendererFactory] or
 /// [defaultRendererFactory].
 ///
-/// **Layer selection.** Pass [layerReporter] to report the view's on-screen
-/// size for a remote track, keyed by [RemoteTrackPublication.id]; the view
-/// then wraps itself in a [SimulcastLayerReporter]. The room will supply a
-/// reporter that picks the simulcast layer from it (roadmap M4).
+/// **Layer selection.** A remote video view reports its on-screen size and
+/// [visible] to the room ([Room.layerReporter]), keyed by
+/// [RemoteTrackPublication.id], through a [SimulcastLayerReporter]; the room
+/// pulls the simulcast layer that fits the biggest visible view
+/// (`docs/design.md` §6.1). Pass [automaticLayers] `false` to opt out, or
+/// [layerReporter] to report elsewhere.
 class ParticipantVideoView extends StatefulWidget {
   /// Shows the remote video track of [publication].
   const ParticipantVideoView.remote(
@@ -46,6 +48,7 @@ class ParticipantVideoView extends StatefulWidget {
     this.placeholder,
     this.filterQuality = FilterQuality.low,
     this.layerReporter,
+    this.automaticLayers = true,
     this.visible = true,
     this.rendererFactory,
   }) : localSource = null;
@@ -64,6 +67,7 @@ class ParticipantVideoView extends StatefulWidget {
   }) : publication = null,
        subscribe = false,
        layerReporter = null,
+       automaticLayers = false,
        visible = true;
 
   /// The remote track shown, for [ParticipantVideoView.remote].
@@ -92,12 +96,22 @@ class ParticipantVideoView extends StatefulWidget {
   final FilterQuality filterQuality;
 
   /// Receives the view's on-screen size for layer selection, keyed by the
-  /// remote publication's [RemoteTrackPublication.id]. Ignored for audio
-  /// and local views.
+  /// remote publication's [RemoteTrackPublication.id]. Defaults to the
+  /// room's [Room.layerReporter] while [automaticLayers] is on. Ignored for
+  /// audio and local views.
   final LayerDemandReporter? layerReporter;
 
+  /// Whether the view reports its size to the room, so the room picks the
+  /// simulcast layer for it. Default `true`. With `false` (and no
+  /// [layerReporter]), the view has no say in the layer: the track keeps
+  /// [RoomOptions.defaultVideoLayer], what other views ask for, or
+  /// [RemoteTrackPublication.setPreferredLayer].
+  final bool automaticLayers;
+
   /// Whether the view is on screen as far as the app knows (for example
-  /// scrolled out of a list). Reported with the size to [layerReporter].
+  /// scrolled out of a list, or behind another tab). Reported with the
+  /// size: a track whose views are all hidden drops to its lowest layer,
+  /// and its pull is released after [RoomOptions.hiddenVideoLinger].
   final bool visible;
 
   /// Creates the renderer. Defaults to [defaultRendererFactory].
@@ -275,7 +289,11 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
           )
         : widget.placeholder ?? const _VideoPlaceholder();
     final publication = widget.publication;
-    final reporter = widget.layerReporter;
+    final reporter =
+        widget.layerReporter ??
+        (widget.automaticLayers && publication != null
+            ? publication.participant.room.layerReporter
+            : null);
     if (publication != null &&
         reporter != null &&
         publication.kind == TrackKind.video) {

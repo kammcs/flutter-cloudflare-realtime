@@ -7,7 +7,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         RTCDataChannelState,
         RTCIceConnectionState,
         RTCPeerConnectionState,
-        RTCSignalingState;
+        RTCSignalingState,
+        StatsReport;
 
 import '../broker/models/common.dart';
 import 'publish_options.dart';
@@ -86,6 +87,11 @@ abstract interface class PeerConnection {
     bool ordered = true,
     int? maxRetransmits,
   });
+
+  /// The connection's WebRTC statistics (`RTCPeerConnection.getStats()`),
+  /// for every sender and receiver. Used for active-speaker levels and
+  /// debug overlays.
+  Future<List<StatsReport>> getStats();
 
   /// Closes the connection. Safe to call more than once.
   Future<void> close();

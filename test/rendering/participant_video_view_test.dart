@@ -89,6 +89,13 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
+/// Waits out `RoomOptions.leaseReleaseGrace` (500 ms by default), after
+/// which an unmounted view's lease is released.
+Future<void> _afterGrace(WidgetTester tester) async {
+  await tester.pump(const Duration(milliseconds: 600));
+  await _settle(tester);
+}
+
 Widget _frame(Widget child) => Directionality(
   textDirection: TextDirection.ltr,
   child: Center(child: SizedBox(width: 320, height: 180, child: child)),
@@ -166,7 +173,10 @@ void main() {
     late Room bob;
     late InMemorySignaling ann;
 
-    Future<RemoteTrackPublication> setUpRoom(WidgetTester tester) async {
+    Future<RemoteTrackPublication> setUpRoom(
+      WidgetTester tester, {
+      TrackInfo info = _cam,
+    }) async {
       h = RoomHarness();
       bob = await _drive(tester, h.join('bob'));
       ann = InMemorySignaling(h.hub);
@@ -178,7 +188,7 @@ void main() {
           ParticipantState(
             participantId: 'ann',
             sessionId: 'ann-1',
-            tracks: const {'c': _cam},
+            tracks: {'c': info},
           ),
         ),
       );
@@ -237,10 +247,57 @@ void main() {
 
       await tester.pumpWidget(const SizedBox());
       await _settle(tester);
+      expect(cam.isSubscribed, isTrue, reason: 'the lease release waits');
+      await _afterGrace(tester);
       expect(cam.isSubscribed, isFalse);
       expect(h.closesOf(bob), hasLength(1));
       expect(log.last, 'dispose');
       expect(reporter.removed, ['ann/c']);
+      await tearDownRoom(tester);
+    });
+
+    testWidgets('reports its size to the room by default, which picks the '
+        'layer; automaticLayers: false opts out', (tester) async {
+      final cam = await setUpRoom(
+        tester,
+        info: _cam.copyWith(
+          simulcast: SimulcastInfo(
+            rids: const ['a', 'b', 'c'],
+            width: 1280,
+            height: 720,
+          ),
+        ),
+      );
+      Widget view({required bool automatic}) => Directionality(
+        textDirection: TextDirection.ltr,
+        child: Center(
+          // 640x360 logical is 1920x1080 physical at the test's
+          // device-pixel ratio of 3: the full layer.
+          child: SizedBox(
+            width: 640,
+            height: 360,
+            child: ParticipantVideoView.remote(
+              cam,
+              automaticLayers: automatic,
+              rendererFactory: factory,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(view(automatic: false));
+      await _settle(tester);
+      expect(h.pullsOf(bob), ['ann-1/c@b'], reason: 'the default layer');
+      expect(cam.layerState.automaticRid, isNull);
+
+      await tester.pumpWidget(view(automatic: true));
+      await _settle(tester);
+      expect(cam.layerState.automaticRid, 'a');
+      expect(cam.currentRid, 'a');
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
+      expect(cam.isSubscribed, isFalse);
       await tearDownRoom(tester);
     });
 
@@ -270,12 +327,12 @@ void main() {
       expect(h.pullsOf(bob), hasLength(1));
 
       await tester.pumpWidget(both(second: false));
-      await _settle(tester);
+      await _afterGrace(tester);
       expect(cam.isSubscribed, isTrue);
       expect(h.closesOf(bob), isEmpty);
 
       await tester.pumpWidget(const SizedBox());
-      await _settle(tester);
+      await _afterGrace(tester);
       expect(cam.isSubscribed, isFalse);
       await tearDownRoom(tester);
     });
@@ -312,7 +369,7 @@ void main() {
       await _drive(tester, cam.unsubscribe());
       expect(cam.isSubscribed, isTrue, reason: 'the view holds it now');
       await tester.pumpWidget(const SizedBox());
-      await _settle(tester);
+      await _afterGrace(tester);
       expect(cam.isSubscribed, isFalse);
       await tearDownRoom(tester);
     });
