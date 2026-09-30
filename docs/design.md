@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. The `Signaling` interface and its in-memory implementation exist (§4.4); the rest is design.
+- **Status:** pre-release. Implemented so far: the broker client (§4.1), and the `Signaling` interface with its in-memory implementation (§4.4). The rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -66,11 +66,19 @@ To keep that swap cheap, **use LiveKit-like concepts where they fit**: `Room`, `
 
 ### 4.1 `BrokerClient`
 
-A typed client for the broker contract (§5). It takes:
-- the broker's base URL,
-- an async `headers` provider. The app uses it to attach its own auth, such as `Authorization: Bearer <user JWT>`.
+A typed client for the broker contract (§5), in `lib/src/broker/`. Implemented (M1).
 
-It also fetches ICE servers (TURN) from the broker's `generate-ice-servers` endpoint.
+- **`BrokerConfig`** takes:
+  - the broker's base URL,
+  - an async `headers` provider. The app uses it to attach its own auth, such as `Authorization: Bearer <user JWT>`. It is called before every request, so it can refresh a token;
+  - optionally an injected `http.Client` and a per-request timeout (default 15 s).
+- **`BrokerClient`** is an abstract interface, one method per endpoint in §5, so session code can be tested against a fake. **`HttpBrokerClient`** implements it with `package:http`. One instance serves one room.
+- **Typed models** mirror the SFU's OpenAPI schema: `TracksRequest`/`TracksResponse`, `TrackObject.local`/`.remote` (with `SimulcastConfig`), `CloseTracksRequest`, `DataChannelObject`, `SessionState`, and so on.
+- **Errors.** A failed call throws a `BrokerException` carrying the status, `errorCode` and `errorDescription`. Subclasses: `BrokerUnauthorizedException` (401), `BrokerForbiddenException` (403), `SessionGoneException` (410, or `errorCode: session_error` at any status; M5 re-sessions on it), `BrokerNetworkException`, `BrokerTimeoutException` and `BrokerProtocolException` (an unparseable 2xx).
+  - A 2xx response with a request-level `errorCode` is **returned**, not thrown, so per-track results aren't lost; check `hasError` on the response and on each track or DataChannel result.
+  - The client never logs. Exception messages never contain SDP, header values or tokens.
+- **ICE servers.** `getIceServers()` returns maps ready for `flutter_webrtc`'s `iceServers`, **one map per URL** with a string `urls`: `flutter_webrtc`'s Windows implementation keeps only the last entry of a `urls` array.
+- The client doesn't serialize calls. The session layer's op queue does (§4.2).
 
 ### 4.2 `SfuSession`
 
@@ -150,15 +158,32 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
 | `PUT {base}/sessions/{id}/datachannels/close` | 〃 |
 | `POST {base}/generate-ice-servers` | TURN credentials: `POST /turn/keys/{turnKeyId}/credentials/generate-ice-servers`. Without TURN, it returns Cloudflare STUN only. |
 
+**Wire details.** Both the Dart client and the reference brokers follow these exactly.
+
+- **Headers on every request:**
+  - the app's own auth headers, from the `headers` provider;
+  - `X-Realtime-Room: <roomId>`, the room the caller is acting in.
+- **Session token (optional).**
+  - On `POST sessions/new`, the broker MAY return a response header `X-Realtime-Session-Token`.
+  - If it does, the client sends it back as the request header `X-Realtime-Session-Token` on every later call for that session. The client keeps one token per session ID, because reconnection creates new sessions.
+  - A broker may instead bind sessions server-side and never send a token. The client works either way.
+  - The client never lets the app's headers set `X-Realtime-Room` or `X-Realtime-Session-Token`.
+- **`sessions/new` body:** none, unless the client has an initial offer. `correlationId` travels as a query parameter, which the broker passes through.
+- **Broker errors:**
+  - `401`: the caller isn't authenticated. The body is unspecified.
+  - `403` with `{"errorCode": "forbidden", "errorDescription": "..."}`: the caller isn't in the room, doesn't own the session, or pulls from a session in another room.
+  - Otherwise the SFU's status and body pass through unchanged, including `410` with `errorCode: session_error` for an expired session.
+- **`generate-ice-servers` response:** `{"iceServers": [{"urls": ["..."], "username"?: "...", "credential"?: "..."}]}`. Without TURN configured, the broker returns Cloudflare STUN only: `{"iceServers": [{"urls": ["stun:stun.cloudflare.com:3478"]}]}`.
+
 **The broker must enforce these security requirements.** Document them in the README, and follow them in any reference broker:
 
 1. **Authenticate the caller** with the app's own credential.
    - partytracks uses cookies, but native Flutter clients don't keep cookies. So the package sends whatever headers the app's `headers` provider returns.
    - The broker then replaces `Authorization` with the App Secret before forwarding.
-2. **Authorize the room.** The client names the room it's joining (for example, in an `X-Realtime-Room` header). The broker checks that the caller is a member of it.
+2. **Authorize the room.** The client names the room it's joining in the `X-Realtime-Room` header. The broker checks that the caller is a member of it.
 3. **Bind sessions to their creator.** After `sessions/new`, only the same caller may mutate that session.
-   - partytracks does this with a JWT cookie. Here, the broker either keeps a server-side map, or returns a signed session token that the client echoes on later calls.
-   - The package must support echoing such a token.
+   - partytracks does this with a JWT cookie. Here, the broker either keeps a server-side map, or returns a signed session token in `X-Realtime-Session-Token` that the client echoes on later calls.
+   - The package supports echoing such a token (see the wire details above).
 4. **Restrict pulls to the same room.** A `tracks/new` pull names another participant's `sessionId`. The broker must check that the session belongs to the same room. **Otherwise anyone with a valid login could subscribe to any room's media by guessing or learning a session ID.**
 5. Strip client-supplied headers that shouldn't reach Cloudflare. Never log the App Secret, SDP bodies or tokens.
 

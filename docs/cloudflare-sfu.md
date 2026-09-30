@@ -35,38 +35,60 @@
 
 ### Shapes
 
-These are taken from partytracks' `callsTypes.ts`. Verify them against the OpenAPI schema.
+Checked against the OpenAPI schema (`realtime-api-2024-05-21.yaml`, source 4b) on 2026-09-30. partytracks' `callsTypes.ts` covers a subset: its `simulcast` has only `preferredRid`, and it has no DataChannel or session-state types. The Dart models in `lib/src/broker/models/` follow the schema.
 
 ```ts
 SessionDescription   { type: "offer" | "answer"; sdp: string }
 ErrorResponse        { errorCode?: string; errorDescription?: string }
 
+// POST sessions/new?correlationId=&thirdparty=   → 201
 NewSessionRequest    { sessionDescription?: SessionDescription }        // body optional
 NewSessionResponse   { sessionId: string; sessionDescription?: ... } & ErrorResponse
 
-TrackMetadata        { location?: "local" | "remote"; trackName?: string;
+TrackObject          { location?: "local" | "remote"; trackName?: string;
                        sessionId?: string;          // publisher's session, for pulls
-                       mid?: string | null;
+                       mid?: string;                // or "#<trackName>" for an existing transceiver
+                       kind?: string;               // hint; required when the SFU makes the offer
+                       bidirectionalMediaStream?: boolean;
                        simulcast?: { preferredRid: string;
                                      priorityOrdering?: "none" | "asciibetical";
                                      ridNotAvailable?: "none" | "asciibetical" } }
-TracksRequest        { tracks: TrackMetadata[]; sessionDescription?: SessionDescription }
-TracksResponse       { sessionDescription: SessionDescription;
-                       requiresImmediateRenegotiation: boolean;
-                       tracks?: (TrackMetadata & ErrorResponse)[] } & ErrorResponse
+TracksRequest        { tracks: TrackObject[]; sessionDescription?: SessionDescription;
+                       autoDiscover?: boolean }
+TracksResponse       { sessionDescription?: SessionDescription;
+                       requiresImmediateRenegotiation?: boolean;
+                       tracks?: (TrackObject & ErrorResponse)[] } & ErrorResponse
+UpdateTracksRequest  { tracks: TrackObject[]; sessionDescription?: SessionDescription }
+UpdateTracksResponse { requiresImmediateRenegotiation?: boolean;
+                       tracks?: (TrackObject & ErrorResponse)[] } & ErrorResponse
 RenegotiateRequest   { sessionDescription: SessionDescription }
-CloseTracksRequest   { tracks: TrackMetadata[]; sessionDescription?: ...; force: boolean }
+RenegotiateResponse  { sessionDescription?: SessionDescription } & ErrorResponse   // usually {}
+CloseTracksRequest   { tracks: { mid: string }[];                 // at least one
+                       sessionDescription?: SessionDescription;   // required when force is false
+                       force: boolean }
+CloseTracksResponse  { sessionDescription?: ...;                  // absent on a forced close
+                       requiresImmediateRenegotiation?: boolean;  // false
+                       tracks?: ({ mid: string } & ErrorResponse)[] } & ErrorResponse
+
+GetSessionStateResponse {
+  tracks?: (TrackObject & { status: ResourceStatus })[];
+  dataChannels?: { location?; sessionId?; dataChannelName?; id?: number;
+                   status: ResourceStatus }[] } & ErrorResponse   // no SDP
+ResourceStatus       "active" | "inactive" | "initializing"
 ```
+
+DataChannel shapes are in [DataChannels](#datachannels) below.
 
 ### Rules that shape the client
 
 - **One `tracks/new` call is all `local` or all `remote`.** A remote batch can reference several publishers.
 - **The SDP exchange must finish before the next mutation on the same session.** So the client needs a serialized operation queue.
 - **A successful HTTP response can still carry per-track errors.**
-- **Track status** is one of `active`, `inactive` or `initializing`.
+- **Resource status** in `GET sessions/{id}` is `active`, `inactive` or `initializing` (DataChannels only). Closed tracks can stay listed as `inactive`.
+- **A request-level error can arrive after some tracks were already closed.** Match `tracks/close` results to the requested `mid`s; `close_track_error` means the track is absent or already closed.
 - **Expired sessions** return HTTP `410` with `session_error`. An unconnected session can expire before its first track or DataChannel operation.
 - **Reconnection:** replace the connection. Create a new session and re-subscribe. ICE restart is not documented.
-- `sessions/new` accepts an optional `correlationId` for diagnostics.
+- `sessions/new` accepts an optional `correlationId` **query parameter** for diagnostics. It is not an idempotency key.
 
 ## Simulcast
 
@@ -88,16 +110,22 @@ CloseTracksRequest   { tracks: TrackMetadata[]; sessionDescription?: ...; force:
   {"dataChannels":[{"location":"local","dataChannelName":"input","ordered":true}]}
   ```
 
-  Optional fields: `maxRetransmits` **or** `maxPacketLifeTime` (at most one). Omit both for reliable delivery.
+  Optional fields: `ordered` (default `true`), and `maxRetransmits` **or** `maxPacketLifeTime` (at most one). Omit both for reliable delivery; `maxRetransmits: 0` is not the same as omitting it.
 - **Subscriber:**
 
   ```json
   {"dataChannels":[{"location":"remote","sessionId":"<publisher>","dataChannelName":"input","canReply":false}]}
   ```
 
-- **Direction:** publisher to subscribers. One subscriber with `canReply: true` can reply on the publisher's channel.
+  - **Every subscriber must mirror the publisher's delivery policy** (`ordered`, `maxRetransmits`/`maxPacketLifeTime`), both in its request and in its own `createDataChannel` call. Use separate channel names for different policies.
+  - `waitForAck: true` holds delivery until the subscriber sends a first message (consumed by the SFU), which must arrive within 30 s.
+- **Response** (`datachannels/new`, `/update`, `/close`): `{"dataChannels":[{..., "id": 3, "errorCode"?, "errorDescription"?}]}`. Check each entry for an error.
+- **Direction:** publisher to subscribers. One subscriber with `canReply: true` can reply on the publisher's channel. Granting it to another subscriber replaces the previous one. Grant or revoke it later with `PUT datachannels/update`.
 - **Channels are negotiated.** Use the returned `id` in `createDataChannel(name, negotiated: true, id: id)`. The publisher's and subscriber's IDs can differ.
-- Call `datachannels/establish` first to set up the SCTP transport.
+- **Close** with `PUT datachannels/close` and `{"dataChannels":[{"id": 2}]}`.
+- Call `datachannels/establish` first to set up the SCTP transport. It pulls the SFU's `server-events` channel:
+  - request: `{"dataChannel":{"location":"remote","dataChannelName":"server-events"}, "sessionDescription"?: <offer>}`;
+  - response: `{"requiresImmediateRenegotiation": bool, "sessionDescription": ..., "dataChannel":{"dataChannelName":"server-events","id":0}}`. Without an offer in the request, the SFU sends an offer to answer through `renegotiate`.
 
 ## Pricing (for context)
 
@@ -117,6 +145,7 @@ CloseTracksRequest   { tracks: TrackMetadata[]; sessionDescription?: ...; force:
 2. Architecture (rooms are app state): https://developers.cloudflare.com/realtime/sfu/concepts/architecture/
 3. Negotiation: https://developers.cloudflare.com/realtime/sfu/concepts/negotiation/
 4. HTTPS API: https://developers.cloudflare.com/realtime/sfu/https-api/
+   - 4b. OpenAPI schema: https://developers.cloudflare.com/realtime/static/realtime-api-2024-05-21.yaml
 5. Simulcast: https://developers.cloudflare.com/realtime/sfu/simulcast/
 6. DataChannels: https://developers.cloudflare.com/realtime/sfu/features/datachannels/
 7. Pricing: https://developers.cloudflare.com/realtime/sfu/pricing

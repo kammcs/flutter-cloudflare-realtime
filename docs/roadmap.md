@@ -5,7 +5,7 @@ Effort is in developer-weeks for the whole package. The total is **about 10–16
 | # | Milestone | Work | Est. |
 |---|---|---|---|
 | M0 | Repo and CI (**done**) | Scaffold, CI (analyze, format, test, gitleaks), example app shell with the in-memory `Signaling` | S |
-| M1 | Broker | The broker contract ([design.md §5](design.md#5-broker-contract)), with its security rules. A reference **Cloudflare Worker** and a **Supabase Edge Function** in `broker/`. A `BrokerClient` in Dart. ICE servers from `generate-ice-servers` | 1–2 wk |
+| M1 | Broker | The broker contract ([design.md §5](design.md#5-broker-contract)), with its security rules. A reference **Cloudflare Worker** and a **Supabase Edge Function** in `broker/`. A `BrokerClient` in Dart. ICE servers from `generate-ice-servers`. **Status:** the Dart `BrokerClient` (typed models, `HttpBrokerClient`, error mapping, ICE servers) is done; the reference brokers are in progress | 1–2 wk |
 | M2 | Core session | `SfuSession`: push, pull, update, close, renegotiation, a serialized op queue with batching, per-track errors. Port from partytracks | 3–4 wk |
 | M3 | Rooms | `Room` on top of the `Signaling` interface (the interface and `InMemorySignaling` landed with M0), participant diffing, and pull-on-subscribe | 1 wk |
 | M4 | Simulcast and active speaker | Publish a/b/c encodings, set `preferredRid` by tile size, `ridNotAvailable` fallback, active speaker from `getStats` | 1–2 wk |
