@@ -71,6 +71,8 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
   /// The broker and SFU session, when a broker URL was given.
   HttpBrokerClient? _broker;
   SfuSession? _session;
+  CameraSource? _cameraSource;
+  LocalTrackPublication? _cameraPublication;
   bool _joining = false;
   late final Stream<List<ParticipantState>> _participants =
       _signaling.participants;
@@ -97,10 +99,14 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
           metadata: {'displayName': name},
         ),
       );
-      // TODO(M3): replace this with a Room: publish the local camera and
-      // microphone (once the media layer lands) and pull what others
-      // publish.
       setState(() => _error = null);
+      // TODO(M3): replace this with a Room, which also publishes the
+      // microphone and pulls what others publish.
+      if (_session case final session?) {
+        _publishCamera(session, name).catchError((Object e) {
+          if (mounted) setState(() => _error = 'Camera not published: $e');
+        });
+      }
     } on StateError catch (e) {
       await _closeSession();
       setState(() => _error = e.message);
@@ -132,7 +138,38 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
     return session.sessionId;
   }
 
+  /// Pushes the local camera to [session] and, once media flows, advertises
+  /// it in signaling so others could pull it.
+  Future<void> _publishCamera(SfuSession session, String name) async {
+    final camera = _cameraSource = CameraSource(backend: widget.mediaBackend);
+    if (!await camera.startBroadcasting()) {
+      throw StateError('the camera could not start');
+    }
+    final publication = _cameraPublication = await session.publishTrackStream(
+      camera.broadcastTrack.map((captured) => captured?.track),
+      kind: 'video',
+      options: PublishOptions(trackName: '$name-camera'),
+    );
+    await publication.whenSending().timeout(const Duration(seconds: 15));
+    final self = _signaling.self;
+    if (self == null || !identical(_session, session)) return;
+    await _signaling.update(
+      self.copyWith(tracks: {...self.tracks, publication.trackName: _camera}),
+    );
+  }
+
   Future<void> _closeSession() async {
+    final publication = _cameraPublication;
+    _cameraPublication = null;
+    if (publication != null) {
+      try {
+        await publication.unpublish();
+      } on Exception {
+        // The session is closing anyway.
+      }
+    }
+    await _cameraSource?.dispose();
+    _cameraSource = null;
     await _session?.close();
     _session = null;
     _broker?.dispose();
@@ -184,6 +221,7 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
       guest.dispose();
     }
     _signaling.dispose();
+    _cameraSource?.dispose();
     _session?.close();
     _broker?.dispose();
     _roomController.dispose();

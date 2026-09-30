@@ -4,7 +4,7 @@ A demo app for [`cloudflare_realtime`](../README.md).
 
 For now it joins a room through `InMemorySignaling`: every participant lives in the same process and shares one `InMemorySignalingHub`. Add simulated participants to watch the list update. Video tiles will replace the placeholder once rooms land (roadmap M3).
 
-If you fill in **Broker URL** (and, if your broker needs it, a bearer token), joining also creates a real SFU session through your broker and shows its ID and connection state. Nothing is published yet: pushing the local camera comes with the media layer and `Room`.
+If you fill in **Broker URL** (and, if your broker needs it, a bearer token), joining also creates a real SFU session through your broker, shows its ID and connection state, and publishes your camera (simulcast, following device changes). Once media flows, the camera track is listed in your signaling state. Pulling other participants' tracks comes with `Room` (roadmap M3).
 
 The **Local media** button (camera-and-mic icon in the app bar) opens a local preview: camera and microphone toggles with device dropdowns, the mute model, and on desktop a screen and window picker with thumbnails that previews the chosen share. On the web, the browser shows its own picker. Nothing is published yet.
 
