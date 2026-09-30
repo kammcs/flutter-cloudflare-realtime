@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/session/peer_connection.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show
         MediaStreamTrack,
+        RTCDataChannelMessage,
+        RTCDataChannelState,
         RTCIceConnectionState,
         RTCPeerConnectionState,
         RTCSignalingState;
@@ -310,6 +313,38 @@ class FakePeerConnection implements PeerConnection {
     return byMid(mid);
   }
 
+  /// Every DataChannel created, in order.
+  final List<FakeDataChannel> dataChannels = [];
+
+  /// The DataChannel created with [id], if any (the latest one).
+  FakeDataChannel? dataChannelById(int id) =>
+      dataChannels.where((d) => d.id == id).lastOrNull;
+
+  /// When true, each created DataChannel opens right away (as if the SCTP
+  /// association were already up).
+  bool openDataChannelsImmediately = false;
+
+  @override
+  Future<PeerDataChannel> createDataChannel(
+    String label, {
+    required int id,
+    bool ordered = true,
+    int? maxRetransmits,
+  }) async {
+    _record('createDataChannel($label, $id)', 'createDataChannel');
+    final channel = FakeDataChannel(
+      label: label,
+      id: id,
+      ordered: ordered,
+      maxRetransmits: maxRetransmits,
+    );
+    if (openDataChannelsImmediately) {
+      channel.state = RTCDataChannelState.RTCDataChannelOpen;
+    }
+    dataChannels.add(channel);
+    return channel;
+  }
+
   @override
   Future<void> close() async {
     log.add('close');
@@ -399,4 +434,117 @@ class FakeTransceiver implements PeerTransceiver {
     _pc._record('stop($currentMid)', 'stop');
     stopped = true;
   }
+}
+
+/// A negotiated DataChannel of a [FakePeerConnection].
+///
+/// Drive it from the test: [open], [receiveText], [receiveBinary],
+/// [remoteClose] and [setBufferedAmount]. Sent messages collect in [sent].
+class FakeDataChannel implements PeerDataChannel {
+  FakeDataChannel({
+    required this.label,
+    required this.id,
+    required this.ordered,
+    required this.maxRetransmits,
+  });
+
+  @override
+  final String label;
+
+  @override
+  final int id;
+
+  /// The `ordered` option it was created with.
+  final bool ordered;
+
+  /// The `maxRetransmits` option it was created with (null: reliable).
+  final int? maxRetransmits;
+
+  /// Messages sent, in order.
+  final List<RTCDataChannelMessage> sent = [];
+
+  /// Whether [close] was called.
+  bool closed = false;
+
+  /// Makes the next [send] throw this.
+  Object? failNextSend;
+
+  final _states = StreamController<RTCDataChannelState>.broadcast(sync: true);
+  final _messages = StreamController<RTCDataChannelMessage>.broadcast(
+    sync: true,
+  );
+  final _low = StreamController<int>.broadcast(sync: true);
+  int _buffered = 0;
+
+  /// The low-water mark last set.
+  int threshold = 0;
+
+  @override
+  RTCDataChannelState? state = RTCDataChannelState.RTCDataChannelConnecting;
+
+  /// Opens the channel.
+  void open() => _setState(RTCDataChannelState.RTCDataChannelOpen);
+
+  /// Closes the channel from the remote side (not through [close]).
+  void remoteClose() => _setState(RTCDataChannelState.RTCDataChannelClosed);
+
+  void _setState(RTCDataChannelState next) {
+    state = next;
+    _states.add(next);
+  }
+
+  /// Delivers a text message.
+  void receiveText(String text) => _messages.add(RTCDataChannelMessage(text));
+
+  /// Delivers a binary message.
+  void receiveBinary(List<int> bytes) => _messages.add(
+    RTCDataChannelMessage.fromBinary(Uint8List.fromList(bytes)),
+  );
+
+  /// Changes [bufferedAmount], firing [onBufferedAmountLow] on a crossing to
+  /// or below [threshold].
+  void setBufferedAmount(int amount) {
+    final previous = _buffered;
+    _buffered = amount;
+    if (previous > threshold && amount <= threshold) _low.add(amount);
+  }
+
+  @override
+  Stream<RTCDataChannelState> get onStateChange => _states.stream;
+
+  @override
+  Stream<RTCDataChannelMessage> get onMessage => _messages.stream;
+
+  @override
+  int get bufferedAmount => _buffered;
+
+  @override
+  set bufferedAmountLowThreshold(int value) => threshold = value;
+
+  @override
+  Stream<int> get onBufferedAmountLow => _low.stream;
+
+  @override
+  Future<void> send(RTCDataChannelMessage message) async {
+    final error = failNextSend;
+    if (error != null) {
+      failNextSend = null;
+      throw error;
+    }
+    if (closed) throw StateError('FakeDataChannel is closed');
+    sent.add(message);
+  }
+
+  @override
+  Future<void> close() async {
+    if (closed) return;
+    closed = true;
+    state = RTCDataChannelState.RTCDataChannelClosed;
+    await _states.close();
+    await _messages.close();
+    await _low.close();
+  }
+
+  @override
+  String toString() => 'FakeDataChannel($label, $id)';
 }

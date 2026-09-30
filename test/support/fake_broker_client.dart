@@ -41,6 +41,10 @@ class FakeRemoteMedia {
 ///   so applying that offer creates the receiving transceivers.
 /// - `tracks/update` echoes the tracks; `tracks/close` answers the offer
 ///   and echoes the mids; `renegotiate` returns `{}`.
+/// - `datachannels/establish` returns an SFU offer (no media) with
+///   `requiresImmediateRenegotiation`; `datachannels/new` echoes each
+///   channel with a per-session ID from [firstDataChannelId] up;
+///   `datachannels/update` and `/close` echo.
 ///
 /// Every call is recorded in [calls]. Replace a behaviour by setting the
 /// matching `on*` handler; handlers can call the `default*` methods. SDP
@@ -258,7 +262,8 @@ class FakeBrokerClient implements BrokerClient {
         request: request,
       ),
     );
-    throw UnimplementedError('FakeBrokerClient: datachannels/establish');
+    return onEstablishDataChannels?.call(sessionId, request) ??
+        defaultEstablishDataChannels(sessionId, request);
   }
 
   @override
@@ -269,7 +274,8 @@ class FakeBrokerClient implements BrokerClient {
     calls.add(
       BrokerCall('datachannels/new', sessionId: sessionId, request: request),
     );
-    throw UnimplementedError('FakeBrokerClient: datachannels/new');
+    return onNewDataChannels?.call(sessionId, request) ??
+        defaultNewDataChannels(sessionId, request);
   }
 
   @override
@@ -280,7 +286,8 @@ class FakeBrokerClient implements BrokerClient {
     calls.add(
       BrokerCall('datachannels/update', sessionId: sessionId, request: request),
     );
-    throw UnimplementedError('FakeBrokerClient: datachannels/update');
+    return onUpdateDataChannels?.call(sessionId, request) ??
+        defaultUpdateDataChannels(sessionId, request);
   }
 
   @override
@@ -291,8 +298,108 @@ class FakeBrokerClient implements BrokerClient {
     calls.add(
       BrokerCall('datachannels/close', sessionId: sessionId, request: request),
     );
-    throw UnimplementedError('FakeBrokerClient: datachannels/close');
+    return onCloseDataChannels?.call(sessionId, request) ??
+        defaultCloseDataChannels(sessionId, request);
   }
+
+  // ---------------------------------------------------------------------------
+  // DataChannels
+  // ---------------------------------------------------------------------------
+
+  Future<EstablishDataChannelsResponse> Function(
+    String sessionId,
+    EstablishDataChannelsRequest? request,
+  )?
+  onEstablishDataChannels;
+  Future<DataChannelsResponse> Function(
+    String sessionId,
+    DataChannelsRequest request,
+  )?
+  onNewDataChannels;
+  Future<DataChannelsResponse> Function(
+    String sessionId,
+    DataChannelsRequest request,
+  )?
+  onUpdateDataChannels;
+  Future<DataChannelsResponse> Function(
+    String sessionId,
+    DataChannelsRequest request,
+  )?
+  onCloseDataChannels;
+
+  /// The next DataChannel ID per session. ID 0 is `server-events`.
+  final Map<String, int> _dataChannelIds = {};
+
+  /// The first DataChannel ID `datachannels/new` assigns on each session.
+  /// Subscribers and publishers get IDs from separate per-session counters,
+  /// so they differ, as on the real SFU.
+  int firstDataChannelId = 1;
+
+  /// An SFU offer carrying no media (only the `application` m-line), as
+  /// `datachannels/establish` returns, then `server-events` with ID 0.
+  Future<EstablishDataChannelsResponse> defaultEstablishDataChannels(
+    String sessionId,
+    EstablishDataChannelsRequest? request,
+  ) async => EstablishDataChannelsResponse(
+    requiresImmediateRenegotiation: true,
+    sessionDescription: sfuOffer(const []),
+    dataChannel: const DataChannelResult(
+      dataChannelName: EstablishDataChannelsRequest.serverEventsChannelName,
+      id: 0,
+    ),
+  );
+
+  /// Echoes each channel with the next ID on [sessionId].
+  Future<DataChannelsResponse> defaultNewDataChannels(
+    String sessionId,
+    DataChannelsRequest request,
+  ) async => DataChannelsResponse(
+    dataChannels: [
+      for (final d in request.dataChannels)
+        DataChannelResult(
+          location: d.location,
+          dataChannelName: d.dataChannelName,
+          sessionId: d.sessionId,
+          ordered: d.ordered,
+          maxRetransmits: d.maxRetransmits,
+          canReply: d.canReply,
+          id: nextDataChannelId(sessionId),
+        ),
+    ],
+  );
+
+  /// The ID [defaultNewDataChannels] assigns next on [sessionId].
+  int nextDataChannelId(String sessionId) {
+    final id = _dataChannelIds[sessionId] ?? firstDataChannelId;
+    _dataChannelIds[sessionId] = id + 1;
+    return id;
+  }
+
+  /// Echoes each channel.
+  Future<DataChannelsResponse> defaultUpdateDataChannels(
+    String sessionId,
+    DataChannelsRequest request,
+  ) async => DataChannelsResponse(
+    dataChannels: [
+      for (final d in request.dataChannels)
+        DataChannelResult(
+          location: d.location,
+          dataChannelName: d.dataChannelName,
+          sessionId: d.sessionId,
+          canReply: d.canReply,
+        ),
+    ],
+  );
+
+  /// Echoes each ID.
+  Future<DataChannelsResponse> defaultCloseDataChannels(
+    String sessionId,
+    DataChannelsRequest request,
+  ) async => DataChannelsResponse(
+    dataChannels: [
+      for (final d in request.dataChannels) DataChannelResult(id: d.id),
+    ],
+  );
 
   @override
   void forgetSession(String sessionId) => forgotten.add(sessionId);

@@ -17,6 +17,7 @@ import '../broker/broker_exception.dart';
 import '../broker/models/common.dart';
 import '../broker/models/session.dart';
 import '../broker/models/tracks.dart';
+import '../data/data_channel_manager.dart';
 import '../util/state_stream.dart';
 import 'flutter_webrtc_peer_connection.dart';
 import 'op_queue.dart';
@@ -144,6 +145,11 @@ class SfuSession {
 
   final Map<String, LocalTrackPublication> _publications = {};
   final Set<RemoteTrackSubscription> _subscriptions = {};
+
+  /// DataChannels (M7), created on first use.
+  DataChannelManager? _dataChannels;
+  DataChannelManager get _data =>
+      _dataChannels ??= DataChannelManager(SfuSessionPort._(this));
 
   /// The connection state, replaying the current value to each new
   /// listener. Completes after [close].
@@ -434,6 +440,74 @@ class SfuSession {
     _closes.add(item);
     return item.done.future;
   }
+
+  // ---------------------------------------------------------------------------
+  // DataChannels (docs/design.md §9)
+  // ---------------------------------------------------------------------------
+
+  /// Publishes the DataChannel [name] from this session
+  /// (`datachannels/new` with `location: local`), and opens the local end
+  /// as a negotiated channel with the ID the SFU returns.
+  ///
+  /// The first DataChannel operation on a session sets up the SCTP
+  /// transport first (`datachannels/establish`, answering the SFU's offer),
+  /// inside the same queued operation.
+  ///
+  /// The SFU forwards what this side sends to every subscriber. Messages
+  /// received on it are replies from the one subscriber that holds
+  /// `canReply` ([DataChannelMessage.fromSessionId] is null for them).
+  /// For general two-way traffic, both sides publish.
+  ///
+  /// Completes once the SFU accepted the channel; wait for
+  /// [SfuDataChannel.whenOpen] before sending. Throws a
+  /// [SfuDataChannelException] if the SFU rejected this channel, or the
+  /// broker's exception if the request failed. Names are unique per session.
+  Future<LocalDataChannel> publishDataChannel(
+    String name, {
+    DataChannelProfile profile = DataChannelProfile.reliable,
+  }) => _data.publish(name, profile);
+
+  /// Subscribes to the DataChannel [name] published by the session
+  /// [remoteSessionId] (`datachannels/new` with `location: remote`).
+  ///
+  /// [profile] must match the publisher's: the SFU requires every
+  /// subscriber to mirror the publisher's delivery policy.
+  ///
+  /// With [canReply], this subscriber can send back to the publisher on
+  /// the channel. **Only one subscriber per published channel can reply**:
+  /// granting it to another replaces this one. Change it later with
+  /// [RemoteDataChannel.setCanReply].
+  ///
+  /// Every message received carries [DataChannelMessage.fromSessionId] =
+  /// [remoteSessionId], taken from the channel, never from the payload.
+  Future<RemoteDataChannel> subscribeDataChannel(
+    String remoteSessionId,
+    String name, {
+    DataChannelProfile profile = DataChannelProfile.reliable,
+    bool canReply = false,
+  }) => _data.subscribe(remoteSessionId, name, profile, canReply);
+
+  /// Publishes an existing [channel] on this session under the same name
+  /// and profile, after its previous session failed or closed, or to retry
+  /// a failed publish. Its [SfuDataChannel.messages] stream carries on.
+  ///
+  /// Throws a [StateError] if the channel is closed or still on a session.
+  Future<void> republishDataChannel(LocalDataChannel channel) =>
+      _data.republish(channel);
+
+  /// Subscribes an existing [channel] on this session, from
+  /// [remoteSessionId] if given (the publisher moved to a new session) or
+  /// from its current [RemoteDataChannel.remoteSessionId].
+  ///
+  /// Throws a [StateError] if the channel is closed or still on a session.
+  Future<void> resubscribeDataChannel(
+    RemoteDataChannel channel, {
+    String? remoteSessionId,
+  }) => _data.resubscribe(channel, remoteSessionId: remoteSessionId);
+
+  /// The DataChannels on this session, published and subscribed, including
+  /// ones still being set up.
+  List<SfuDataChannel> get dataChannels => _dataChannels?.channels ?? const [];
 
   /// Closes the peer connection and releases the session.
   ///
@@ -1034,12 +1108,73 @@ class SfuSession {
       subscription._detach(this, state, error);
     }
     _subscriptions.clear();
+    // DataChannels become interrupted, like tracks.
+    _dataChannels?.detachAll(error);
   }
 
   @override
   String toString() =>
       'SfuSession($sessionId, ${currentConnectionState.name}'
       '${_failure == null ? '' : ', $_failure'})';
+}
+
+/// The internal hooks that layers built on an [SfuSession] (DataChannels)
+/// use to share its op queue, broker and peer connection.
+///
+/// Internal: not exported from the package barrel.
+class SfuSessionPort {
+  SfuSessionPort._(this.session);
+
+  /// The session.
+  final SfuSession session;
+
+  /// The session's broker.
+  BrokerClient get broker => session._broker;
+
+  /// The session's peer connection.
+  PeerConnection get peerConnection => session._pc;
+
+  /// Whether operations can still run.
+  bool get isUsable => session.isUsable;
+
+  /// Throws an [SfuSessionClosedException] or [SfuSessionFailedException]
+  /// if the session can't run operations.
+  void throwIfUnusable() => session._throwIfUnusable();
+
+  /// Runs a broker call, failing the session on a [SessionGoneException].
+  Future<T> callBroker<T>(Future<T> Function() call) => session._call(call);
+
+  /// Applies an SFU [offer], answers it, and sends the answer with
+  /// `renegotiate`.
+  Future<void> renegotiate(String operation, SessionDescription? offer) =>
+      session._renegotiate(operation, offer);
+
+  /// Runs [task] on the session's serialized op queue, like the session's
+  /// own operations: the signaling state is healed before it and after a
+  /// failure. When [task] throws (or [requireAlive] and the session is
+  /// unusable), [onError] is called inside the queue with the error, and
+  /// the returned future still completes normally.
+  Future<void> runQueued(
+    Future<void> Function() task, {
+    required void Function(Object error, StackTrace stackTrace) onError,
+    bool requireAlive = true,
+  }) => session._queue.schedule(() async {
+    try {
+      if (requireAlive) session._throwIfUnusable();
+      await session._recoverSignaling();
+      if (requireAlive) session._throwIfUnusable();
+      await task();
+    } catch (error, stackTrace) {
+      await session._recoverSignaling();
+      final reported =
+          session._closed &&
+              error is! SfuSessionException &&
+              error is! BrokerException
+          ? const SfuSessionClosedException()
+          : error;
+      onError(reported, stackTrace);
+    }
+  });
 }
 
 /// [SfuSession.connect] with an injectable [PeerConnectionFactory].
