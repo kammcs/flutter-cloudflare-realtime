@@ -124,7 +124,7 @@ await session.close();
 
   **Mute and device changes.** partytracks keeps sending a black or silent placeholder track while muted; `flutter_webrtc` can't make those, so the media layer's `broadcastTrack` is null while muted. `replaceTrack(null)` therefore stops sending without renegotiating: the transceiver and `mid` stay, and unmuting is another `replaceTrack`. Replacements are applied in order and settle on the latest track. `publishTrackStream(tracks, kind:)` follows such a stream (partytracks' `push(track$)`): it pushes whatever the stream holds when the push goes out (possibly nothing: the transceiver is then created from `kind`), and applies every later value. The session code takes plain `MediaStreamTrack`s and doesn't import the media layer. **Deviation:** partytracks adds the transceiver when `push` is called; here it is added inside the queued operation, so an unrelated offer in flight never carries an undeclared m-line.
 
-  partytracks emits a pushed track's metadata only once the sender reports `bytesSent > 0`, so peers don't pull too early. Here `publish` completes when the SFU accepts the track, and `whenSending()` ports the wait (stats polled from 1 ms, ×1.1, capped at 100 ms). Room (M3) should advertise a track only after it. A publication muted from the start sends no RTP, so `whenSending()` waits until it is unmuted; M3 must decide whether to advertise muted tracks earlier.
+  partytracks emits a pushed track's metadata only once the sender reports `bytesSent > 0`, so peers don't pull too early. Here `publish` completes when the SFU accepts the track, and `whenSending()` ports the wait (stats polled from 1 ms, ×1.1, capped at 100 ms). **Decision (M3):** the Room does *not* wait for `whenSending()`; it advertises a track as soon as the SFU accepts it, because a publication muted from the start sends no RTP and would never be announced. Subscribers instead retry pulls that fail before the first packets (§4.3).
 - **Encodings and codecs.**
   - Video defaults to `SimulcastPresets.h720`: rids `a` (full, 1.2 Mbps), `b` (`scaleResolutionDownBy: 2`, 400 kbps), `c` (4, 150 kbps). `h1080` and `h360` exist too; M4 tunes the numbers. `sendEncodings: []` publishes one default encoding. Audio has none.
   - Codec preferences are MIME types; set, they **restrict** the transceiver to those codecs plus rtx/red/ulpfec/flexfec, so the SFU can't pick another. The default is `['video/VP8']` on Windows (flutter-webrtc #982) and none elsewhere (`SfuSessionDefaults.videoCodecPreferences` overrides it). A platform that rejects `setCodecPreferences` keeps its default order.
@@ -147,20 +147,39 @@ await session.close();
 
   Its publications and subscriptions become `interrupted` and detach from it; they survive the session. M5 connects a new session and calls `republish` (same `trackName`, current track and encodings) and `resubscribe` (optionally with the publisher's new `sessionId`); `trackStream` then emits the new remote track. `close()` also leaves them `interrupted`, fails queued operations with `SfuSessionClosedException`, and calls `BrokerClient.forgetSession`. partytracks instead re-creates the session inside `session$` and re-pushes automatically; here that policy belongs to M5.
 - **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface: `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The interface also creates negotiated DataChannels (`PeerDataChannel`, §9); the DataChannel layer reaches the session's queue, broker and peer connection through an internal `SfuSessionPort`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
-- **Not done here:** rendering a remote track needs a `MediaStream` for `RTCVideoRenderer`; M3 will wrap the track (for example with `createLocalMediaStream`). Automatic retries (partytracks retries each push/pull with backoff) are left to M5.
+- **Not done here:** rendering a remote track needs a `MediaStream` for `RTCVideoRenderer`; the Room wraps it (§4.3). Automatic push retries (partytracks retries each push/pull with backoff) are left to M5; the Room retries pulls.
 
 ### 4.3 `Room`
 
-`Room` ties a session to signaling. It:
+`Room` ties a session to signaling. Implemented (M3) in `lib/src/room/`, with the video view in `lib/src/rendering/`. The concepts follow LiveKit (§3); the code and API names are our own.
 
-- joins the `Signaling` transport with the local participant's state: `{participantId, sessionId, tracks: {name → kind/source}}`;
-- updates that state whenever the local participant publishes or unpublishes, or the session is replaced;
-- diffs remote participants' states and **pulls or closes tracks to match**. Pull only what the UI subscribes to; a large gallery shouldn't pull every camera;
-- exposes:
-  - `participants`: `Stream<List<RemoteParticipant>>`,
-  - `activeSpeakers`,
-  - `connectionState`,
-  - `data` (DataChannels).
+- **Join.** `CloudflareRealtime.join(roomId, signaling:, participantId:, metadata:, options:)` creates an `HttpBrokerClient` for the room (every request carries `X-Realtime-Room`), connects an `SfuSession`, then joins signaling with `{participantId, sessionId, tracks: {}, metadata}`. If any step fails, what was opened is closed and the error thrown. The broker-client and session factories (and the track wrapper, below) are injectable, so tests run on the M2 fakes (`test/support/room_harness.dart`).
+- **Announcing.** The local state (`LocalParticipant.state`) is `{participantId, sessionId, tracks: {trackName → {kind, source, muted, simulcast}}, metadata}`. It is re-announced whenever the local participant publishes, unpublishes, mutes, unmutes or changes metadata. Updates go through a coalescing runner: they never overlap, and a burst becomes at most one more update. A failed `Signaling.update` is reported as a `RoomErrorEvent` and retried on the next change.
+- **Publishing** (`LocalParticipant`): `publishCamera`, `publishMicrophone` and `publishScreen` each create a media source (the Room owns and disposes it; camera and microphone share one `MediaDeviceList`), start broadcasting, and push `source.broadcastTrack` with `publishTrackStream`. `publishMediaSource` publishes an app-owned source, which the Room never disposes.
+  - **Advertise on accept.** A track is announced as soon as the SFU accepts the push, not after `whenSending()` (§4.2): a muted track never sends. The initial pull can then race the first packets, so subscribers retry (below).
+  - **Track names** are `<source>-<uuid>`, fixed for the publication's lifetime, so an M5 `republish` keeps the name.
+  - **Mute** is the media layer's broadcasting switch (§4.5): `mute()` = `stopBroadcasting()`, so the sender gets `replaceTrack(null)` and, for camera and screen, the capture is released. The track stays published and is announced with `muted: true`. `publishCamera(muted: true)` / `publishMicrophone(muted: true)` publish without capturing.
+  - **Simulcast hint.** `publishCamera` announces its layers as `TrackInfo.simulcast` (rids, the requested capture size and scale factors), from the encodings (default `SimulcastPresets.h720`) and the `CameraOptions` preset. A single encoding announces none.
+  - **Screen share** is one encoding by default (sharp text; §12, question 2), with no simulcast hint. With `captureAudio`, the audio is published too, as a `screenAudio` track. When the share ends outside the app (`ScreenShareEndReason.userStopped` or `sourceClosed`), it is unpublished. Muting ends the capture but keeps the track published; unmuting shares the same source again.
+  - Capture failures throw the source's `MediaException` (a cancelled browser picker throws `MediaCaptureException`), and the source is disposed. Nothing is announced then.
+- **Diffing** (`participant_diff.dart`, internal, unit-tested): successive `Signaling.participants` lists are diffed by `participantId` into joined, left and updated participants, and per participant into added, removed and changed tracks (a changed `muted` or `simulcast`; a changed kind or source counts as removed plus added), a session change and a metadata change (deep). **Participants without a `sessionId` are ignored** as if absent, so losing a session is a leave. Entries with the local `participantId` or `sessionId` are dropped. `Room.participants` emits once per signaling change.
+- **Pull only what's subscribed.** Each remote track is a `RemoteTrackPublication`, pulled while it is wanted:
+  - `RoomOptions.autoSubscribe` (default: audio yes, video no),
+  - `subscribe()` / `unsubscribe()` (an explicit switch), or
+  - a `RemoteTrackLease` from `retain()`; `ParticipantVideoView` holds one while mounted, so several views of a track share one pull.
+
+  Video is pulled with `preferredRid` only when the publisher advertises simulcast layers; the first layer is `RoomOptions.defaultVideoLayer` (default `b`). `setPreferredLayer(SimulcastLayer.high/medium/low)` sends `tracks/update` with `a`/`b`/`c`, or picks by rank among the advertised rids.
+- **Following publishers.**
+  - A track that disappears from the publisher's state is closed (`tracks/close`) and removed; a participant that leaves has all its pulls closed.
+  - **Session change** (they reconnected): every wanted track is pulled from the new session. A pull that is live on the old session is closed first and pulled afresh, because a live `RemoteTrackSubscription` can't be moved (`resubscribe` requires it to be off its session); a failed or interrupted one is moved with `resubscribe(remoteSessionId: new)`. **Deviation:** the task sketch said "resubscribe every active subscription"; the session API only allows that for detached subscriptions.
+  - **Retries.** A failed pull is retried with `RoomOptions.pullRetry` (full-jitter backoff; default 250 ms to 4 s, 8 attempts), and again at once whenever the publisher's state for it changes (unmute, new session). Failures are reported as `TrackSubscriptionFailedEvent` with `willRetry`.
+- **Rendering.** A pulled track is wrapped in a `MediaStream` (`createLocalMediaStream('local')` plus `addTrack`) so `RTCVideoRenderer.srcObject` can show it: `RemoteTrackPublication.track` is a replaying `Stream<RenderableTrack?>` (track + stream). The label `local` matters: native `flutter_webrtc` uses it as the stream's `ownerTag`, and renderers look up `local`-tagged streams among the local streams, where this one lives. Disposing the wrapper doesn't stop the remote track. Each replaced or unsubscribed wrapper is disposed.
+- **`ParticipantVideoView`**: `.remote(publication, subscribe: true)` or `.local(mediaSource)`, with `fit` (`VideoViewFit.cover`/`contain`), `mirror` (default: local cameras), a `placeholder` (shown while not pulled, muted or not capturing), and `filterQuality`. Native calls sit behind `VideoRenderer` (`FlutterWebrtcVideoRenderer` by default; `rendererFactory` or the static `defaultRendererFactory` swap in a fake for widget tests), and the renderer is created only once there is video. **Layer-selection hook:** pass a `LayerDemandReporter` as `layerReporter` (with `visible`); the view then wraps itself in `SimulcastLayerReporter` keyed by `RemoteTrackPublication.id` (`participantId/trackName`, stable across the publisher's sessions). M4 makes the Room provide that reporter (§6.1).
+- **Connection state** (`RoomConnectionState`), from the session: `initial` (nothing negotiated yet) and `connected` → `connected`; `connecting` → `connecting`; ICE `disconnected` → `reconnecting`; a failure → `disconnected` plus `RoomSessionFailedEvent` and `Room.failure`. Until M5 re-sessions, the app leaves and rejoins; the room stays in signaling so M5 can recover in place.
+- **`leave()`**: stops listening, leaves signaling (so others stop pulling), unpublishes every local track in one `tracks/close`, closes the session, disposes the sources and device list the Room created, releases remote wrappers, disposes the broker client, ends `disconnected` and completes its streams. Idempotent; failures along the way are ignored.
+- **Events** (`Room.events`, sealed `RoomEvent`): participant joined/left/updated, track published/unpublished/muted/subscribed/subscription-failed, local track published/unpublished, connection-state changed, session failed, and non-fatal `RoomErrorEvent`s.
+- **`data`** (`RoomData`, §9): `publish(name, profile:)` returns the session's `LocalDataChannel`; `subscribe(participant, name, profile:, canReply:)` returns a `RemoteDataSubscription` whose `messages` carry `RoomDataMessage.participantId`. The sender is the participant that announced the channel's session in signaling (the Room remembers every session a participant announced, and a session claimed by two participants maps to none), **never the payload**. The subscription follows the publisher to a new session: a detached channel moves with `resubscribeDataChannel`, a live one is closed and subscribed afresh; `messages` carries on.
+- **Not done yet:** `activeSpeakers` and wiring layer selection (M4), re-sessioning (M5). Remote audio on the web needs an audio element; native platforms play pulled audio by themselves.
 
 ### 4.4 `Signaling` (app-provided)
 
@@ -175,7 +194,9 @@ abstract interface class Signaling {
 }
 ```
 
-- `ParticipantState` is `{participantId, sessionId?, tracks: {trackName → {kind, source}}, metadata?}`. Its `toJson`/`fromJson` define the JSON that adapters put into presence payloads; the shape is documented on the class.
+- `ParticipantState` is `{participantId, sessionId?, tracks: {trackName → {kind, source, muted?, simulcast?}}, metadata?}`. Its `toJson`/`fromJson` define the JSON that adapters put into presence payloads; the shape is documented on the class.
+  - **`muted`** (M3, optional): `true` while the publisher sends nothing for the track; omitted when `false`, and anything but `true` reads as `false`, so older peers interoperate.
+  - **`simulcast`** (M3, optional): `{"rids": ["a","b","c"], "width": 1280, "height": 720, "scaleDownBy": [1,2,4]}` (`SimulcastInfo`), the layers a video track sends, highest first. Only `rids` is required. It is a hint, so it is parsed tolerantly: malformed input reads as "no hint" rather than failing the participant. Subscribers send a `preferredRid` only for tracks that carry it, and layer selection builds the publisher's ladder from it (§6.1).
 - `participants` replays the current list to new listeners, emits `[]` while not in a room, and never includes the caller's own entry.
 - **Ship an in-memory implementation** for tests and the example app: `InMemorySignaling`, where participants share an `InMemorySignalingHub` (several rooms per hub).
 - **Keep backend adapters out of the core package.** For example, a Supabase Realtime presence adapter would be a separate package, such as `cloudflare_realtime_supabase`, or it lives in the app.
@@ -310,7 +331,7 @@ The building blocks are implemented in `lib/src/quality/`, but not yet wired. Th
 - **Publisher ladder** (`SimulcastLadder`, internal): the layers a publisher sends, highest first. `SimulcastLadder.fromPreset(VideoPreset.h720)` is `a`=1280×720, `b`=640×360, `c`=320×180.
   - **Encoder layer limit.** libwebrtc's legacy simulcast limit sends 3 layers from 960×540 up, 2 from 480×270 up, and otherwise 1. It drops the **lowest** layers, so a 360p publisher sends only `a` and `b`. The ladder applies this limit by default, so the policy never asks for a layer the publisher doesn't send.
   - This is an expectation, not a guarantee: capture can come out smaller than requested, and libwebrtc versions differ. `ridNotAvailable: asciibetical` covers the remaining mismatch. **Check it on devices.**
-  - `TrackInfo` doesn't carry the publisher's preset yet, so the Room assumes `h720` until it does (the controller's `defaultLadder`).
+  - Publishers announce their layers in `TrackInfo.simulcast` (§4.4). The internal `simulcastLadderFor(info)` (`lib/src/room/simulcast_hint.dart`) turns that into a ladder (16:9 and 1/2/4 when not stated, with the encoder limit). Tracks without a size keep the controller's `defaultLadder` (`h720`).
 - **Demand** (`TileDemand`, public): the tile's size in **physical** pixels (logical size × device-pixel ratio), plus whether it is visible.
 - **Policy** (`SimulcastLayerPolicy`, internal), for a visible `w×h` tile:
   1. **Required lines:** `max(h, w × layerHeight / layerWidth)`. This assumes the video fills the tile ("cover"), which errs towards quality.
@@ -405,7 +426,7 @@ The building blocks are implemented in `lib/src/reconnect/`. They are pure decis
 
 ## 9. DataChannels
 
-Implemented (M7) at the session level in `lib/src/data/`, with the operations on `SfuSession`. `Room` (M3) will expose `room.data` on top of it. partytracks has no DataChannel support to port; the negotiation follows Cloudflare's DataChannels docs, the OpenAPI schema and Cloudflare's `echo-datachannels` example, and the queueing and lifecycle mirror the track code.
+Implemented (M7) at the session level in `lib/src/data/`, with the operations on `SfuSession`. `Room` exposes it as `room.data`, which maps senders to participants (§4.3). partytracks has no DataChannel support to port; the negotiation follows Cloudflare's DataChannels docs, the OpenAPI schema and Cloudflare's `echo-datachannels` example, and the queueing and lifecycle mirror the track code.
 
 - The SFU forwards DataChannels **from a publisher to its subscribers**.
   - `datachannels/establish` sets up the SCTP transport.
@@ -492,7 +513,7 @@ await session.republishDataChannel(input); await session.resubscribeDataChannel(
 
 ## 11. Public API sketch
 
-This is a starting point, not a contract.
+The room API is implemented (M3, §4.3); `activeSpeakers` (M4) and automatic re-sessioning (M5) are still to come. Not a frozen contract before M8.
 
 ```dart
 final rt = CloudflareRealtime(
@@ -506,20 +527,36 @@ final room = await rt.join(
   'room-123',
   signaling: mySignaling,             // app-provided Signaling
   participantId: currentUserId,
+  metadata: {'displayName': 'Ada'},
+  options: const RoomOptions(autoSubscribe: AutoSubscribe(audio: true, video: false)),
 );
 
-await room.localParticipant.publishCamera(simulcast: SimulcastPreset.h720);
-await room.localParticipant.publishMicrophone();
-await room.localParticipant.publishScreen(source: pickedSource); // a ScreenSource from ScreenSourcePicker; none on web
+final local = room.localParticipant;
+final mic = await local.publishMicrophone();
+final cam = await local.publishCamera(encodings: SimulcastPresets.h720);   // the default; [] = no simulcast
+final share = await local.publishScreen(source: pickedSource);  // a ScreenSource from ScreenSourcePicker; none on web
+await mic.mute(); await mic.unmute();  // announced as TrackInfo.muted
+await cam.unpublish();
 
-room.participants;                     // Stream<List<RemoteParticipant>>
-room.activeSpeakers;                   // Stream<List<String>>
-room.connectionState;                  // Stream<RoomConnectionState> (auto re-session)
-remote.videoTrack?.setPreferredLayer(SimulcastLayer.low);
+room.participants;                     // Stream<List<RemoteParticipant>> (+ currentParticipants)
+room.events;                           // Stream<RoomEvent>: joined/left/updated, track published/muted/subscribed, ...
+room.connectionState;                  // Stream<RoomConnectionState>: connecting/connected/reconnecting/disconnected
+room.activeSpeakers;                   // M4
 
-final input = await room.data.publish('input', reliable: false);
-input.send(bytes);
-room.data.subscribe(remoteParticipant, 'input').listen((msg) { /* msg.fromSessionId */ });
+final remote = room.currentParticipants.first;
+remote.microphone?.muted;              // camera / microphone / screen / screenAudio, trackPublications
+await remote.camera?.subscribe();      // pull on demand; or ParticipantVideoView.remote(remote.camera!)
+await remote.camera?.setPreferredLayer(SimulcastLayer.low);
+remote.camera?.track;                  // Stream<RenderableTrack?>: track + MediaStream for RTCVideoRenderer
+
+ParticipantVideoView.remote(remote.camera!, layerReporter: reporter);  // subscribes while mounted
+ParticipantVideoView.local(cam.mediaSource);                           // mirrored self-view
+
+final input = await room.data.publish('input', profile: DataChannelProfile.unreliable);
+await input.whenOpen();
+await input.send(bytes);
+final sub = await room.data.subscribe(remote, 'input', profile: DataChannelProfile.unreliable);
+sub.messages.listen((msg) { /* msg.participantId, from signaling, never the payload */ });
 
 await room.leave();
 ```
@@ -529,7 +566,7 @@ await room.leave();
 ## 12. Open questions
 
 1. ~~`rxdart`, or plain `Stream`/`StreamController`?~~ **Resolved:** plain `Stream`s, plus an internal `StateStream<T>` helper for replay-latest state. This means fewer dependencies for pub.dev consumers, and the replay-latest semantics we need are small.
-2. Screen share: simulcast or a single layer?
+2. Screen share: simulcast or a single layer? **For now** `publishScreen` sends a single encoding (pass `encodings` for simulcast); measure both before settling it.
 3. Package split: a core package plus separate adapter packages (Supabase, in-memory), or adapters as examples only?
 4. Minimum Dart/Flutter SDK for pub.dev. The scaffold pins `^3.13.0`; widen it before publishing if `flutter_webrtc` allows.
 5. Naming and trademark: the package is **unofficial**. Keep the disclaimer in the README and pubspec description.

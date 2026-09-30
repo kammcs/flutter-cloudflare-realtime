@@ -2,11 +2,14 @@
 
 A demo app for [`cloudflare_realtime`](../README.md).
 
-For now it joins a room through `InMemorySignaling`: every participant lives in the same process and shares one `InMemorySignalingHub`. Add simulated participants to watch the list update. Video tiles will replace the placeholder once rooms land (roadmap M3).
+The join screen picks the **signaling** (`lib/main.dart`, `SignalingChoice`):
 
-If you fill in **Broker URL** (and, if your broker needs it, a bearer token), joining also creates a real SFU session through your broker, shows its ID and connection state, and publishes your camera (simulcast, following device changes). Once media flows, the camera track is listed in your signaling state. Pulling other participants' tracks comes with `Room` (roadmap M3).
+- **In-memory (this app):** `InMemorySignaling`, where every participant lives in this process. With a **Broker URL** (and a bearer token if your broker needs one), joining opens the call screen through `CloudflareRealtime.join`. Without one, it shows a presence-only list: add simulated participants to watch it update.
+- **Dev server (multi-device):** the DEV ONLY stack below. Fill in its URL, the dev token and a user name (or pass `--dart-define`s `DEV_SERVER_URL`, `DEV_TOKEN`, `DEV_USER`).
 
-The **Local media** button (camera-and-mic icon in the app bar) opens a local preview: camera and microphone toggles with device dropdowns, the mute model, and on desktop a screen and window picker with thumbnails that previews the chosen share. On the web, the browser shows its own picker. Nothing is published yet.
+The **call screen** (`lib/call_page.dart`) publishes your microphone and camera, and shows a grid of `ParticipantVideoView` tiles: you, your screen share, and each remote camera and screen share. Remote video is pulled only while its tile is on screen; audio is pulled automatically. The buttons mute and unmute the microphone and camera, share the screen (a picker on desktop, the browser's on the web; not yet on mobile) and leave. The app bar shows the room's connection state and, for the dev server, the signaling status.
+
+The **Local media** button (camera-and-mic icon on the join screen) opens a local preview: camera and microphone toggles with device dropdowns, the mute model, and on desktop a screen and window picker with thumbnails that previews the chosen share.
 
 ```sh
 cd example
