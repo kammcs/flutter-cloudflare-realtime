@@ -126,6 +126,9 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
 - Call `datachannels/establish` first to set up the SCTP transport. It pulls the SFU's `server-events` channel:
   - request: `{"dataChannel":{"location":"remote","dataChannelName":"server-events"}, "sessionDescription"?: <offer>}`;
   - response: `{"requiresImmediateRenegotiation": bool, "sessionDescription": ..., "dataChannel":{"dataChannelName":"server-events","id":0}}`. Without an offer in the request, the SFU sends an offer to answer through `renegotiate`.
+  - Sending no offer is the simpler path, and the one Cloudflare's `echo-datachannels` example takes (source 6b): the client needs no local channel first, and the SFU opens `server-events` in-band. Sending an offer needs an `application` m-line, which a browser only adds once a channel exists.
+  - `datachannels/new` doesn't have to wait for the connection: the example and `cloud-gaming` call it right after `renegotiate`, and the negotiated channels open once SCTP is up.
+- Per the schema, channel IDs are allocated per endpoint's session, and `waitForAck` and `canReply` are per subscription.
 
 ## Pricing (for context)
 
@@ -148,6 +151,7 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
    - 4b. OpenAPI schema: https://developers.cloudflare.com/realtime/static/realtime-api-2024-05-21.yaml
 5. Simulcast: https://developers.cloudflare.com/realtime/sfu/simulcast/
 6. DataChannels: https://developers.cloudflare.com/realtime/sfu/features/datachannels/
+   - 6b. Examples `echo-datachannels` and `cloud-gaming`: https://github.com/cloudflare/calls-examples
 7. Pricing: https://developers.cloudflare.com/realtime/sfu/pricing
 8. TURN: https://developers.cloudflare.com/realtime/turn/what-is-turn/
 9. RealtimeKit Flutter discontinued: https://developers.cloudflare.com/realtime/realtimekit/release-notes/flutter-core/ · https://pub.dev/packages/realtimekit_core

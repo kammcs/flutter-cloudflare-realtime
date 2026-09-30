@@ -143,6 +143,25 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   }
 
   @override
+  Future<PeerDataChannel> createDataChannel(
+    String label, {
+    required int id,
+    bool ordered = true,
+    int? maxRetransmits,
+  }) async {
+    final init = _NegotiatedDataChannelInit()
+      ..negotiated = true
+      ..id = id
+      ..ordered = ordered
+      // Web: deliver binary as ArrayBuffer, not Blob (whose asynchronous
+      // decoding can reorder messages).
+      ..binaryType = 'binary';
+    if (maxRetransmits != null) init.maxRetransmits = maxRetransmits;
+    final channel = await _pc.createDataChannel(label, init);
+    return _FlutterWebrtcDataChannel(channel, id: id, label: label);
+  }
+
+  @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
@@ -272,4 +291,86 @@ class _FlutterWebrtcTransceiver implements PeerTransceiver {
 
   @override
   Future<void> stop() => _t.stop();
+}
+
+/// `RTCDataChannelInit` that keeps `maxRetransmits: 0`.
+///
+/// `flutter_webrtc`'s `toMap()` only sends `maxRetransmits` when it is
+/// positive, so the unreliable profile (`maxRetransmits: 0`) would silently
+/// become reliable on native platforms, breaking the SFU's rule that every
+/// endpoint mirrors the channel's delivery policy. Android, Darwin and the
+/// C++ desktop plugin all apply the key when present. (The web
+/// implementation doesn't use `toMap()` and drops 0 as well; see
+/// `docs/design.md` §9.)
+class _NegotiatedDataChannelInit extends webrtc.RTCDataChannelInit {
+  @override
+  Map<String, dynamic> toMap() => {
+    ...super.toMap(),
+    if (maxRetransmits >= 0) 'maxRetransmits': maxRetransmits,
+  };
+}
+
+class _FlutterWebrtcDataChannel implements PeerDataChannel {
+  _FlutterWebrtcDataChannel(this._dc, {required this.id, required this.label}) {
+    _dc
+      ..onBufferedAmountChange = _onBufferedAmountChange
+      ..onBufferedAmountLow = _onBufferedAmountLow;
+  }
+
+  final webrtc.RTCDataChannel _dc;
+  final _low = StreamController<int>.broadcast();
+  int _threshold = 0;
+  int _lastAmount = 0;
+
+  @override
+  final int id;
+
+  @override
+  final String label;
+
+  @override
+  webrtc.RTCDataChannelState? get state => _dc.state;
+
+  @override
+  Stream<webrtc.RTCDataChannelState> get onStateChange => _dc.stateChangeStream;
+
+  @override
+  Stream<webrtc.RTCDataChannelMessage> get onMessage => _dc.messageStream;
+
+  @override
+  int get bufferedAmount => _dc.bufferedAmount ?? 0;
+
+  @override
+  set bufferedAmountLowThreshold(int value) {
+    _threshold = value;
+    _dc.bufferedAmountLowThreshold = value;
+  }
+
+  @override
+  Stream<int> get onBufferedAmountLow => _low.stream;
+
+  // Native platforms report every change, and call `onBufferedAmountLow` on
+  // every change below the threshold: detect the crossing here instead.
+  void _onBufferedAmountChange(int current, int changed) {
+    final previous = _lastAmount;
+    _lastAmount = current;
+    if (!kIsWeb && previous > _threshold && current <= _threshold) {
+      if (!_low.isClosed) _low.add(current);
+    }
+  }
+
+  // The browser fires `bufferedamountlow` once per crossing.
+  void _onBufferedAmountLow(int current) {
+    if (kIsWeb && !_low.isClosed) _low.add(current);
+  }
+
+  @override
+  Future<void> send(webrtc.RTCDataChannelMessage message) => _dc.send(message);
+
+  @override
+  Future<void> close() async {
+    if (_low.isClosed) return;
+    await _low.close();
+    await _dc.close();
+  }
 }

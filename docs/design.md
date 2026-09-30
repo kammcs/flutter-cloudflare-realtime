@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), the `Signaling` interface with its in-memory implementation (§4.4), the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10), and the pure-logic building blocks for layer selection (§6.1), active speaker (§7) and reconnection (§8), not yet wired to a room. The rest is design.
+- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2) with DataChannels (§9), the `Signaling` interface with its in-memory implementation (§4.4), the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10), and the pure-logic building blocks for layer selection (§6.1), active speaker (§7) and reconnection (§8), not yet wired to a room. The rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -146,7 +146,7 @@ await session.close();
   - `SfuPeerConnectionFailed` when the connection state becomes `failed`, the ICE state `failed`, the connection closes unexpectedly, or ICE stays `disconnected` longer than `iceDisconnectedTimeout` (7 s, as in partytracks; null disables it).
 
   Its publications and subscriptions become `interrupted` and detach from it; they survive the session. M5 connects a new session and calls `republish` (same `trackName`, current track and encodings) and `resubscribe` (optionally with the publisher's new `sessionId`); `trackStream` then emits the new remote track. `close()` also leaves them `interrupted`, fails queued operations with `SfuSessionClosedException`, and calls `BrokerClient.forgetSession`. partytracks instead re-creates the session inside `session$` and re-pushes automatically; here that policy belongs to M5.
-- **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface: `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
+- **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface: `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The interface also creates negotiated DataChannels (`PeerDataChannel`, §9); the DataChannel layer reaches the session's queue, broker and peer connection through an internal `SfuSessionPort`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
 - **Not done here:** rendering a remote track needs a `MediaStream` for `RTCVideoRenderer`; M3 will wrap the track (for example with `createLocalMediaStream`). Automatic retries (partytracks retries each push/pull with backoff) are left to M5.
 
 ### 4.3 `Room`
@@ -404,17 +404,57 @@ The building blocks are implemented in `lib/src/reconnect/`. They are pure decis
 
 ## 9. DataChannels
 
+Implemented (M7) at the session level in `lib/src/data/`, with the operations on `SfuSession`. `Room` (M3) will expose `room.data` on top of it. partytracks has no DataChannel support to port; the negotiation follows Cloudflare's DataChannels docs, the OpenAPI schema and Cloudflare's `echo-datachannels` example, and the queueing and lifecycle mirror the track code.
+
 - The SFU forwards DataChannels **from a publisher to its subscribers**.
   - `datachannels/establish` sets up the SCTP transport.
   - `datachannels/new` with `location: "local"` publishes a named channel. With `location: "remote"` plus the publisher's `sessionId`, it subscribes.
-  - A subscriber created with `canReply: true` can send back on the publisher's channel. **Only one subscriber can do this.** For general two-way traffic, both sides publish.
+  - A subscriber created with `canReply: true` can send back on the publisher's channel. **Only one subscriber can do this**; granting it to another replaces the previous one. For general two-way traffic, both sides publish.
   - Channels are **negotiated**. The SFU returns a channel `id`, and the client calls `createDataChannel(name, negotiated: true, id: id)`. The publisher's and subscriber's IDs can differ.
-- **Offer two profiles:**
+- **Offer two profiles** (`DataChannelProfile`):
   - **reliable**: ordered, retransmitted (omit `maxRetransmits` and `maxPacketLifeTime`). For keys, clicks, chat and control messages.
   - **unreliable**: `ordered: false`, `maxRetransmits: 0`. For high-rate data such as mouse moves.
+  - The SFU requires every subscriber to **mirror the publisher's policy**, in its request and its own channel, so `subscribeDataChannel` takes the profile too. `maxPacketLifeTime` isn't offered: `flutter_webrtc`'s native plugins ignore it.
 - **Sender identity comes from the channel's `sessionId`, never from the payload.**
   - The app maps `sessionId` → user through its (server-verified) signaling.
   - The package exposes the remote `sessionId` for each channel, so apps can do this. Remote control depends on it.
+
+**API** (exported from the barrel):
+
+```dart
+final input = await session.publishDataChannel('input', profile: DataChannelProfile.unreliable);
+await input.whenOpen();
+await input.send(bytes);                  // or sendText; StateError unless open
+input.bufferedAmount;                     // backpressure
+input.bufferedAmountLowThreshold = 64 * 1024;
+input.bufferedAmountLow.listen((_) => resume());
+
+final sub = await session.subscribeDataChannel(remoteSessionId, 'input',
+    profile: DataChannelProfile.unreliable, canReply: false);
+sub.messages.listen((m) { m.fromSessionId; m.isBinary ? m.binary : m.text; });
+await sub.setCanReply(true);              // datachannels/update
+
+sub.state; sub.states;                    // SfuDataChannelState: pending/connecting/open/interrupted/failed/closed
+await sub.close();                        // datachannels/close
+await session.republishDataChannel(input); await session.resubscribeDataChannel(sub, remoteSessionId: newId);
+```
+
+- **Negotiation sequence**, run lazily inside the first DataChannel operation on a session, through the session's op queue:
+  1. `POST datachannels/establish` with `{"dataChannel": {"location": "remote", "dataChannelName": "server-events"}}` and **no offer**. No local channel has to exist first (the alternative, sending our own offer, needs one to get an `application` m-line).
+  2. The SFU answers with `requiresImmediateRenegotiation` and an offer carrying the `application` m-line. Its `server-events` channel (ID 0) is opened in-band by the SFU; the package ignores it.
+  3. `setRemoteDescription(offer)`, `createAnswer`, `setLocalDescription`, `PUT renegotiate` (the same path a pull uses).
+  4. Then `datachannels/new`; each result's `id` becomes `createDataChannel(name, negotiated: true, id, ordered, maxRetransmits)`. There is no wait for the connection: the channel opens when the SCTP association is up (`connecting` → `open`).
+
+  A failed establish fails that batch and is retried by the next publish or subscribe. Later offers (pushes, closes) carry the `application` m-line automatically.
+- **Batching and errors.** As with tracks: publishes and subscribes in one event-loop turn become one `datachannels/new` each (local and remote kept apart, like `tracks/new`); `canReply` updates one `datachannels/update` (the last value per channel wins); closes one `datachannels/close` by `id`. A per-channel error or a missing `id` fails only that channel with `SfuDataChannelException`; a request-level `errorCode` fails the batch with `SfuRequestException`; `SessionGoneException` fails the session. If creating the local channel fails, or the channel was closed while its request was in flight, the SFU's `id` is released again with `datachannels/close`, best effort. Names are unique per session, and `server-events` is reserved.
+- **Messages.** `DataChannelMessage` carries `binary` or `text`, and `fromSessionId`: the publisher's session for a `RemoteDataChannel`, captured when that underlying channel was opened (so late messages from an old session keep the old ID after a resubscribe). On a `LocalDataChannel`, received messages are replies from the one `canReply` subscriber, which the SFU doesn't identify, so `fromSessionId` is null. `messages` is a broadcast stream that survives moves between sessions.
+- **Lifecycle.** A channel outlives its session, like a track publication. When the session fails or closes, channels become `interrupted` and their underlying channels are closed; M5 moves them with `republishDataChannel` / `resubscribeDataChannel` (which re-establish on the new session). If the underlying channel closes without `close()` (the SFU or the other end dropped it), the channel becomes `interrupted` too, and its SFU `id` is released. `close()` is immediate and terminal locally; on a dead session it makes no SFU call.
+- **Backpressure.** `bufferedAmount` plus an edge-triggered `bufferedAmountLow` stream. Native `flutter_webrtc` reports every buffered-amount change (and fires its low callback on each change below the threshold), so the wrapper detects the crossing itself; on the web the browser's `bufferedamountlow` is used. On native platforms `bufferedAmount` is the last value reported, so it lags slightly.
+- **`flutter_webrtc` realities** (1.6.2+hotfix.3):
+  - `RTCDataChannelInit.toMap()` drops `maxRetransmits: 0` (it only sends positive values), which would silently make the unreliable profile reliable on native platforms. The wrapper overrides `toMap()`; Android, Darwin and the C++ desktop plugin all apply the key when present.
+  - **Web:** `dart_webrtc` drops `maxRetransmits: 0` too and doesn't use `toMap()`, so a browser endpoint of an unreliable channel sends unordered but retransmitted. Needs an upstream fix.
+  - Binary messages are requested as `ArrayBuffer` on the web (`binaryType: 'binary'`); the default `Blob` is decoded asynchronously and can reorder messages.
+- **Not done:** `waitForAck` (hold delivery until the subscriber acks) and a reply-sender identity for `canReply` traffic; neither is needed by the first consumer.
 
 ## 10. Screen share by platform
 
