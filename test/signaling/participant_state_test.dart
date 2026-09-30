@@ -45,6 +45,96 @@ void main() {
       }
     });
 
+    test('muted is omitted when false and read back', () {
+      final muted = mic.copyWith(muted: true);
+      expect(mic.muted, isFalse);
+      expect(mic.toJson(), isNot(contains('muted')));
+      expect(muted.toJson(), {
+        'kind': 'audio',
+        'source': 'microphone',
+        'muted': true,
+      });
+      expect(TrackInfo.fromJson(muted.toJson()), muted);
+      expect(muted, isNot(mic));
+      expect(muted.copyWith(muted: false), mic);
+      expect(muted.toString(), contains('muted'));
+    });
+
+    test('muted is optional and read tolerantly (older peers)', () {
+      expect(
+        TrackInfo.fromJson({'kind': 'audio', 'source': 'microphone'}).muted,
+        isFalse,
+      );
+      expect(
+        TrackInfo.fromJson({
+          'kind': 'audio',
+          'source': 'microphone',
+          'muted': 'yes',
+        }).muted,
+        isFalse,
+      );
+    });
+
+    test('simulcast round-trips and is omitted when null', () {
+      final info = camera.copyWith(
+        simulcast: SimulcastInfo(
+          rids: const ['a', 'b', 'c'],
+          width: 1280,
+          height: 720,
+          scaleDownBy: const [1, 2, 4],
+        ),
+      );
+      expect(camera.toJson(), isNot(contains('simulcast')));
+      expect(info.toJson(), {
+        'kind': 'video',
+        'source': 'camera',
+        'simulcast': {
+          'rids': ['a', 'b', 'c'],
+          'width': 1280,
+          'height': 720,
+          'scaleDownBy': [1, 2, 4],
+        },
+      });
+      // Through a JSON string, as an adapter would carry it.
+      final decoded = jsonDecode(jsonEncode(info.toJson()));
+      expect(TrackInfo.fromJson(decoded as Map<String, Object?>), info);
+      expect(info.copyWith(clearSimulcast: true), camera);
+      expect(info.hashCode, info.copyWith().hashCode);
+    });
+
+    test('a malformed simulcast hint is ignored, not an error', () {
+      TrackInfo parse(Object? simulcast) => TrackInfo.fromJson({
+        'kind': 'video',
+        'source': 'camera',
+        'simulcast': simulcast,
+      });
+      expect(parse('abc').simulcast, isNull);
+      expect(parse({'rids': []}).simulcast, isNull);
+      expect(
+        parse({
+          'rids': ['a', 1],
+        }).simulcast,
+        isNull,
+      );
+      final partial = parse({
+        'rids': ['a', 'b'],
+        'height': 'tall',
+        'width': -3,
+        'scaleDownBy': [1],
+      }).simulcast!;
+      expect(partial.rids, ['a', 'b']);
+      expect(partial.width, isNull);
+      expect(partial.height, isNull);
+      expect(partial.scaleDownBy, isNull);
+      expect(
+        parse({
+          'rids': ['a'],
+          'height': 360.4,
+        }).simulcast,
+        SimulcastInfo(rids: const ['a'], height: 360),
+      );
+    });
+
     test('an unknown source reads as custom', () {
       expect(
         TrackInfo.fromJson({'kind': 'video', 'source': 'hologram'}),
@@ -117,6 +207,12 @@ void main() {
             'cam': camera.copyWith(source: TrackSource.screen),
             'mic': mic,
           },
+        ),
+        isNot(full),
+      );
+      expect(
+        full.copyWith(
+          tracks: {'cam': camera, 'mic': mic.copyWith(muted: true)},
         ),
         isNot(full),
       );

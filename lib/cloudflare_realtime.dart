@@ -3,6 +3,23 @@
 /// See `docs/design.md` for the architecture.
 library;
 
+// Entry point and rooms (design.md §4.3, §11).
+export 'src/room/cloudflare_realtime.dart'
+    show BrokerClientFactory, CloudflareRealtime, SfuSessionConnector;
+export 'src/room/room.dart' hide joinRoom;
+export 'src/room/room_options.dart';
+
+// Rendering (design.md §4.3).
+export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
+export 'src/rendering/renderable_track.dart'
+    show MediaStreamWrapper, RenderableTrack, wrapTrackInMediaStream;
+export 'src/rendering/video_renderer.dart'
+    show
+        FlutterWebrtcVideoRenderer,
+        VideoRenderer,
+        VideoRendererFactory,
+        VideoViewFit;
+
 // Broker client (design.md §4.1, §5).
 export 'src/broker/broker.dart';
 
@@ -52,7 +69,7 @@ export 'src/media/screen_source_picker.dart'
 export 'src/signaling/in_memory_signaling.dart'
     show InMemorySignaling, InMemorySignalingHub;
 export 'src/signaling/participant_state.dart'
-    show ParticipantState, TrackInfo, TrackKind, TrackSource;
+    show ParticipantState, SimulcastInfo, TrackInfo, TrackKind, TrackSource;
 export 'src/signaling/signaling.dart' show Signaling;
 
 // Quality: active speaker and simulcast layer selection (design.md §6, §7).

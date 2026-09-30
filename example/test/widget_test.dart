@@ -14,7 +14,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Room: demo'), findsOneWidget);
-    expect(find.text('Video tiles will appear here.'), findsOneWidget);
+    expect(find.text('Presence only'), findsOneWidget);
     expect(find.text('No one else is here yet.'), findsOneWidget);
     expect(hub.participantsIn('demo').single.participantId, 'ada');
 
@@ -43,5 +43,30 @@ void main() {
     expect(hub.roomIds, isEmpty);
 
     await bob.dispose();
+  });
+
+  testWidgets('the dev-server option validates its fields', (tester) async {
+    await tester.pumpWidget(ExampleApp(hub: InMemorySignalingHub()));
+
+    await tester.tap(find.text('In-memory (this app)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dev server (multi-device)').last);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'Dev server URL'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Your name'), findsNothing);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Dev server URL'),
+      'not a url',
+    );
+    await tester.tap(find.text('Join'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Enter the server URL, such as http://192.168.1.10:8787'),
+      findsOneWidget,
+    );
+    expect(find.text('Enter the dev token the server printed'), findsOneWidget);
+    expect(find.text('Enter a user name'), findsOneWidget);
+    expect(find.text('Join a room'), findsOneWidget, reason: 'not joined');
   });
 }

@@ -1,16 +1,17 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 
+import 'call_page.dart';
+import 'dev_config.dart';
 import 'local_media_page.dart';
+import 'presence_page.dart';
+import 'ws_signaling.dart';
 
 void main() {
   runApp(ExampleApp(hub: InMemorySignalingHub()));
 }
 
 /// The example app.
-///
-/// Signaling runs in memory for now: every participant shares [hub], so the
-/// demo works in a single process without a backend.
 class ExampleApp extends StatelessWidget {
   const ExampleApp({
     super.key,
@@ -18,9 +19,10 @@ class ExampleApp extends StatelessWidget {
     this.mediaBackend = const FlutterWebrtcMediaBackend(),
   });
 
+  /// Shared by every in-memory participant in this process.
   final InMemorySignalingHub hub;
 
-  /// Where the local media page captures from. Tests pass a fake.
+  /// Where local media is captured from. Tests pass a fake.
   final MediaBackend mediaBackend;
 
   @override
@@ -32,14 +34,30 @@ class ExampleApp extends StatelessWidget {
         colorSchemeSeed: Colors.orange,
         brightness: Brightness.dark,
       ),
-      home: RoomDemoPage(hub: hub, mediaBackend: mediaBackend),
+      home: JoinPage(hub: hub, mediaBackend: mediaBackend),
     );
   }
 }
 
-/// Joins a room through [InMemorySignaling] and lists who else is there.
-class RoomDemoPage extends StatefulWidget {
-  const RoomDemoPage({
+/// Which signaling transport the call uses.
+enum SignalingChoice {
+  /// [InMemorySignaling]: participants in this app only. With a broker URL,
+  /// a real call (a single participant, plus simulated ones); without, a
+  /// presence-only demo.
+  inMemory('In-memory (this app)'),
+
+  /// The dev server's WebSocket signaling and broker
+  /// (`tools/dev-server/`): calls across devices.
+  devServer('Dev server (multi-device)');
+
+  const SignalingChoice(this.label);
+
+  final String label;
+}
+
+/// Picks a signaling transport and joins a room.
+class JoinPage extends StatefulWidget {
+  const JoinPage({
     super.key,
     required this.hub,
     this.mediaBackend = const FlutterWebrtcMediaBackend(),
@@ -49,162 +67,195 @@ class RoomDemoPage extends StatefulWidget {
   final MediaBackend mediaBackend;
 
   @override
-  State<RoomDemoPage> createState() => _RoomDemoPageState();
+  State<JoinPage> createState() => _JoinPageState();
 }
 
-class _RoomDemoPageState extends State<RoomDemoPage> {
-  static const _camera = TrackInfo(
-    kind: TrackKind.video,
-    source: TrackSource.camera,
-  );
-  static const _microphone = TrackInfo(
-    kind: TrackKind.audio,
-    source: TrackSource.microphone,
-  );
+class _JoinPageState extends State<JoinPage> {
+  static final DevServerConfig? _devDefaults =
+      DevServerConfig.fromEnvironment();
 
+  final _formKey = GlobalKey<FormState>();
+  late SignalingChoice _choice = _devDefaults == null
+      ? SignalingChoice.inMemory
+      : SignalingChoice.devServer;
   final _roomController = TextEditingController(text: 'demo');
+
+  // In-memory signaling.
   final _nameController = TextEditingController(text: 'me');
   final _brokerUrlController = TextEditingController();
   final _brokerTokenController = TextEditingController();
-  late final InMemorySignaling _signaling = InMemorySignaling(widget.hub);
 
-  /// The broker and SFU session, when a broker URL was given.
-  HttpBrokerClient? _broker;
-  SfuSession? _session;
-  CameraSource? _cameraSource;
-  LocalTrackPublication? _cameraPublication;
+  // Dev server.
+  late final _serverUrlController = TextEditingController(
+    text: _devDefaults?.serverUrl.toString() ?? '',
+  );
+  late final _devTokenController = TextEditingController(
+    text: _devDefaults?.token ?? '',
+  );
+  late final _userNameController = TextEditingController(
+    text: _devDefaults?.userName ?? '',
+  );
+
   bool _joining = false;
-  late final Stream<List<ParticipantState>> _participants =
-      _signaling.participants;
-
-  /// Simulated participants this page added, by participant ID.
-  final Map<String, InMemorySignaling> _guests = {};
-  int _guestCount = 0;
   String? _error;
+  int _guestCount = 0;
 
-  bool get _joined => _signaling.roomId != null;
+  @override
+  void dispose() {
+    for (final c in [
+      _roomController,
+      _nameController,
+      _brokerUrlController,
+      _brokerTokenController,
+      _serverUrlController,
+      _devTokenController,
+      _userNameController,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
 
   Future<void> _join() async {
+    if (_joining || !(_formKey.currentState?.validate() ?? false)) return;
     final roomId = _roomController.text.trim();
-    final name = _nameController.text.trim();
-    if (roomId.isEmpty || name.isEmpty || _joining) return;
-    setState(() => _joining = true);
+    setState(() {
+      _joining = true;
+      _error = null;
+    });
     try {
-      final sessionId = await _connectSession(roomId);
-      await _signaling.join(
-        roomId,
-        ParticipantState(
-          participantId: name,
-          sessionId: sessionId,
-          metadata: {'displayName': name},
+      if (_choice == SignalingChoice.inMemory &&
+          _brokerUrlController.text.trim().isEmpty) {
+        await _joinPresenceOnly(roomId);
+        return;
+      }
+      final setup = _choice == SignalingChoice.inMemory
+          ? _inMemorySetup(roomId)
+          : _devServerSetup();
+      final Room room;
+      try {
+        room =
+            await CloudflareRealtime(
+              broker: setup.broker,
+              mediaBackend: widget.mediaBackend,
+            ).join(
+              roomId,
+              signaling: setup.signaling,
+              participantId: setup.participantId,
+              metadata: {'displayName': setup.displayName},
+            );
+      } catch (_) {
+        await setup.disposeSignaling();
+        rethrow;
+      }
+      if (!mounted) {
+        await room.leave();
+        await setup.disposeSignaling();
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CallPage(
+            room: room,
+            setup: setup,
+            mediaBackend: widget.mediaBackend,
+          ),
         ),
       );
-      setState(() => _error = null);
-      // TODO(M3): replace this with a Room, which also publishes the
-      // microphone and pulls what others publish.
-      if (_session case final session?) {
-        _publishCamera(session, name).catchError((Object e) {
-          if (mounted) setState(() => _error = 'Camera not published: $e');
-        });
-      }
     } on StateError catch (e) {
-      await _closeSession();
       setState(() => _error = e.message);
     } on Exception catch (e) {
       // Broker and session exceptions never contain SDP or tokens.
-      await _closeSession();
-      setState(() => _error = 'Could not connect: $e');
+      setState(() => _error = 'Could not join: $e');
     } finally {
       if (mounted) setState(() => _joining = false);
     }
   }
 
-  /// Creates an SFU session through the broker, if a broker URL was given.
-  /// Returns its session ID, or null without a broker.
-  Future<String?> _connectSession(String roomId) async {
-    final url = _brokerUrlController.text.trim();
-    if (url.isEmpty) return null;
+  Future<void> _joinPresenceOnly(String roomId) async {
+    final signaling = InMemorySignaling(widget.hub);
+    try {
+      await signaling.join(
+        roomId,
+        ParticipantState(
+          participantId: _nameController.text.trim(),
+          metadata: {'displayName': _nameController.text.trim()},
+        ),
+      );
+    } catch (_) {
+      await signaling.dispose();
+      rethrow;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PresencePage(hub: widget.hub, signaling: signaling),
+      ),
+    );
+  }
+
+  CallSetup _inMemorySetup(String roomId) {
+    final name = _nameController.text.trim();
     final token = _brokerTokenController.text.trim();
-    final broker = _broker = HttpBrokerClient(
-      roomId: roomId,
-      config: BrokerConfig(
-        baseUrl: Uri.parse(url),
+    final signaling = InMemorySignaling(widget.hub);
+    final guests = <InMemorySignaling>[];
+    return CallSetup(
+      signaling: signaling,
+      participantId: name,
+      displayName: name,
+      broker: BrokerConfig(
+        baseUrl: Uri.parse(_brokerUrlController.text.trim()),
         headers: () async => {
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',
         },
       ),
+      disposeSignaling: () async {
+        for (final guest in guests) {
+          await guest.dispose();
+        }
+        await signaling.dispose();
+      },
+      // A presence-only guest: it has a (fake) session so it gets a tile,
+      // and publishes nothing, so nobody tries to pull from it.
+      addSimulatedParticipant: () async {
+        final id = 'guest-${++_guestCount}';
+        final guest = InMemorySignaling(widget.hub);
+        guests.add(guest);
+        await guest.join(
+          roomId,
+          ParticipantState(
+            participantId: id,
+            sessionId: 'simulated-session-$_guestCount',
+            metadata: {'displayName': id},
+          ),
+        );
+      },
     );
-    final session = _session = await SfuSession.connect(broker: broker);
-    return session.sessionId;
   }
 
-  /// Pushes the local camera to [session] and, once media flows, advertises
-  /// it in signaling so others could pull it.
-  Future<void> _publishCamera(SfuSession session, String name) async {
-    final camera = _cameraSource = CameraSource(backend: widget.mediaBackend);
-    if (!await camera.startBroadcasting()) {
-      throw StateError('the camera could not start');
-    }
-    final publication = _cameraPublication = await session.publishTrackStream(
-      camera.broadcastTrack.map((captured) => captured?.track),
-      kind: 'video',
-      options: PublishOptions(trackName: '$name-camera'),
+  CallSetup _devServerSetup() {
+    final dev = DevServerConfig.parse(
+      serverUrl: _serverUrlController.text,
+      token: _devTokenController.text,
+      userName: _userNameController.text,
     );
-    await publication.whenSending().timeout(const Duration(seconds: 15));
-    final self = _signaling.self;
-    if (self == null || !identical(_session, session)) return;
-    await _signaling.update(
-      self.copyWith(tracks: {...self.tracks, publication.trackName: _camera}),
+    final signaling = dev.createSignaling(
+      onError: (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Signaling: $error')));
+      },
     );
-  }
-
-  Future<void> _closeSession() async {
-    final publication = _cameraPublication;
-    _cameraPublication = null;
-    if (publication != null) {
-      try {
-        await publication.unpublish();
-      } on Exception {
-        // The session is closing anyway.
-      }
-    }
-    await _cameraSource?.dispose();
-    _cameraSource = null;
-    await _session?.close();
-    _session = null;
-    _broker?.dispose();
-    _broker = null;
-  }
-
-  Future<void> _leave() async {
-    for (final guest in _guests.values) {
-      await guest.dispose();
-    }
-    _guests.clear();
-    await _signaling.leave();
-    await _closeSession();
-    setState(() {});
-  }
-
-  Future<void> _addGuest() async {
-    final roomId = _signaling.roomId;
-    if (roomId == null) return;
-    final id = 'guest-${++_guestCount}';
-    final guest = InMemorySignaling(widget.hub);
-    await guest.join(
-      roomId,
-      ParticipantState(
-        participantId: id,
-        sessionId: 'simulated-session-$_guestCount',
-        tracks: {'$id-cam': _camera, '$id-mic': _microphone},
+    return CallSetup(
+      signaling: signaling,
+      participantId: dev.newParticipantId(),
+      displayName: dev.userName,
+      broker: dev.brokerConfig(),
+      disposeSignaling: signaling.dispose,
+      signalingStatus: signaling.statusChanges.map(
+        (WsSignalingStatus status) => status.name,
       ),
     );
-    setState(() => _guests[id] = guest);
-  }
-
-  Future<void> _removeGuest(String id) async {
-    await _guests.remove(id)?.dispose();
-    setState(() {});
   }
 
   void _openLocalMedia() {
@@ -216,224 +267,122 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
   }
 
   @override
-  void dispose() {
-    for (final guest in _guests.values) {
-      guest.dispose();
-    }
-    _signaling.dispose();
-    _cameraSource?.dispose();
-    _session?.close();
-    _broker?.dispose();
-    _roomController.dispose();
-    _nameController.dispose();
-    _brokerUrlController.dispose();
-    _brokerTokenController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_joined ? 'Room: ${_signaling.roomId}' : 'Join a room'),
+        title: const Text('Join a room'),
         actions: [
           IconButton(
             tooltip: 'Local media',
             icon: const Icon(Icons.perm_camera_mic),
             onPressed: _openLocalMedia,
           ),
-          if (_joined)
-            IconButton(
-              tooltip: 'Leave',
-              icon: const Icon(Icons.logout),
-              onPressed: _leave,
-            ),
         ],
       ),
-      body: SafeArea(child: _joined ? _buildRoom() : _buildJoinForm()),
-      floatingActionButton: _joined
-          ? FloatingActionButton.extended(
-              onPressed: _addGuest,
-              icon: const Icon(Icons.person_add),
-              label: const Text('Add simulated participant'),
-            )
-          : null,
-    );
-  }
-
-  Widget _buildJoinForm() {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: _roomController,
-                decoration: const InputDecoration(labelText: 'Room ID'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: 'Your name'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _brokerUrlController,
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'Broker URL (optional)',
-                  helperText: 'Set it to create a real SFU session.',
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _brokerTokenController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Broker bearer token (optional)',
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _joining ? null : _join,
-                child: Text(_joining ? 'Connecting…' : 'Join'),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRoom() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Expanded(flex: 2, child: _VideoPlaceholder()),
-        if (_session case final session?) _SessionStatus(session: session),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            'You are ${_signaling.self?.participantId}. Others in the room:',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
-        ),
-        Expanded(
-          flex: 3,
-          child: StreamBuilder<List<ParticipantState>>(
-            stream: _participants,
-            initialData: const [],
-            builder: (context, snapshot) {
-              final participants = snapshot.data ?? const [];
-              if (participants.isEmpty) {
-                return const Center(child: Text('No one else is here yet.'));
-              }
-              return ListView(
-                padding: const EdgeInsets.only(bottom: 88),
-                children: [
-                  for (final p in participants)
-                    _ParticipantTile(
-                      participant: p,
-                      onRemove: _guests.containsKey(p.participantId)
-                          ? () => _removeGuest(p.participantId)
-                          : null,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  spacing: 8,
+                  children: [
+                    DropdownButtonFormField<SignalingChoice>(
+                      initialValue: _choice,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Signaling'),
+                      items: [
+                        for (final choice in SignalingChoice.values)
+                          DropdownMenuItem(
+                            value: choice,
+                            child: Text(
+                              choice.label,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (choice) => setState(() => _choice = choice!),
                     ),
-                ],
-              );
-            },
+                    TextFormField(
+                      controller: _roomController,
+                      decoration: const InputDecoration(labelText: 'Room ID'),
+                      validator: (v) =>
+                          (v ?? '').trim().isEmpty ? 'Enter a room ID' : null,
+                    ),
+                    ...switch (_choice) {
+                      SignalingChoice.inMemory => _inMemoryFields(),
+                      SignalingChoice.devServer => _devServerFields(),
+                    },
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed: _joining ? null : _join,
+                      child: Text(_joining ? 'Connecting…' : 'Join'),
+                    ),
+                    if (_error != null)
+                      Text(
+                        _error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-      ],
-    );
-  }
-}
-
-/// Where video tiles will go once rooms can pull media (roadmap M3).
-class _VideoPlaceholder extends StatelessWidget {
-  const _VideoPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.videocam_outlined, size: 48, color: colors.outline),
-          const SizedBox(height: 8),
-          const Text('Video tiles will appear here.'),
-        ],
       ),
     );
   }
-}
 
-/// The SFU session's ID and connection state.
-class _SessionStatus extends StatelessWidget {
-  const _SessionStatus({required this.session});
-
-  final SfuSession session;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<SfuConnectionState>(
-      stream: session.connectionState,
-      initialData: session.currentConnectionState,
-      builder: (context, snapshot) => ListTile(
-        leading: const Icon(Icons.cloud_outlined),
-        title: Text('SFU session ${session.sessionId}'),
-        subtitle: Text(
-          'Connection: ${snapshot.data?.name}'
-          '${session.failure == null ? '' : ' (${session.failure!.reason})'}',
-        ),
+  List<Widget> _inMemoryFields() => [
+    TextFormField(
+      controller: _nameController,
+      decoration: const InputDecoration(labelText: 'Your name'),
+      validator: (v) => (v ?? '').trim().isEmpty ? 'Enter a name' : null,
+    ),
+    TextFormField(
+      controller: _brokerUrlController,
+      keyboardType: TextInputType.url,
+      decoration: const InputDecoration(
+        labelText: 'Broker URL (optional)',
+        helperText: 'Without one, the demo shows presence only.',
       ),
-    );
-  }
-}
-
-class _ParticipantTile extends StatelessWidget {
-  const _ParticipantTile({required this.participant, this.onRemove});
-
-  final ParticipantState participant;
-  final VoidCallback? onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final tracks = participant.tracks.entries
-        .map((e) => '${e.key} (${e.value.kind.name}, ${e.value.source.name})')
-        .join(', ');
-    return ListTile(
-      leading: const Icon(Icons.person),
-      title: Text(participant.participantId),
-      subtitle: Text(
-        'Session: ${participant.sessionId ?? 'none'}\n'
-        'Tracks: ${tracks.isEmpty ? 'none' : tracks}',
+    ),
+    TextFormField(
+      controller: _brokerTokenController,
+      obscureText: true,
+      decoration: const InputDecoration(
+        labelText: 'Broker bearer token (optional)',
       ),
-      isThreeLine: true,
-      trailing: onRemove == null
-          ? null
-          : IconButton(
-              tooltip: 'Remove',
-              icon: const Icon(Icons.close),
-              onPressed: onRemove,
-            ),
-    );
-  }
+    ),
+  ];
+
+  List<Widget> _devServerFields() => [
+    TextFormField(
+      controller: _serverUrlController,
+      keyboardType: TextInputType.url,
+      decoration: const InputDecoration(
+        labelText: 'Dev server URL',
+        helperText: 'See tools/dev-server/README.md',
+      ),
+      validator: (v) => DevServerConfig.validateServerUrl(v ?? ''),
+    ),
+    TextFormField(
+      controller: _devTokenController,
+      obscureText: true,
+      decoration: const InputDecoration(labelText: 'Dev token'),
+      validator: (v) => DevServerConfig.validateToken(v ?? ''),
+    ),
+    TextFormField(
+      controller: _userNameController,
+      decoration: const InputDecoration(labelText: 'User name'),
+      validator: (v) => DevServerConfig.validateUserName(v ?? ''),
+    ),
+  ];
 }

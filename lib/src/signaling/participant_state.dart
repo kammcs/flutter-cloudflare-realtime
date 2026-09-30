@@ -34,20 +34,146 @@ enum TrackSource {
   custom,
 }
 
+/// The simulcast layers a published video track sends: a hint for
+/// subscribers choosing a layer (`docs/design.md` §6).
+///
+/// [rids] lists the encodings highest first (`a`, `b`, `c` by default).
+/// [width] and [height] are the requested size of the highest layer, and
+/// [scaleDownBy] each layer's `scaleResolutionDownBy`, in the order of
+/// [rids]. Sizes are what the publisher asked for; the capture can come out
+/// smaller.
+///
+/// ## Wire shape
+///
+/// ```json
+/// {"rids": ["a", "b", "c"], "width": 1280, "height": 720, "scaleDownBy": [1, 2, 4]}
+/// ```
+///
+/// Only `rids` is required. [SimulcastInfo.fromJson] is tolerant: this is a
+/// hint, so malformed input reads as `null` (no hint) rather than failing
+/// the whole participant state.
+@immutable
+class SimulcastInfo {
+  /// Creates a simulcast description.
+  ///
+  /// [rids] must not be empty. When given, [scaleDownBy] has one entry per
+  /// rid.
+  SimulcastInfo({
+    required List<String> rids,
+    this.width,
+    this.height,
+    List<double>? scaleDownBy,
+  }) : assert(rids.isNotEmpty, 'rids must not be empty'),
+       assert(
+         scaleDownBy == null || scaleDownBy.length == rids.length,
+         'scaleDownBy needs one entry per rid',
+       ),
+       rids = List.unmodifiable(rids),
+       scaleDownBy = scaleDownBy == null
+           ? null
+           : List.unmodifiable(scaleDownBy);
+
+  /// Parses the wire shape written by [toJson], or returns `null` if [json]
+  /// isn't a usable simulcast description.
+  static SimulcastInfo? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final rids = json['rids'];
+    if (rids is! List || rids.isEmpty || rids.any((r) => r is! String)) {
+      return null;
+    }
+    int? positive(Object? value) =>
+        value is num && value.isFinite && value > 0 ? value.round() : null;
+    List<double>? scales;
+    final rawScales = json['scaleDownBy'];
+    if (rawScales is List &&
+        rawScales.length == rids.length &&
+        rawScales.every((s) => s is num && s.isFinite && s >= 1)) {
+      scales = [for (final s in rawScales) (s as num).toDouble()];
+    }
+    return SimulcastInfo(
+      rids: rids.cast<String>(),
+      width: positive(json['width']),
+      height: positive(json['height']),
+      scaleDownBy: scales,
+    );
+  }
+
+  /// The encodings' RIDs, highest layer first.
+  final List<String> rids;
+
+  /// The highest layer's requested width in pixels, if known.
+  final int? width;
+
+  /// The highest layer's requested height in pixels, if known.
+  final int? height;
+
+  /// Each layer's `scaleResolutionDownBy`, in the order of [rids]. `null`
+  /// means the package's convention: 1, 2, 4, ...
+  final List<double>? scaleDownBy;
+
+  /// The wire shape documented on [SimulcastInfo].
+  Map<String, Object?> toJson() => {
+    'rids': rids,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (scaleDownBy != null)
+      'scaleDownBy': [
+        for (final s in scaleDownBy!)
+          if (s == s.roundToDouble()) s.toInt() else s,
+      ],
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is SimulcastInfo &&
+      listEquals(other.rids, rids) &&
+      other.width == width &&
+      other.height == height &&
+      listEquals(other.scaleDownBy, scaleDownBy);
+
+  @override
+  int get hashCode => Object.hash(
+    Object.hashAll(rids),
+    width,
+    height,
+    scaleDownBy == null ? null : Object.hashAll(scaleDownBy!),
+  );
+
+  @override
+  String toString() =>
+      'SimulcastInfo(${rids.join(',')}'
+      '${height == null ? '' : ', ${width ?? '?'}x$height'})';
+}
+
 /// Describes one track a participant publishes to the SFU.
 ///
 /// Participants learn what to pull from each other's [TrackInfo]s: the key it
 /// sits under in [ParticipantState.tracks] is the SFU `trackName`, and
 /// [ParticipantState.sessionId] is the session to pull it from.
+///
+/// Two optional fields help subscribers; peers that don't know them keep
+/// working:
+///
+/// - [muted]: the publisher isn't sending media for the track right now. The
+///   track stays published, so unmuting needs no new pull.
+/// - [simulcast]: the layers a simulcast video track sends. Subscribers ask
+///   for a layer (`preferredRid`) only when it is set.
 @immutable
 class TrackInfo {
   /// Creates a track description.
-  const TrackInfo({required this.kind, required this.source});
+  const TrackInfo({
+    required this.kind,
+    required this.source,
+    this.muted = false,
+    this.simulcast,
+  });
 
   /// Parses the wire shape written by [toJson].
   ///
   /// Throws a [FormatException] if `kind` is missing or unknown. An unknown
   /// `source` becomes [TrackSource.custom]; a missing one is an error.
+  /// `muted` and `simulcast` are optional and read tolerantly: anything but
+  /// `true` is not muted, and a malformed `simulcast` is ignored.
   factory TrackInfo.fromJson(Map<String, Object?> json) {
     final kind = json['kind'];
     final source = json['source'];
@@ -64,6 +190,8 @@ class TrackInfo {
     return TrackInfo(
       kind: parsedKind,
       source: TrackSource.values.asNameMap()[source] ?? TrackSource.custom,
+      muted: json['muted'] == true,
+      simulcast: SimulcastInfo.fromJson(json['simulcast']),
     );
   }
 
@@ -73,22 +201,53 @@ class TrackInfo {
   /// What the track captures.
   final TrackSource source;
 
-  /// The wire shape: `{"kind": "video", "source": "camera"}`.
-  Map<String, Object?> toJson() => {'kind': kind.name, 'source': source.name};
+  /// Whether the publisher is currently not sending media for this track.
+  final bool muted;
 
-  /// Returns a copy with the given fields replaced.
-  TrackInfo copyWith({TrackKind? kind, TrackSource? source}) =>
-      TrackInfo(kind: kind ?? this.kind, source: source ?? this.source);
+  /// The simulcast layers the track sends, or `null` for a track sent as a
+  /// single encoding (and for audio).
+  final SimulcastInfo? simulcast;
+
+  /// The wire shape: `{"kind": "video", "source": "camera"}`, plus
+  /// `"muted": true` while muted and a `"simulcast"` object for simulcast
+  /// video. Both are omitted when not set.
+  Map<String, Object?> toJson() => {
+    'kind': kind.name,
+    'source': source.name,
+    if (muted) 'muted': true,
+    if (simulcast != null) 'simulcast': simulcast!.toJson(),
+  };
+
+  /// Returns a copy with the given fields replaced. Set [clearSimulcast] to
+  /// remove [simulcast]; it takes precedence.
+  TrackInfo copyWith({
+    TrackKind? kind,
+    TrackSource? source,
+    bool? muted,
+    SimulcastInfo? simulcast,
+    bool clearSimulcast = false,
+  }) => TrackInfo(
+    kind: kind ?? this.kind,
+    source: source ?? this.source,
+    muted: muted ?? this.muted,
+    simulcast: clearSimulcast ? null : (simulcast ?? this.simulcast),
+  );
 
   @override
   bool operator ==(Object other) =>
-      other is TrackInfo && other.kind == kind && other.source == source;
+      other is TrackInfo &&
+      other.kind == kind &&
+      other.source == source &&
+      other.muted == muted &&
+      other.simulcast == simulcast;
 
   @override
-  int get hashCode => Object.hash(kind, source);
+  int get hashCode => Object.hash(kind, source, muted, simulcast);
 
   @override
-  String toString() => 'TrackInfo(${kind.name}, ${source.name})';
+  String toString() =>
+      'TrackInfo(${kind.name}, ${source.name}'
+      '${muted ? ', muted' : ''}${simulcast == null ? '' : ', $simulcast'})';
 }
 
 const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
@@ -109,8 +268,12 @@ const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
 ///   "participantId": "user-123:device-a",
 ///   "sessionId": "2a45a4d8...",
 ///   "tracks": {
-///     "cam-9f2c": {"kind": "video", "source": "camera"},
-///     "mic-1b7e": {"kind": "audio", "source": "microphone"}
+///     "cam-9f2c": {
+///       "kind": "video",
+///       "source": "camera",
+///       "simulcast": {"rids": ["a", "b", "c"], "width": 1280, "height": 720}
+///     },
+///     "mic-1b7e": {"kind": "audio", "source": "microphone", "muted": true}
 ///   },
 ///   "metadata": {"displayName": "Ada"}
 /// }
@@ -121,7 +284,9 @@ const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
 ///   session. It changes when the session is replaced, for example after a
 ///   reconnection.
 /// - `tracks` (object, required, may be empty): SFU `trackName` to
-///   [TrackInfo].
+///   [TrackInfo]: `kind` and `source` (required), `muted` (optional,
+///   omitted when `false`) and `simulcast` (optional, see
+///   [SimulcastInfo]).
 /// - `metadata` (object, optional): omitted when [metadata] is `null`.
 ///
 /// Readers ignore unknown keys, so later versions can add fields.
