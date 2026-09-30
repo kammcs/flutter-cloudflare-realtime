@@ -88,8 +88,12 @@ class FakePeerConnectionFactory {
 /// transceiver for each [FakeRemoteMedia] that [remoteMedia] returns for its
 /// SDP (wire it to `FakeBrokerClient.remoteMediaForOffer`).
 ///
+/// Signaling states follow WebRTC: setting an offer in the wrong state (for
+/// example a remote offer while a local offer is pending) throws, as a
+/// real peer connection does, and [rollback] withdraws a pending offer.
+///
 /// Every call is appended to [log], so tests can check sequencing. Make the
-/// next call to a method throw with [failNext].
+/// next call to a method throw with [failNext] (including `rollback`).
 class FakePeerConnection implements PeerConnection {
   FakePeerConnection({this.configuration = const {}, this.remoteMedia});
 
@@ -158,8 +162,56 @@ class FakePeerConnection implements PeerConnection {
   @override
   Stream<RTCIceConnectionState> get onIceConnectionState => _iceStates.stream;
 
+  /// The current signaling state, synchronously.
+  RTCSignalingState get currentSignalingState => _signalingState;
+
   @override
-  RTCSignalingState get signalingState => _signalingState;
+  Future<RTCSignalingState> signalingState() async => _signalingState;
+
+  @override
+  Future<void> rollback() async {
+    _record('rollback(${_rollbackSide ?? 'none'})', 'rollback');
+    switch (_signalingState) {
+      case RTCSignalingState.RTCSignalingStateHaveLocalOffer:
+        // Mids assigned by the withdrawn offer are released.
+        for (final t in _pendingLocal) {
+          t.currentMid = null;
+        }
+      case RTCSignalingState.RTCSignalingStateHaveRemoteOffer:
+        // Transceivers the withdrawn remote offer created go away.
+        transceivers.removeWhere(_pendingRemote.contains);
+      case _:
+        break;
+    }
+    _pendingLocal.clear();
+    _pendingRemote.clear();
+    _signalingState = RTCSignalingState.RTCSignalingStateStable;
+  }
+
+  String? get _rollbackSide => switch (_signalingState) {
+    RTCSignalingState.RTCSignalingStateHaveLocalOffer => 'local',
+    RTCSignalingState.RTCSignalingStateHaveRemoteOffer => 'remote',
+    _ => null,
+  };
+
+  /// The active send transceivers (not stopped) each offer carried, in
+  /// order: what the SFU would see as sending m-lines.
+  final List<List<FakeTransceiver>> offeredSenders = [];
+
+  final List<FakeTransceiver> _pendingLocal = [];
+  final List<FakeTransceiver> _pendingRemote = [];
+
+  void _requireState(Set<RTCSignalingState> allowed, String what) {
+    if (!allowed.contains(_signalingState)) {
+      throw StateError('$what is invalid in ${_signalingState.name}');
+    }
+  }
+
+  static const _stable = RTCSignalingState.RTCSignalingStateStable;
+  static const _haveLocalOffer =
+      RTCSignalingState.RTCSignalingStateHaveLocalOffer;
+  static const _haveRemoteOffer =
+      RTCSignalingState.RTCSignalingStateHaveRemoteOffer;
 
   @override
   Future<PeerTransceiver> addSendTransceiver({
@@ -182,6 +234,10 @@ class FakePeerConnection implements PeerConnection {
   @override
   Future<SessionDescription> createOffer() async {
     _record('createOffer', 'createOffer');
+    offeredSenders.add([
+      for (final t in transceivers)
+        if (t.direction == 'sendonly' && !t.stopped) t,
+    ]);
     return SessionDescription.offer('offer-${++_offers}');
   }
 
@@ -197,15 +253,21 @@ class FakePeerConnection implements PeerConnection {
       'setLocalDescription(${description.type.name})',
       'setLocalDescription',
     );
-    localDescription = description;
     if (description.type == SdpType.offer) {
+      _requireState({_stable, _haveLocalOffer}, 'setLocalDescription(offer)');
       for (final t in transceivers) {
-        if (t.currentMid == null && !t.stopped) t.currentMid = '${_mids++}';
+        if (t.currentMid == null && !t.stopped) {
+          t.currentMid = '${_mids++}';
+          _pendingLocal.add(t);
+        }
       }
-      _signalingState = RTCSignalingState.RTCSignalingStateHaveLocalOffer;
+      _signalingState = _haveLocalOffer;
     } else {
-      _signalingState = RTCSignalingState.RTCSignalingStateStable;
+      _requireState({_haveRemoteOffer}, 'setLocalDescription(answer)');
+      _pendingRemote.clear();
+      _signalingState = _stable;
     }
+    localDescription = description;
   }
 
   @override
@@ -214,26 +276,29 @@ class FakePeerConnection implements PeerConnection {
       'setRemoteDescription(${description.type.name})',
       'setRemoteDescription',
     );
-    remoteDescription = description;
     if (description.type == SdpType.offer) {
+      _requireState({_stable, _haveRemoteOffer}, 'setRemoteDescription(offer)');
       for (final media in remoteMedia?.call(description.sdp) ?? const []) {
-        transceivers.add(
-          FakeTransceiver._(
-            this,
+        final t = FakeTransceiver._(
+          this,
+          kind: media.kind,
+          direction: 'recvonly',
+          mid: media.mid,
+          receiverTrack: FakeMediaStreamTrack(
             kind: media.kind,
-            direction: 'recvonly',
-            mid: media.mid,
-            receiverTrack: FakeMediaStreamTrack(
-              kind: media.kind,
-              id: 'remote-${media.mid}',
-            ),
+            id: 'remote-${media.mid}',
           ),
         );
+        transceivers.add(t);
+        _pendingRemote.add(t);
       }
-      _signalingState = RTCSignalingState.RTCSignalingStateHaveRemoteOffer;
+      _signalingState = _haveRemoteOffer;
     } else {
-      _signalingState = RTCSignalingState.RTCSignalingStateStable;
+      _requireState({_haveLocalOffer}, 'setRemoteDescription(answer)');
+      _pendingLocal.clear();
+      _signalingState = _stable;
     }
+    remoteDescription = description;
   }
 
   @override

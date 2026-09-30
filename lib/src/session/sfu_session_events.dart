@@ -71,6 +71,11 @@ enum PeerConnectionFailureKind {
 
   /// The peer connection closed without `SfuSession.close()` being called.
   closedUnexpectedly,
+
+  /// A failed SDP exchange left the signaling state unstable and rolling it
+  /// back failed (or isn't supported on this platform), so no further
+  /// negotiation is possible.
+  signalingStuck,
 }
 
 /// The session's peer connection failed.

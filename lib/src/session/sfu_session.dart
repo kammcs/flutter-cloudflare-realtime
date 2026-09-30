@@ -6,7 +6,11 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter_webrtc/flutter_webrtc.dart'
-    show MediaStreamTrack, RTCIceConnectionState, RTCPeerConnectionState;
+    show
+        MediaStreamTrack,
+        RTCIceConnectionState,
+        RTCPeerConnectionState,
+        RTCSignalingState;
 
 import '../broker/broker_client.dart';
 import '../broker/broker_exception.dart';
@@ -465,36 +469,75 @@ class SfuSession {
     required bool requireAlive,
   }) {
     unawaited(
-      _queue
-          .schedule(() async {
-            if (requireAlive) _throwIfUnusable();
-            await run(batch);
-          })
-          .then(
-            (_) {
-              for (final item in batch) {
-                item.fail(
-                  this,
-                  const SfuSessionException('the operation had no result'),
-                );
-              }
-            },
-            onError: (Object error, StackTrace stackTrace) {
-              // A platform error from a peer connection closed under the
-              // operation reads better as "closed".
-              final reported =
-                  _closed &&
-                      error is! SfuSessionException &&
-                      error is! BrokerException
-                  ? const SfuSessionClosedException()
-                  : error;
-              for (final item in batch) {
-                item.fail(this, reported, stackTrace);
-              }
-            },
-          ),
+      _queue.schedule(() async {
+        Object? error;
+        StackTrace? stackTrace;
+        try {
+          if (requireAlive) _throwIfUnusable();
+          // Heal anything a previous operation left half-negotiated.
+          await _recoverSignaling();
+          if (requireAlive) _throwIfUnusable();
+          await run(batch);
+        } catch (e, s) {
+          error = e;
+          stackTrace = s;
+        }
+        if (error != null) {
+          // A failed exchange can leave `have-local-offer` or
+          // `have-remote-offer` behind, which would reject the next one.
+          await _recoverSignaling();
+          // A platform error from a peer connection closed under the
+          // operation reads better as "closed".
+          final reported =
+              _closed &&
+                  error is! SfuSessionException &&
+                  error is! BrokerException
+              ? const SfuSessionClosedException()
+              : error;
+          for (final item in batch) {
+            item.fail(this, reported, stackTrace);
+          }
+        } else {
+          for (final item in batch) {
+            item.fail(
+              this,
+              const SfuSessionException('the operation had no result'),
+            );
+          }
+        }
+        // Clean up inside the queue, so the next operation starts clean.
+        for (final item in batch) {
+          try {
+            await item.cleanUp(this);
+          } catch (_) {
+            // Best effort.
+          }
+        }
+        for (final item in batch) {
+          item.settle();
+        }
+      }),
     );
   }
+
+  /// Rolls back a half-finished SDP exchange so the signaling state is
+  /// `stable` again. If that fails, the session is failed with
+  /// [PeerConnectionFailureKind.signalingStuck] rather than left wedged.
+  Future<void> _recoverSignaling() async {
+    if (!isUsable) return;
+    try {
+      if (await _pc.signalingState() == _stable) return;
+      await _pc.rollback();
+      if (await _pc.signalingState() == _stable) return;
+    } catch (_) {
+      // Rollback unsupported or rejected: fall through.
+    }
+    _fail(
+      const SfuPeerConnectionFailed(PeerConnectionFailureKind.signalingStuck),
+    );
+  }
+
+  static const _stable = RTCSignalingState.RTCSignalingStateStable;
 
   void _throwIfUnusable() {
     if (_closed) throw const SfuSessionClosedException();
@@ -856,10 +899,13 @@ class SfuSession {
     _throwIfUnusable();
     _throwIfRequestError('tracks/close', response);
     final description = response.sessionDescription;
-    if (response.requiresImmediateRenegotiation) {
-      await _renegotiate('tracks/close', description);
-    } else if (description != null && description.type == SdpType.answer) {
+    if (description != null && description.type == SdpType.answer) {
       await _pc.setRemoteDescription(description);
+    } else if (response.requiresImmediateRenegotiation) {
+      // The SFU answered our offer with an offer of its own: withdraw ours
+      // (we are in `have-local-offer`) and answer theirs.
+      await _pc.rollback();
+      await _renegotiate('tracks/close', description);
     }
 
     final results = _TrackResults(response.tracks);
@@ -1062,21 +1108,46 @@ Future<SfuSession> connectSfuSession({
 // Queue items
 // -----------------------------------------------------------------------------
 
+/// One queued request. Its outcome is decided during the operation
+/// ([succeed] or [fail]); [done] completes only at [settle], after the
+/// queue has cleaned up, so callers see a consistent peer connection.
 abstract class _OpItem {
   final Completer<void> done = Completer<void>();
+  bool _succeeded = false;
+  Object? _error;
+  StackTrace? _stackTrace;
+
+  bool get isPending => !_succeeded && _error == null;
+
+  bool get failed => _error != null;
 
   void succeed() {
-    if (!done.isCompleted) done.complete();
+    if (isPending) _succeeded = true;
   }
 
   void fail(SfuSession session, Object error, [StackTrace? stackTrace]) {
-    if (done.isCompleted) return;
+    if (!isPending) return;
+    _error = error;
+    _stackTrace = stackTrace;
     onFailed(session, error);
-    done.completeError(error, stackTrace);
   }
 
-  /// Cleans up after a failure. Runs before the future completes.
+  /// Updates local state after a failure. Runs synchronously in [fail].
   void onFailed(SfuSession session, Object error) {}
+
+  /// Releases peer-connection resources after the operation, inside the
+  /// queue and before [settle].
+  Future<void> cleanUp(SfuSession session) async {}
+
+  void settle() {
+    if (done.isCompleted) return;
+    final error = _error;
+    if (error != null) {
+      done.completeError(error, _stackTrace);
+    } else {
+      done.complete();
+    }
+  }
 }
 
 class _PushItem extends _OpItem {
@@ -1087,12 +1158,17 @@ class _PushItem extends _OpItem {
   String? mid;
 
   @override
-  void onFailed(SfuSession session, Object error) {
+  Future<void> cleanUp(SfuSession session) async {
     final t = transceiver;
-    if (t != null && session.isUsable) {
-      // The m-line is rejected in the next offer.
-      unawaited(t.stop().catchError((Object _) {}));
-    }
+    if (!failed || t == null || !session.isUsable) return;
+    // A stopped transceiver is left out of later offers (or rejected with
+    // port 0 if it was negotiated), so it never sends again. A retry with
+    // `republish` adds a fresh one.
+    await t.stop();
+  }
+
+  @override
+  void onFailed(SfuSession session, Object error) {
     if (identical(publication._session, session)) {
       session._publications.remove(publication.trackName);
       publication._detach(session, SfuTrackState.failed, error);

@@ -50,8 +50,29 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
       _iceStates.stream;
 
   @override
-  webrtc.RTCSignalingState get signalingState =>
-      _pc.signalingState ?? webrtc.RTCSignalingState.RTCSignalingStateStable;
+  Future<webrtc.RTCSignalingState> signalingState() async =>
+      await _pc.getSignalingState() ??
+      webrtc.RTCSignalingState.RTCSignalingStateStable;
+
+  @override
+  Future<void> rollback() async {
+    // `{type: rollback}` is standard WebRTC. flutter_webrtc passes the type
+    // string through to libwebrtc (Android `Type.fromCanonicalForm`, Darwin
+    // `typeForString`, the C++ wrapper on desktop). If a platform rejects
+    // it, this throws and the session fails as `signalingStuck`.
+    final rollback = webrtc.RTCSessionDescription('', 'rollback');
+    switch (await signalingState()) {
+      // Per the WebRTC spec: the side that made the offer rolls it back.
+      case webrtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer ||
+          webrtc.RTCSignalingState.RTCSignalingStateHaveRemotePrAnswer:
+        await _pc.setLocalDescription(rollback);
+      case webrtc.RTCSignalingState.RTCSignalingStateHaveRemoteOffer ||
+          webrtc.RTCSignalingState.RTCSignalingStateHaveLocalPrAnswer:
+        await _pc.setRemoteDescription(rollback);
+      case _:
+        break;
+    }
+  }
 
   @override
   Future<PeerTransceiver> addSendTransceiver({

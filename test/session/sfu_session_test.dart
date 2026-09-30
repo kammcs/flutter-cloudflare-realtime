@@ -6,7 +6,11 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
-    show MediaStreamTrack, RTCIceConnectionState, RTCPeerConnectionState;
+    show
+        MediaStreamTrack,
+        RTCIceConnectionState,
+        RTCPeerConnectionState,
+        RTCSignalingState;
 
 import '../support/session_harness.dart';
 
@@ -696,6 +700,7 @@ void main() {
         'stop(0)',
         'createOffer',
         'setLocalDescription(offer)',
+        'rollback(local)', // Withdraw our offer to answer the SFU's.
         'setRemoteDescription(offer)',
         'createAnswer',
         'setLocalDescription(answer)',
@@ -1103,6 +1108,187 @@ void main() {
       await pub.unpublish();
       expect(pub.state, SfuTrackState.closed);
       expect(h.broker.callsTo('tracks/close'), isEmpty);
+    });
+  });
+
+  group('signaling recovery', () {
+    const stable = RTCSignalingState.RTCSignalingStateStable;
+
+    final pushFailures = <String, Future<TracksResponse> Function()>{
+      'a 5xx': () async =>
+          throw const BrokerException(operation: 'tracks/new', statusCode: 503),
+      'a 403': () async =>
+          throw const BrokerForbiddenException(operation: 'tracks/new'),
+      'a network error': () async =>
+          throw const BrokerNetworkException(operation: 'tracks/new'),
+      'a request-level errorCode': () async =>
+          const TracksResponse(errorCode: 'invalid_request'),
+      'no answer': () async => const TracksResponse(),
+    };
+
+    for (final MapEntry(key: name, value: failure) in pushFailures.entries) {
+      test('a push failing with $name rolls back, and a pull then '
+          'renegotiates', () async {
+        final session = await h.connect();
+        h.broker.onNewTracks = (_, _) => failure();
+        await expectLater(
+          session.publish(FakeMediaStreamTrack(kind: 'video')),
+          throwsA(anything),
+        );
+
+        expect(h.pc.log, [
+          'addTransceiver(video)',
+          'createOffer',
+          'setLocalDescription(offer)',
+          'rollback(local)',
+          'stop(null)', // The failed push's transceiver, mid released.
+        ]);
+        expect(h.pc.currentSignalingState, stable);
+        expect(session.isUsable, isTrue);
+        final failed = h.pc.transceivers.single;
+        expect(failed.stopped, isTrue);
+
+        h.broker.onNewTracks = null;
+        final sub = await session.subscribe(
+          remoteSessionId: 'p',
+          trackName: 't',
+        );
+        expect(sub.state, SfuTrackState.active);
+        expect(h.pc.currentSignalingState, stable);
+
+        // A later offer doesn't carry the failed transceiver.
+        await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+        expect(h.pc.offeredSenders.last, isNot(contains(failed)));
+        expect(h.pc.offeredSenders.last, hasLength(1));
+      });
+    }
+
+    test('a close failing at the broker rolls back, and a pull then '
+        'renegotiates', () async {
+      final session = await h.connect();
+      final pub = await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+      h.broker.onCloseTracks = (_, _) async => throw const BrokerException(
+        operation: 'tracks/close',
+        statusCode: 500,
+      );
+      h.pc.log.clear();
+
+      await expectLater(pub.unpublish(), throwsA(isA<BrokerException>()));
+      expect(h.pc.log, [
+        'stop(0)',
+        'createOffer',
+        'setLocalDescription(offer)',
+        'rollback(local)',
+      ]);
+      expect(h.pc.currentSignalingState, stable);
+      expect(pub.state, SfuTrackState.closed);
+
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 't');
+      expect(sub.state, SfuTrackState.active);
+    });
+
+    test('a failure after applying an SFU offer rolls it back', () async {
+      final session = await h.connect();
+      h.pc.failNext('createAnswer', 'answer failed');
+      await expectLater(
+        session.subscribe(remoteSessionId: 'p', trackName: 'a'),
+        throwsA('answer failed'),
+      );
+      expect(h.pc.log.sublist(h.pc.log.length - 3), [
+        'setRemoteDescription(offer)',
+        'createAnswer',
+        'rollback(remote)',
+      ]);
+      expect(h.pc.currentSignalingState, stable);
+      expect(h.pc.byMid('r1'), isNull, reason: 'withdrawn with the offer');
+
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 'b');
+      expect(sub.state, SfuTrackState.active);
+    });
+
+    test('a failed renegotiate call leaves a usable, stable session', () async {
+      final session = await h.connect();
+      h.broker.onRenegotiate = (_, _) async => throw const BrokerException(
+        operation: 'renegotiate',
+        statusCode: 500,
+      );
+      await expectLater(
+        session.subscribe(remoteSessionId: 'p', trackName: 'a'),
+        throwsA(isA<BrokerException>()),
+      );
+      // The local answer was already applied, so there is nothing to undo.
+      expect(h.pc.log.where((e) => e.startsWith('rollback')), isEmpty);
+      expect(h.pc.currentSignalingState, stable);
+
+      h.broker.onRenegotiate = null;
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 'b');
+      expect(sub.state, SfuTrackState.active);
+    });
+
+    test('a failed rollback fails the session as signalingStuck', () async {
+      final session = await h.connect();
+      final failures = <SfuSessionFailure>[];
+      session.failures.listen(failures.add);
+      h.broker.onNewTracks = (_, _) async =>
+          throw const BrokerException(operation: 'tracks/new', statusCode: 500);
+      h.pc.failNext('rollback', 'rollback not supported');
+
+      await expectLater(
+        session.publish(FakeMediaStreamTrack(kind: 'audio')),
+        throwsA(isA<BrokerException>()),
+      );
+      await pumpEventQueue();
+
+      expect(
+        failures.single,
+        isA<SfuPeerConnectionFailed>().having(
+          (f) => f.kind,
+          'kind',
+          PeerConnectionFailureKind.signalingStuck,
+        ),
+      );
+      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(
+        () => session.subscribe(remoteSessionId: 'p', trackName: 't'),
+        throwsA(isA<SfuSessionFailedException>()),
+      );
+    });
+
+    test('a per-track push error stops that transceiver; republish starts '
+        'clean', () async {
+      final first = await h.connect();
+      final pub = await first.publish(
+        FakeMediaStreamTrack(kind: 'video'),
+        options: const PublishOptions(trackName: 'cam'),
+      );
+      await first.close();
+      final session = await h.connect();
+
+      h.broker.onNewTracks = (sessionId, request) async {
+        final ok = await h.broker.defaultNewTracks(sessionId, request);
+        return TracksResponse(
+          sessionDescription: ok.sessionDescription,
+          tracks: [
+            TrackResult(mid: ok.tracks.single.mid, errorCode: 'invalid_track'),
+          ],
+        );
+      };
+      await expectLater(
+        session.republish(pub),
+        throwsA(isA<SfuTrackException>()),
+      );
+      final rejected = h.pc.transceivers.single;
+      expect(rejected.stopped, isTrue);
+      expect(pub.state, SfuTrackState.failed);
+      expect(pub.mid, isNull);
+      expect(h.pc.currentSignalingState, stable);
+
+      h.broker.onNewTracks = null;
+      await session.republish(pub);
+      expect(pub.state, SfuTrackState.active);
+      final fresh = h.pc.transceivers.last;
+      expect(fresh, isNot(same(rejected)));
+      expect(h.pc.offeredSenders.last, [fresh]);
     });
   });
 

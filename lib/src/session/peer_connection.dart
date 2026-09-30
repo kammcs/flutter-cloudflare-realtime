@@ -36,8 +36,14 @@ abstract interface class PeerConnection {
   /// ICE connection state changes.
   Stream<RTCIceConnectionState> get onIceConnectionState;
 
-  /// The current signaling state.
-  RTCSignalingState get signalingState;
+  /// The current signaling state, read from the platform (native
+  /// `flutter_webrtc` caches it from asynchronous events).
+  Future<RTCSignalingState> signalingState();
+
+  /// Rolls back a pending local or remote offer, returning the signaling
+  /// state to `stable`. Does nothing when already stable. Throws if the
+  /// platform rejects the rollback.
+  Future<void> rollback();
 
   /// Adds a `sendonly` transceiver of [kind] (`audio` or `video`) that sends
   /// [track], or nothing until a track is set with
