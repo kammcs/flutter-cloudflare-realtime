@@ -397,8 +397,8 @@ class RemoteTrackPublication {
       }
       return;
     }
-    // A dead session can't pull. Keep what we have for roadmap M5, which
-    // moves subscriptions to a new session.
+    // A dead session can't pull. Keep what we have: the room's reconnection
+    // replaces the session and runs this again (docs/design.md §8).
     if (!session.isUsable) return;
     final remoteSessionId = participant.sessionId;
 
@@ -458,7 +458,7 @@ class RemoteTrackPublication {
     _error = null;
     _backoff.reset();
     _notify();
-    await _trackListener?.cancel();
+    unawaited(_trackListener?.cancel());
     final first = subscription.track;
     if (first != null) await _wrap(subscription, first);
     if (!identical(_subscription, subscription) || _track.isClosed) return;

@@ -24,6 +24,9 @@ enum ReconnectReason {
   /// The broker or SFU reported that the session is gone (HTTP 410,
   /// `session_error`).
   sessionGone,
+
+  /// The app asked for it (`Room.reconnect`).
+  manual,
 }
 
 /// Tuning for when the package replaces a broken SFU session

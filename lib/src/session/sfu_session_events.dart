@@ -76,6 +76,10 @@ enum PeerConnectionFailureKind {
   /// back failed (or isn't supported on this platform), so no further
   /// negotiation is possible.
   signalingStuck,
+
+  /// `SfuSession.debugSimulateFailure` was called: a test or demo of
+  /// reconnection.
+  simulated,
 }
 
 /// The session's peer connection failed.

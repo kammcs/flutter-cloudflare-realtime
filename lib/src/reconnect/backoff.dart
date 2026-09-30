@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
 /// Tuning for the delay between reconnection attempts (design.md §8).
@@ -102,14 +103,22 @@ class BackoffConfig {
 class Backoff {
   /// Creates a backoff with [config].
   ///
-  /// [random] defaults to a fresh [math.Random]. [clock] returns monotonic
-  /// elapsed time; it defaults to a [Stopwatch] started here.
+  /// [random] defaults to [debugDefaultRandom], else a fresh [math.Random].
+  /// [clock] returns monotonic elapsed time; it defaults to a stopwatch
+  /// from `package:clock`, started here, so `fake_async` controls it in
+  /// tests.
   Backoff(this.config, {math.Random? random, Duration Function()? clock})
-    : _random = random ?? math.Random(),
+    : _random = random ?? debugDefaultRandom?.call() ?? math.Random(),
       _clock = clock ?? _stopwatchClock();
 
+  /// Test hook: creates the random source for backoffs made without one
+  /// (such as the Room's reconnection and pull-retry backoffs), so tests
+  /// can make the jitter deterministic. Reset it to `null` after the test.
+  @visibleForTesting
+  static math.Random Function()? debugDefaultRandom;
+
   static Duration Function() _stopwatchClock() {
-    final stopwatch = Stopwatch()..start();
+    final stopwatch = clock.stopwatch()..start();
     return () => stopwatch.elapsed;
   }
 

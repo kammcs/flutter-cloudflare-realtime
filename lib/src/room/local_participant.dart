@@ -54,10 +54,17 @@ class LocalParticipant {
 
   /// The state announced through signaling: the session, every published
   /// track with its mute flag and simulcast layers, and [metadata].
+  ///
+  /// A track the SFU rejected when the room moved it to a new session
+  /// (its [LocalMediaPublication.publication] is [SfuTrackState.failed]) is
+  /// left out until a later re-session republishes it.
   ParticipantState get state => ParticipantState(
     participantId: participantId,
     sessionId: _room._session.sessionId,
-    tracks: {for (final p in _publications) p.trackName: p.info},
+    tracks: {
+      for (final p in _publications)
+        if (p.publication.state != SfuTrackState.failed) p.trackName: p.info,
+    },
     metadata: _metadata,
   );
 
@@ -278,11 +285,11 @@ class LocalParticipant {
       // Let an error reported during the start arrive.
       await Future<void>.value();
     } catch (_) {
-      await errors.cancel();
+      unawaited(errors.cancel());
       await _disposeQuietly(source);
       rethrow;
     }
-    await errors.cancel();
+    unawaited(errors.cancel());
     if (started && source.isBroadcasting) return;
     await _disposeQuietly(source);
     throw failure ??
@@ -303,12 +310,17 @@ class LocalParticipant {
   }) async {
     final LocalTrackPublication publication;
     try {
+      // While the room replaces its session, push to the new one.
+      if (_room.isReconnecting) {
+        await _room._whenNotReconnecting();
+        _room._checkNotLeft();
+      }
       publication = await _room._session.publishTrackStream(
         (tracks ?? mediaSource.broadcastTrack).map((t) => t?.track),
         kind: kind.name,
         options: PublishOptions(
           // Readable and unique; kept for the publication's lifetime, so a
-          // republish on a new session (roadmap M5) keeps the same name.
+          // republish on a new session (docs/design.md §8) keeps the name.
           trackName: '${source.name}-${generateTrackName()}',
           sendEncodings: encodings,
         ),
@@ -479,8 +491,8 @@ class LocalMediaPublication {
   }
 
   Future<void> _stopListening() async {
-    await _broadcastingListener?.cancel();
-    await _endedListener?.cancel();
+    unawaited(_broadcastingListener?.cancel());
+    unawaited(_endedListener?.cancel());
     _broadcastingListener = null;
     _endedListener = null;
   }

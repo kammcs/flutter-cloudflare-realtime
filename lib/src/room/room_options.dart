@@ -4,6 +4,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../reconnect/backoff.dart';
+import '../reconnect/reconnect_trigger.dart';
 import '../session/sfu_session.dart';
 
 /// Which remote tracks a [Room] pulls without being asked.
@@ -84,14 +85,78 @@ enum RoomConnectionState {
   /// Joined, and the SFU session is usable.
   connected,
 
-  /// The SFU connection dropped and may come back on its own (ICE
-  /// `disconnected`). Roadmap M5 also uses this state while it replaces a
-  /// failed session.
+  /// The SFU connection dropped and may come back on its own (the peer
+  /// connection is `disconnected`), or the room is replacing its session
+  /// (`docs/design.md` §8): see [RoomReconnectingEvent].
   reconnecting,
 
-  /// Left, or the SFU session failed. Until roadmap M5 adds automatic
-  /// reconnection, a failed session ends here: see [Room.failure].
+  /// Left, or the session is gone and the room isn't replacing it: the
+  /// reconnection gave up ([RoomReconnectFailedEvent]), or automatic
+  /// reconnection is off ([ReconnectOptions.enabled]) and the session
+  /// failed. The room stays in signaling; [Room.reconnect] tries again, and
+  /// [Room.leave] releases it.
   disconnected,
+}
+
+/// How a [Room] replaces a broken SFU session (`docs/design.md` §8).
+///
+/// When the session fails (or looks dead: see [trigger]), the room creates
+/// a new session, moves its published tracks and DataChannels onto it under
+/// the same names, announces the new session ID, and pulls its
+/// subscriptions again from the publishers' current sessions. Local capture
+/// is never restarted. Attempts are spaced by [backoff]; when it gives up,
+/// the room is [RoomConnectionState.disconnected] until [Room.reconnect].
+@immutable
+class ReconnectOptions {
+  /// Creates reconnection options.
+  const ReconnectOptions({
+    this.enabled = true,
+    this.backoff = const BackoffConfig(),
+    this.trigger = const ReconnectTriggerConfig(),
+    this.stablePeriod = const Duration(seconds: 10),
+  });
+
+  /// No automatic reconnection: a failed session leaves the room
+  /// [RoomConnectionState.disconnected]. [Room.reconnect] still works.
+  static const disabled = ReconnectOptions(enabled: false);
+
+  /// Whether the room replaces a broken session by itself. Default `true`.
+  final bool enabled;
+
+  /// The delay before each attempt (full jitter, so clients that dropped
+  /// together don't come back together) and when to give up. Default:
+  /// up to 500 ms before the first attempt, doubling to 10 s, giving up
+  /// after 2 minutes. A failing signaling update during a reconnection is
+  /// retried with the same schedule.
+  final BackoffConfig backoff;
+
+  /// When a session counts as broken: `failed` at once, `disconnected`
+  /// after 5 s (at once after a network change), a stuck connect after
+  /// 15 s, a return from 30 s or more in the background, or a
+  /// session-gone (410) error.
+  final ReconnectTriggerConfig trigger;
+
+  /// How long a new session must last before [backoff] starts over. A
+  /// session that breaks sooner continues the previous schedule, so a
+  /// connection that keeps dropping backs off (and eventually gives up)
+  /// instead of reconnecting in a tight loop. Default 10 s.
+  final Duration stablePeriod;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReconnectOptions &&
+      other.enabled == enabled &&
+      other.backoff == backoff &&
+      other.trigger == trigger &&
+      other.stablePeriod == stablePeriod;
+
+  @override
+  int get hashCode => Object.hash(enabled, backoff, trigger, stablePeriod);
+
+  @override
+  String toString() =>
+      'ReconnectOptions(enabled: $enabled, $backoff, '
+      'stablePeriod: $stablePeriod)';
 }
 
 /// Options for [CloudflareRealtime.join].
@@ -108,6 +173,7 @@ class RoomOptions {
       maxAttempts: 8,
       maxElapsed: Duration(minutes: 1),
     ),
+    this.reconnect = const ReconnectOptions(),
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -130,4 +196,8 @@ class RoomOptions {
   /// backoff, and again whenever the publisher's state changes (for example
   /// when they unmute or move to a new session).
   final BackoffConfig pullRetry;
+
+  /// How a broken SFU session is replaced. Default: automatically, see
+  /// [ReconnectOptions].
+  final ReconnectOptions reconnect;
 }

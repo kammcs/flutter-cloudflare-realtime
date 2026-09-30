@@ -5,8 +5,10 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
-    show MediaStream, MediaStreamTrack;
+    show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
 
 import '../broker/broker_client.dart';
 import '../data/data_channel_manager.dart';
@@ -18,7 +20,10 @@ import '../media/media_device_list.dart';
 import '../media/media_errors.dart';
 import '../media/media_types.dart';
 import '../media/screen_share_source.dart';
+import '../reconnect/app_lifecycle_source.dart';
 import '../reconnect/backoff.dart';
+import '../reconnect/network_change_source.dart';
+import '../reconnect/reconnect_trigger.dart';
 import '../rendering/renderable_track.dart';
 import '../session/publish_options.dart';
 import '../session/sfu_session.dart';
@@ -36,6 +41,17 @@ part 'local_participant.dart';
 part 'remote_participant.dart';
 part 'room_data.dart';
 part 'room_events.dart';
+part 'room_reconnection.dart';
+
+/// Connects a new [SfuSession] through a broker: the room's session
+/// factory, used when joining and on every re-session.
+typedef _Connector = Future<SfuSession> Function(
+  BrokerClient broker,
+  SfuSessionOptions options,
+);
+
+/// A session replacement: [Room.session] moved from `previous` to `next`.
+typedef _SessionReplacement = ({SfuSession previous, SfuSession next});
 
 /// A call: one SFU session tied to one room on the app's [Signaling].
 ///
@@ -50,11 +66,13 @@ part 'room_events.dart';
 ///   [RemoteTrackPublication.subscribe] and [ParticipantVideoView]);
 /// - follows remote participants to their new session when they reconnect,
 ///   and closes pulls of tracks that go away;
-/// - reports [connectionState], driven by the SFU session.
-///
-/// Automatic reconnection is roadmap M5. Until then, a failed session makes
-/// the room [RoomConnectionState.disconnected] with a [failure], and the app
-/// should [leave] and join again.
+/// - reports [connectionState], driven by the SFU session;
+/// - **replaces a broken session** (`docs/design.md` §8): when the session
+///   fails, stays disconnected, or is reported gone, the room connects a
+///   new one, moves its tracks and DataChannels onto it under the same
+///   names (local capture keeps running), announces the new session ID and
+///   pulls its subscriptions again. See [RoomOptions.reconnect],
+///   [RoomReconnectingEvent] and [RoomReconnectedEvent].
 class Room {
   Room._({
     required this.roomId,
@@ -62,8 +80,11 @@ class Room {
     required this.options,
     required this._session,
     required this._broker,
+    required this._connect,
     required this._mediaBackend,
     required this._wrapTrack,
+    required this._networkChanges,
+    required this._appLifecycle,
     required String participantId,
     Map<String, Object?>? metadata,
   }) {
@@ -87,10 +108,14 @@ class Room {
   /// another participant's (`docs/design.md` §9).
   late final RoomData data = RoomData._(this);
 
-  final SfuSession _session;
+  // The current session. It changes only in [_replaceSession].
+  SfuSession _session;
   final BrokerClient _broker;
+  final _Connector _connect;
   final MediaBackend _mediaBackend;
   final MediaStreamWrapper _wrapTrack;
+  final NetworkChangeSource? _networkChanges;
+  final AppLifecycleSource? _appLifecycle;
 
   final Map<String, RemoteParticipant> _remotes = {};
   List<ParticipantState> _signaled = const [];
@@ -107,17 +132,27 @@ class Room {
   );
   final StreamController<RoomEvent> _events = StreamController.broadcast();
   final List<StreamSubscription<Object?>> _subscriptions = [];
+  // Listeners on the current session only; replaced with it.
+  final List<StreamSubscription<Object?>> _sessionListeners = [];
+  final StreamController<_SessionReplacement> _sessionReplacedController =
+      StreamController.broadcast(sync: true);
+  late final _Reconnection _reconnection = _Reconnection(this);
   late final CoalescingRunner _announcer = CoalescingRunner(_announce);
   ParticipantState? _announced;
+  // While set, [_announce] does nothing: a re-session announces the new
+  // session itself, once its tracks are on it.
+  bool _holdAnnouncements = false;
   MediaDeviceList? _deviceList;
   bool _left = false;
   Future<void>? _leaving;
 
-  /// The SFU session that carries this room's media.
+  /// The SFU session that carries this room's media now.
   ///
-  /// For advanced use (stats, DataChannels). Publish and subscribe through
-  /// [localParticipant] and [RemoteTrackPublication] instead of calling it
-  /// directly, so the room's state stays consistent.
+  /// It is **replaced** when the room reconnects ([RoomReconnectedEvent]),
+  /// so read it when needed rather than keeping it. For advanced use
+  /// (stats). Publish and subscribe through [localParticipant],
+  /// [RemoteTrackPublication] and [data] instead of calling it directly:
+  /// only what the room published or subscribed moves to a new session.
   SfuSession get session => _session;
 
   /// The other participants that have an SFU session, in the order they
@@ -144,11 +179,48 @@ class Room {
   /// The current connection state.
   RoomConnectionState get currentConnectionState => _state.value;
 
-  /// Why the SFU session failed, or `null` if it hasn't.
+  /// Why the current SFU session failed, or `null` if it hasn't. A new
+  /// session after a reconnection starts without a failure.
   SfuSessionFailure? get failure => _session.failure;
 
   /// Whether [leave] has been called.
   bool get hasLeft => _left;
+
+  /// Whether the room is replacing its session now (between a
+  /// [RoomReconnectingEvent] and a [RoomReconnectedEvent] or
+  /// [RoomReconnectFailedEvent]).
+  bool get isReconnecting => _reconnection.isRunning;
+
+  /// Replaces the SFU session now, and completes with whether the room is
+  /// connected on a new session afterwards.
+  ///
+  /// For a "reconnect" button after the room gave up
+  /// ([RoomReconnectFailedEvent]), or when the app knows better than the
+  /// automatic triggers. It works with automatic reconnection off too. The
+  /// attempt starts without a backoff delay and with a fresh
+  /// [ReconnectOptions.backoff] budget. While a reconnection is already
+  /// running, it skips that reconnection's current wait and returns its
+  /// outcome.
+  ///
+  /// Throws a [StateError] after [leave].
+  Future<bool> reconnect() {
+    _checkNotLeft();
+    return _reconnection.manual();
+  }
+
+  /// **Debug and demo only:** makes the current SFU session fail as in a
+  /// network drop (its peer connection is closed; see
+  /// [SfuSession.debugSimulateFailure]), so the room's recovery can be
+  /// seen without pulling a cable. With automatic reconnection on, the room
+  /// then replaces the session like after a real failure.
+  ///
+  /// It works in every build mode, so demos in profile or release builds
+  /// can use it; keep it out of production UI. Throws a [StateError] after
+  /// [leave].
+  void debugSimulateConnectionFailure() {
+    _checkNotLeft();
+    _session.debugSimulateFailure();
+  }
 
   /// Leaves the room and releases everything it holds.
   ///
@@ -180,23 +252,75 @@ class Room {
     final self = localParticipant.state;
     await signaling.join(roomId, self);
     _announced = self;
-    // Take the session's state now, so the room is returned connected.
-    final failure = _session.failure;
-    if (failure != null) {
-      _onSessionFailure(failure);
-    } else {
-      _onSessionState(_session.currentConnectionState);
-    }
-    _subscriptions
-      ..add(_session.connectionState.listen(_onSessionState))
-      ..add(_session.failures.listen(_onSessionFailure))
-      ..add(
-        signaling.participants.listen(
-          _onParticipants,
-          onError: (Object error) =>
-              _emit(RoomErrorEvent('signaling.participants', error)),
+    // Take the session's state now, so the room is returned connected. The
+    // failures stream replays a failure that already happened.
+    _onSessionState(_session, _session.currentConnectionState);
+    _listenToSession(_session);
+    _subscriptions.add(
+      signaling.participants.listen(
+        _onParticipants,
+        onError: (Object error) =>
+            _emit(RoomErrorEvent('signaling.participants', error)),
+      ),
+    );
+    if (_networkChanges case final source?) {
+      _subscriptions.add(
+        source.changes.listen(
+          (_) => _reconnection.networkChanged(),
+          onError: (Object _) {},
         ),
       );
+    }
+    if (_appLifecycle case final source?) {
+      _subscriptions.add(
+        source.states.listen(_reconnection.lifecycle, onError: (Object _) {}),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The session lifecycle
+  // ---------------------------------------------------------------------------
+
+  /// Fires synchronously each time [session] changes: `previous` is the
+  /// session the room left (it is closed right after), `next` the one
+  /// [session] returns from now on.
+  ///
+  /// Internal hook for room components bound to the session (stats, layer
+  /// selection, active speaker): re-bind to `next` here. It fires when the
+  /// new session is created, **before** tracks and DataChannels are moved
+  /// onto it; [RoomReconnectedEvent] marks the end of a successful
+  /// re-session. A failed attempt can be followed by another replacement.
+  // Listened to by the room's session-bound components (roadmap M4).
+  // ignore: unused_element
+  Stream<_SessionReplacement> get _sessionReplaced =>
+      _sessionReplacedController.stream;
+
+  /// Makes [next] the room's session: stops following the old one, follows
+  /// [next], and fires [_sessionReplaced]. The only place the session
+  /// changes. Returns the previous session, which the caller closes.
+  SfuSession _replaceSession(SfuSession next) {
+    final previous = _session;
+    _stopListeningToSession();
+    _session = next;
+    _listenToSession(next);
+    if (!_sessionReplacedController.isClosed) {
+      _sessionReplacedController.add((previous: previous, next: next));
+    }
+    return previous;
+  }
+
+  void _listenToSession(SfuSession session) {
+    _sessionListeners
+      ..add(session.connectionState.listen((s) => _onSessionState(session, s)))
+      ..add(session.failures.listen((f) => _onSessionFailure(session, f)));
+  }
+
+  void _stopListeningToSession() {
+    for (final listener in _sessionListeners) {
+      unawaited(listener.cancel());
+    }
+    _sessionListeners.clear();
   }
 
   void _setState(RoomConnectionState state) {
@@ -205,8 +329,13 @@ class Room {
     _emit(RoomConnectionStateChangedEvent(state));
   }
 
-  void _onSessionState(SfuConnectionState state) {
-    if (_left || _session.failure != null) return;
+  void _onSessionState(SfuSession session, SfuConnectionState state) {
+    if (_left || !identical(session, _session)) return;
+    _reconnection.sessionState(state);
+    // While re-sessioning (or after giving up), the reconnection owns the
+    // room's state; a failure is handled in [_onSessionFailure].
+    if (_reconnection.isRunning || _reconnection.gaveUp) return;
+    if (session.failure != null) return;
     _setState(switch (state) {
       // Nothing negotiated yet: the session is usable.
       SfuConnectionState.initial => RoomConnectionState.connected,
@@ -218,17 +347,31 @@ class Room {
     });
   }
 
-  void _onSessionFailure(SfuSessionFailure failure) {
-    if (_left) return;
-    _setState(RoomConnectionState.disconnected);
+  void _onSessionFailure(SfuSession session, SfuSessionFailure failure) {
+    if (_left || !identical(session, _session)) return;
     _emit(RoomSessionFailedEvent(failure));
+    _reconnection.sessionFailed(failure);
+    if (!_reconnection.isRunning) _setState(RoomConnectionState.disconnected);
+  }
+
+  /// Completes once no reconnection is running, so an operation that needs
+  /// a usable session (publishing, subscribing to data) runs on the new
+  /// one rather than failing on the old.
+  Future<void> _whenNotReconnecting() async {
+    for (
+      var episode = _reconnection.episode;
+      episode != null;
+      episode = _reconnection.episode
+    ) {
+      await episode;
+    }
   }
 
   /// Announces the local participant's current state, if it changed.
   /// Runs through [_announcer], so updates never overlap and a burst of
   /// changes becomes at most one more update.
   Future<void> _announce() async {
-    if (_left) return;
+    if (_left || _holdAnnouncements) return;
     final state = localParticipant.state;
     if (state == _announced) return;
     try {
@@ -290,8 +433,12 @@ class Room {
 
   Future<void> _leave() async {
     _left = true;
+    // A reconnection in progress notices [_left] and stops; a session it
+    // was connecting is closed by it.
+    _reconnection.dispose();
+    _stopListeningToSession();
     for (final subscription in _subscriptions) {
-      await subscription.cancel();
+      unawaited(subscription.cancel());
     }
     _subscriptions.clear();
 
@@ -325,6 +472,7 @@ class Room {
     await _participants.close();
     await _state.close();
     await _events.close();
+    await _sessionReplacedController.close();
   }
 
   @override
@@ -343,8 +491,15 @@ Future<Room> joinRoom({
   required RoomOptions options,
   required SfuSession session,
   required BrokerClient broker,
+  required Future<SfuSession> Function(
+    BrokerClient broker,
+    SfuSessionOptions options,
+  )
+  connect,
   required MediaBackend mediaBackend,
   required MediaStreamWrapper wrapTrack,
+  NetworkChangeSource? networkChanges,
+  AppLifecycleSource? appLifecycle,
   required String participantId,
   Map<String, Object?>? metadata,
 }) async {
@@ -354,8 +509,11 @@ Future<Room> joinRoom({
     options: options,
     session: session,
     broker: broker,
+    connect: connect,
     mediaBackend: mediaBackend,
     wrapTrack: wrapTrack,
+    networkChanges: networkChanges,
+    appLifecycle: appLifecycle,
     participantId: participantId,
     metadata: metadata,
   );

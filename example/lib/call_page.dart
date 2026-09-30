@@ -86,8 +86,19 @@ class _CallPageState extends State<CallPage> {
 
   void _onEvent(RoomEvent event) {
     switch (event) {
-      case RoomSessionFailedEvent(:final failure):
-        _show('The SFU session failed (${failure.reason}). Leave and rejoin.');
+      case RoomSessionFailedEvent(:final failure)
+          when !_room.options.reconnect.enabled:
+        _show('The SFU session failed (${failure.reason}).');
+      case RoomReconnectingEvent(:final reason):
+        _show('Connection lost (${reason.name}). Reconnecting…');
+      case RoomReconnectedEvent(:final duration, :final attempts):
+        final seconds = (duration.inMilliseconds / 1000).toStringAsFixed(1);
+        _show(
+          'Reconnected in $seconds s'
+          '${attempts > 1 ? ' ($attempts attempts)' : ''}.',
+        );
+      case RoomReconnectFailedEvent():
+        _show('Could not reconnect. Use "Reconnect" to try again.');
       case ParticipantJoinedEvent(:final participant):
         _show('${_nameOf(participant)} joined.');
       case ParticipantLeftEvent(:final participant):
@@ -164,6 +175,19 @@ class _CallPageState extends State<CallPage> {
     if (source != null) await _local.publishScreen(source: source);
   });
 
+  /// The checkpoint demo: fails the SFU session as a network drop would,
+  /// so the room's automatic recovery can be watched without pulling a
+  /// cable. Debug and demo only (see Room.debugSimulateConnectionFailure).
+  void _simulateNetworkDrop() {
+    if (_left) return;
+    _room.debugSimulateConnectionFailure();
+  }
+
+  Future<void> _reconnect() async {
+    if (_left) return;
+    await _room.reconnect();
+  }
+
   Future<void> _leave() async {
     if (_left) return;
     _left = true;
@@ -207,6 +231,11 @@ class _CallPageState extends State<CallPage> {
                 onPressed: add,
               ),
             IconButton(
+              tooltip: 'Simulate network drop (debug)',
+              icon: const Icon(Icons.wifi_off),
+              onPressed: _simulateNetworkDrop,
+            ),
+            IconButton(
               tooltip: 'Leave',
               icon: const Icon(Icons.call_end),
               onPressed: _leave,
@@ -214,14 +243,22 @@ class _CallPageState extends State<CallPage> {
           ],
         ),
         body: SafeArea(
-          child: StreamBuilder<LocalParticipant>(
-            stream: _local.changes,
-            builder: (context, _) => StreamBuilder<List<RemoteParticipant>>(
-              stream: _room.participants,
-              initialData: _room.currentParticipants,
-              builder: (context, snapshot) =>
-                  _buildGrid(snapshot.data ?? const []),
-            ),
+          child: Column(
+            children: [
+              _ConnectionBanner(room: _room, onReconnect: _reconnect),
+              Expanded(
+                child: StreamBuilder<LocalParticipant>(
+                  stream: _local.changes,
+                  builder: (context, _) =>
+                      StreamBuilder<List<RemoteParticipant>>(
+                        stream: _room.participants,
+                        initialData: _room.currentParticipants,
+                        builder: (context, snapshot) =>
+                            _buildGrid(snapshot.data ?? const []),
+                      ),
+                ),
+              ),
+            ],
           ),
         ),
         bottomNavigationBar: StreamBuilder<LocalParticipant>(
@@ -357,6 +394,64 @@ class _StatusChip extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// A strip above the tiles while the call isn't connected: a progress bar
+/// while the room replaces its session, or a "Reconnect" button once it
+/// has given up.
+class _ConnectionBanner extends StatelessWidget {
+  const _ConnectionBanner({required this.room, required this.onReconnect});
+
+  final Room room;
+  final Future<void> Function() onReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<RoomConnectionState>(
+      stream: room.connectionState,
+      initialData: room.currentConnectionState,
+      builder: (context, snapshot) {
+        final theme = Theme.of(context);
+        switch (snapshot.data) {
+          case RoomConnectionState.reconnecting:
+            return Material(
+              color: theme.colorScheme.tertiaryContainer,
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LinearProgressIndicator(),
+                  Padding(
+                    padding: EdgeInsets.all(8),
+                    child: Text(
+                      'Reconnecting… your camera and microphone '
+                      'keep running.',
+                    ),
+                  ),
+                ],
+              ),
+            );
+          case RoomConnectionState.disconnected when !room.hasLeft:
+            return Material(
+              color: theme.colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    const Expanded(child: Text('Disconnected from the call.')),
+                    TextButton(
+                      onPressed: onReconnect,
+                      child: const Text('Reconnect'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          case _:
+            return const SizedBox.shrink();
+        }
+      },
     );
   }
 }

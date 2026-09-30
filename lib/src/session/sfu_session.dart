@@ -519,7 +519,7 @@ class SfuSession {
     _closed = true;
     _iceDisconnectedTimer?.cancel();
     for (final s in _pcSubscriptions) {
-      await s.cancel();
+      unawaited(s.cancel());
     }
     _detachAll(SfuTrackState.interrupted, const SfuSessionClosedException());
     _connectionState.set(SfuConnectionState.closed);
@@ -531,6 +531,20 @@ class SfuSession {
     } catch (_) {
       // Already closed, or the platform failed to close it: nothing to do.
     }
+  }
+
+  /// **Tests and demos only:** fails the session as if its peer connection
+  /// had failed ([PeerConnectionFailureKind.simulated]), then closes the
+  /// peer connection so media stops, as in a network drop.
+  ///
+  /// It exercises the real failure path: [failures] reports it,
+  /// publications and subscriptions become [SfuTrackState.interrupted], and
+  /// a `Room` replaces the session. Does nothing on a failed or closed
+  /// session. Never needed in production code.
+  void debugSimulateFailure() {
+    if (!isUsable) return;
+    _fail(const SfuPeerConnectionFailed(PeerConnectionFailureKind.simulated));
+    unawaited(_pc.close().catchError((Object _) {}));
   }
 
   // ---------------------------------------------------------------------------

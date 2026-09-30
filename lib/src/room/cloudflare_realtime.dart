@@ -3,6 +3,8 @@ import '../broker/broker_config.dart';
 import '../broker/http_broker_client.dart';
 import '../media/flutter_webrtc_media_backend.dart';
 import '../media/media_backend.dart';
+import '../reconnect/app_lifecycle_source.dart';
+import '../reconnect/network_change_source.dart';
 import '../rendering/renderable_track.dart';
 import '../session/sfu_session.dart';
 import '../signaling/signaling.dart';
@@ -55,14 +57,24 @@ Future<SfuSession> _defaultConnect(
 class CloudflareRealtime {
   /// Creates the entry point for the broker described by [broker].
   ///
-  /// [mediaBackend] is where published media is captured from. The factory
-  /// parameters replace the broker client ([createBrokerClient]), the SFU
-  /// session ([connectSession]) and the wrapping of pulled tracks into
+  /// [mediaBackend] is where published media is captured from.
+  ///
+  /// [networkChanges] and [appLifecycle] feed the rooms' reconnection
+  /// (`docs/design.md` §8): the package has no connectivity plugin, so
+  /// network changes are only seen if the app passes a source (for example
+  /// one built on `connectivity_plus`); the app lifecycle comes from
+  /// Flutter by default. Pass `null` for [appLifecycle] to ignore it.
+  ///
+  /// The factory parameters replace the broker client
+  /// ([createBrokerClient]), the SFU session ([connectSession], also used
+  /// for every re-session) and the wrapping of pulled tracks into
   /// renderable streams ([wrapTrack]); tests use them to run without a
   /// network or native WebRTC. Leave them out in apps.
   CloudflareRealtime({
     required this.broker,
     this.mediaBackend = const FlutterWebrtcMediaBackend(),
+    this.networkChanges,
+    this.appLifecycle = const FlutterAppLifecycleSource(),
     BrokerClientFactory? createBrokerClient,
     SfuSessionConnector? connectSession,
     MediaStreamWrapper? wrapTrack,
@@ -75,6 +87,14 @@ class CloudflareRealtime {
 
   /// Where local media is captured from.
   final MediaBackend mediaBackend;
+
+  /// Network-change events for the rooms' reconnection, or `null` (the
+  /// default) for none.
+  final NetworkChangeSource? networkChanges;
+
+  /// Background and foreground events for the rooms' reconnection, or
+  /// `null` for none. Default: [FlutterAppLifecycleSource].
+  final AppLifecycleSource? appLifecycle;
 
   final BrokerClientFactory _createBrokerClient;
   final SfuSessionConnector _connectSession;
@@ -127,8 +147,11 @@ class CloudflareRealtime {
         options: options,
         session: session,
         broker: client,
+        connect: _connectSession,
         mediaBackend: mediaBackend,
         wrapTrack: _wrapTrack,
+        networkChanges: networkChanges,
+        appLifecycle: appLifecycle,
         participantId: participantId,
         metadata: metadata,
       );
