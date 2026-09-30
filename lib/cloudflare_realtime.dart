@@ -6,6 +6,9 @@ library;
 // Broker client (design.md §4.1, §5).
 export 'src/broker/broker.dart';
 
+// SFU session (design.md §4.2).
+export 'src/session/session.dart';
+
 // Media: capture, devices and screen share (design.md §4.5, §10).
 export 'src/media/constraints.dart'
     show

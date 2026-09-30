@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented so far: the broker client (§4.1), the `Signaling` interface with its in-memory implementation (§4.4), and the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10). The rest is design.
+- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), the `Signaling` interface with its in-memory implementation (§4.4), and the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10). The rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -82,22 +82,72 @@ A typed client for the broker contract (§5), in `lib/src/broker/`. Implemented 
 
 ### 4.2 `SfuSession`
 
-One `RTCPeerConnection` maps to one SFU session. A participant normally has **one session** that carries everything they push and pull.
+One `RTCPeerConnection` maps to one SFU session. A participant normally has **one session** that carries everything they push and pull. Implemented (M2) in `lib/src/session/`, ported from partytracks' `PartyTracks.ts` and `Peer.utils.ts`.
 
+**API** (exported from the barrel):
+
+```dart
+final session = await SfuSession.connect(broker: broker, options: SfuSessionOptions(...));
+session.sessionId;                      // share through signaling
+session.connectionState;                // Stream<SfuConnectionState>, replays the current value
+session.currentConnectionState;         // initial/connecting/connected/disconnected/failed/closed
+session.failures;                       // Stream<SfuSessionFailure>: at most one, replayed to late listeners
+session.failure;                        // SfuSessionGone | SfuPeerConnectionFailed | null
+
+final pub = await session.publish(track, options: PublishOptions(trackName?, sendEncodings?, codecPreferences?));
+await pub.whenSending();                // RTP is flowing: now advertise pub.trackName + pub.sessionId
+await pub.replaceTrack(otherCamera);    // no renegotiation; null mutes (transceiver and mid stay)
+await pub.setEncodings([...]);          // no renegotiation (bitrates, active layers)
+
+// Or follow a media source's track stream (null while muted, a new track on device change):
+final cam = await session.publishTrackStream(source.broadcastTrack.map((t) => t?.track), kind: 'video');
+
+final sub = await session.subscribe(remoteSessionId: id, trackName: name, preferredRid: 'b');
+sub.track; sub.trackStream;             // MediaStreamTrack? / Stream<MediaStreamTrack>
+await sub.setPreferredRid('c');         // tracks/update
+
+await pub.unpublish(); await sub.unsubscribe();   // tracks/close
+await session.republish(pub); await session.resubscribe(sub, remoteSessionId: newId);  // on a new session
+await session.close();
+```
+
+`LocalTrackPublication` and `RemoteTrackSubscription` have a `state` (`SfuTrackState`: `pending`, `active`, `interrupted`, `failed`, `closed`), a replaying `states` stream, `error`, `session` and `mid`.
+
+- **Connect.** As in partytracks (`forkJoin`), `sessions/new` and `generate-ice-servers` are requested together (the latter skipped when `SfuSessionOptions.iceServers` is set), then the peer connection is created with `bundlePolicy: max-bundle`. Nothing is negotiated until the first push or pull. If either call fails, the new session is forgotten and the error is thrown.
 - **Push** (publish local tracks):
-  1. Add a `sendonly` transceiver per track (with simulcast encodings for video).
+  1. Add a `sendonly` transceiver per track (with simulcast encodings for video) and apply codec preferences.
   2. `createOffer`, then `setLocalDescription`.
   3. `POST tracks/new` with the offer, and `tracks: [{location: "local", mid, trackName}]`.
   4. `setRemoteDescription(answer)`.
+
+  Track names are UUIDs (partytracks uses `crypto.randomUUID()`) unless the caller names the track; names are unique per session.
+
+  **Mute and device changes.** partytracks keeps sending a black or silent placeholder track while muted; `flutter_webrtc` can't make those, so the media layer's `broadcastTrack` is null while muted. `replaceTrack(null)` therefore stops sending without renegotiating: the transceiver and `mid` stay, and unmuting is another `replaceTrack`. Replacements are applied in order and settle on the latest track. `publishTrackStream(tracks, kind:)` follows such a stream (partytracks' `push(track$)`): it pushes whatever the stream holds when the push goes out (possibly nothing: the transceiver is then created from `kind`), and applies every later value. The session code takes plain `MediaStreamTrack`s and doesn't import the media layer. **Deviation:** partytracks adds the transceiver when `push` is called; here it is added inside the queued operation, so an unrelated offer in flight never carries an undeclared m-line.
+
+  partytracks emits a pushed track's metadata only once the sender reports `bytesSent > 0`, so peers don't pull too early. Here `publish` completes when the SFU accepts the track, and `whenSending()` ports the wait (stats polled from 1 ms, ×1.1, capped at 100 ms). Room (M3) should advertise a track only after it. A publication muted from the start sends no RTP, so `whenSending()` waits until it is unmuted; M3 must decide whether to advertise muted tracks earlier.
+- **Encodings and codecs.**
+  - Video defaults to `SimulcastPresets.h720`: rids `a` (full, 1.2 Mbps), `b` (`scaleResolutionDownBy: 2`, 400 kbps), `c` (4, 150 kbps). `h1080` and `h360` exist too; M4 tunes the numbers. `sendEncodings: []` publishes one default encoding. Audio has none.
+  - Codec preferences are MIME types; set, they **restrict** the transceiver to those codecs plus rtx/red/ulpfec/flexfec, so the SFU can't pick another. The default is `['video/VP8']` on Windows (flutter-webrtc #982) and none elsewhere (`SfuSessionDefaults.videoCodecPreferences` overrides it). A platform that rejects `setCodecPreferences` keeps its default order.
 - **Pull** (subscribe to remote tracks):
-  1. `POST tracks/new` with `tracks: [{location: "remote", sessionId, trackName, simulcast?}]`.
-  2. If the response has `requiresImmediateRenegotiation`, then `setRemoteDescription(offer)`, `createAnswer`, and `PUT renegotiate` with the answer.
-  3. Map the returned `mid` to the transceiver, which gives you the remote track.
-- **Update:** `PUT tracks/update`, used to change a pulled track's `preferredRid`.
-- **Close:** `PUT tracks/close` with the `mid`s. Renegotiate if the response asks for it. Stop the transceivers.
-- **All operations run through one serialized queue.** The SFU requires each SDP exchange to finish before the next mutation on the same session.
-  - Batch pushes and pulls that arrive together into a single `tracks/new` call. partytracks does this; port its batching.
-- **Per-track errors:** the API returns an error per track, not only per request. Surface them on the individual track.
+  1. `POST tracks/new` with `tracks: [{location: "remote", sessionId, trackName, simulcast?}]`. `simulcast` is sent only with a `preferredRid`; `ridNotAvailable` then defaults to `asciibetical`, and `priorityOrdering` is left to the SFU default (`none`) unless given (§6).
+  2. If the response has `requiresImmediateRenegotiation`, then `setRemoteDescription(offer)`, `createAnswer`, `setLocalDescription`, and `PUT renegotiate` with the answer.
+  3. Map the returned `mid` to the transceiver, which gives you the remote track. Results are matched by `trackName` + `sessionId`, as in partytracks. The transceiver is looked up after renegotiation, waiting up to 5 s for its `track` event (partytracks' `resolveTransceiver`).
+- **Update:** `PUT tracks/update` with the pulled track's `mid` and its full `simulcast` object (keeping the orderings). Updates are batched too, and the last `rid` per subscription in a batch wins. On a subscription that isn't active, the rid is only remembered for the next pull. partytracks fires updates outside its queue; here they are queued.
+- **Close:** stop the transceivers, `createOffer`, `setLocalDescription`, `PUT tracks/close` with the `mid`s and the offer (`force: false`), then apply the answer, or renegotiate if the response asks for it. `close_track_error` counts as closed. The publication or subscription is closed locally even if the request fails. On a failed or closed session, only local state changes (partytracks also skips negotiation on a dead connection). Local `MediaStreamTrack`s are never stopped: capture belongs to the app.
+- **All operations run through one serialized queue** (`OpQueue`, a port of `FIFOScheduler`). The SFU requires each SDP exchange to finish before the next mutation on the same session.
+  - Pushes, pulls, updates and closes that arrive in the same event-loop turn are each batched into one request (`BatchDispatcher`, a port of `BulkRequestDispatcher`: a zero-duration timer, at most 32 items per batch). A push batch and a pull batch in the same turn become two requests, run one after the other (one `tracks/new` is all local or all remote).
+  - A failing operation fails only its own items; the queue moves on.
+  - **The queue heals the signaling state.** A push or close that fails after `setLocalDescription(offer)` (broker error, request-level `errorCode`, no answer) would leave `have-local-offer`; a failure after applying an SFU offer leaves `have-remote-offer`. Either would make the next exchange fail. So after any failed operation, and before each one, the queue checks the signaling state and rolls back (`{type: rollback}` through `setLocalDescription` or `setRemoteDescription`) to `stable`. If the rollback fails or isn't supported on a platform, the session fails with `PeerConnectionFailureKind.signalingStuck`, so M5 replaces it instead of it staying wedged. partytracks doesn't do this; it relies on re-creating the whole session.
+  - Cleanup runs inside the queue before an operation's futures complete: the transceivers of failed pushes (a whole-request failure, a per-track error or a missing `mid`) are stopped, so later offers leave them out (or reject them with port 0), and the publication drops them; a `republish` adds a fresh transceiver.
+  - A `tracks/close` response that carries an SFU offer instead of an answer rolls back our close offer, then answers theirs.
+- **Per-track errors:** an error on one track (or a missing result) fails only that publish, pull, update or close, with an `SfuTrackException` carrying the SFU's `errorCode`. The rest of the batch succeeds. A request-level `errorCode` in a 2xx fails the whole batch with an `SfuRequestException`; broker exceptions pass through unchanged.
+- **Failures and replacement (for M5).** The session doesn't reconnect. It reports one `SfuSessionFailure` and then refuses operations (`SfuSessionFailedException`):
+  - `SfuSessionGone` when any broker call throws `SessionGoneException`;
+  - `SfuPeerConnectionFailed` when the connection state becomes `failed`, the ICE state `failed`, the connection closes unexpectedly, or ICE stays `disconnected` longer than `iceDisconnectedTimeout` (7 s, as in partytracks; null disables it).
+
+  Its publications and subscriptions become `interrupted` and detach from it; they survive the session. M5 connects a new session and calls `republish` (same `trackName`, current track and encodings) and `resubscribe` (optionally with the publisher's new `sessionId`); `trackStream` then emits the new remote track. `close()` also leaves them `interrupted`, fails queued operations with `SfuSessionClosedException`, and calls `BrokerClient.forgetSession`. partytracks instead re-creates the session inside `session$` and re-pushes automatically; here that policy belongs to M5.
+- **Peer-connection abstraction.** `SfuSession` talks to an internal `PeerConnection`/`PeerTransceiver` interface: `FlutterWebrtcPeerConnection` wraps `flutter_webrtc`, and tests use a scripted fake with opaque SDP (`test/support/`). Native `flutter_webrtc` transceivers cache their `mid` from creation, so the wrapper re-reads it through `getTransceivers()`. The internal `connectSfuSession(createPeerConnection: ...)` injects a fake; M3 tests can use it with `test/support/session_harness.dart`.
+- **Not done here:** rendering a remote track needs a `MediaStream` for `RTCVideoRenderer`; M3 will wrap the track (for example with `createLocalMediaStream`). Automatic retries (partytracks retries each push/pull with backoff) are left to M5.
 
 ### 4.3 `Room`
 

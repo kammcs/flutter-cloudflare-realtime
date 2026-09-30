@@ -1,0 +1,1255 @@
+// The session lifecycle, push/pull/update/close flows and their ordering are
+// ported from partytracks' `PartyTracks.ts`, ISC License, Copyright 2024
+// Sunil Pai. See THIRD_PARTY_NOTICES.md.
+
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter_webrtc/flutter_webrtc.dart'
+    show
+        MediaStreamTrack,
+        RTCIceConnectionState,
+        RTCPeerConnectionState,
+        RTCSignalingState;
+
+import '../broker/broker_client.dart';
+import '../broker/broker_exception.dart';
+import '../broker/models/common.dart';
+import '../broker/models/session.dart';
+import '../broker/models/tracks.dart';
+import '../util/state_stream.dart';
+import 'flutter_webrtc_peer_connection.dart';
+import 'op_queue.dart';
+import 'peer_connection.dart';
+import 'publish_options.dart';
+import 'sfu_session_events.dart';
+import 'track_name.dart';
+
+part 'track_publication.dart';
+
+/// Options for [SfuSession.connect].
+class SfuSessionOptions {
+  /// Creates session options.
+  const SfuSessionOptions({
+    this.iceServers,
+    this.correlationId,
+    this.defaults = const SfuSessionDefaults(),
+    this.iceDisconnectedTimeout = const Duration(seconds: 7),
+    this.remoteTrackTimeout = const Duration(seconds: 5),
+  });
+
+  /// ICE servers to use instead of fetching them from the broker's
+  /// `generate-ice-servers`, in `flutter_webrtc`'s format.
+  final List<Map<String, dynamic>>? iceServers;
+
+  /// A diagnostic label sent with `sessions/new`.
+  final String? correlationId;
+
+  /// Defaults for [PublishOptions].
+  final SfuSessionDefaults defaults;
+
+  /// How long the ICE connection may stay `disconnected` before the session
+  /// reports [PeerConnectionFailureKind.iceDisconnectedTimeout]. partytracks
+  /// uses 7 seconds. Null never times out.
+  final Duration? iceDisconnectedTimeout;
+
+  /// How long a pull waits for its transceiver to appear after
+  /// renegotiation (partytracks: 5 seconds).
+  final Duration remoteTrackTimeout;
+}
+
+/// One peer connection to the Cloudflare SFU, bound to one SFU session.
+///
+/// A participant normally has one session that carries everything it
+/// publishes and subscribes to (`docs/design.md` §4.2). Create one with
+/// [connect]; every SFU call goes through the [BrokerClient].
+///
+/// All operations ([publish], [subscribe], [setPreferredRid], [unpublish],
+/// [unsubscribe]) run through one serialized queue, because the SFU needs
+/// each SDP exchange to finish before the next mutation. Pushes, pulls,
+/// updates and closes that arrive in the same event-loop turn are batched
+/// into one request each, as in partytracks. A failing operation fails only
+/// its own tracks; the queue moves on.
+///
+/// The session doesn't reconnect by itself. When the SFU session is gone or
+/// the peer connection fails, it reports an [SfuSessionFailure] on
+/// [failures] and stops accepting operations. Recover by connecting a new
+/// session and moving [LocalTrackPublication]s and
+/// [RemoteTrackSubscription]s to it with [republish] and [resubscribe].
+class SfuSession {
+  SfuSession._({
+    required this._broker,
+    required this.sessionId,
+    required PeerConnection peerConnection,
+    required this.options,
+  }) : _pc = peerConnection {
+    _pushes = BatchDispatcher(
+      (batch) => _enqueue(batch, _runPushBatch, requireAlive: true),
+    );
+    _pulls = BatchDispatcher(
+      (batch) => _enqueue(batch, _runPullBatch, requireAlive: true),
+    );
+    _updates = BatchDispatcher(
+      (batch) => _enqueue(batch, _runUpdateBatch, requireAlive: true),
+    );
+    _closes = BatchDispatcher(
+      (batch) => _enqueue(batch, _runCloseBatch, requireAlive: false),
+    );
+    _pcSubscriptions = [
+      _pc.onConnectionState.listen(_onConnectionState),
+      _pc.onIceConnectionState.listen(_onIceConnectionState),
+    ];
+  }
+
+  /// Creates an SFU session and its peer connection.
+  ///
+  /// As in partytracks, this requests `sessions/new` and the ICE servers
+  /// (unless [SfuSessionOptions.iceServers] is set) together, then creates
+  /// the peer connection with `bundlePolicy: max-bundle`. Nothing is
+  /// negotiated until the first [publish] or [subscribe].
+  ///
+  /// Throws the broker's exception if either call fails.
+  static Future<SfuSession> connect({
+    required BrokerClient broker,
+    SfuSessionOptions options = const SfuSessionOptions(),
+  }) => connectSfuSession(broker: broker, options: options);
+
+  final BrokerClient _broker;
+  final PeerConnection _pc;
+
+  /// This session's ID. Other participants pull its tracks by it, so share
+  /// it through signaling.
+  final String sessionId;
+
+  /// The options the session was created with.
+  final SfuSessionOptions options;
+
+  final OpQueue _queue = OpQueue();
+  late final BatchDispatcher<_PushItem> _pushes;
+  late final BatchDispatcher<_PullItem> _pulls;
+  late final BatchDispatcher<_UpdateItem> _updates;
+  late final BatchDispatcher<_CloseItem> _closes;
+  late final List<StreamSubscription<Object?>> _pcSubscriptions;
+
+  final StateStream<SfuConnectionState> _connectionState = StateStream(
+    SfuConnectionState.initial,
+    distinct: true,
+  );
+  final StreamController<SfuSessionFailure> _failures =
+      StreamController.broadcast(sync: true);
+  SfuSessionFailure? _failure;
+  bool _closed = false;
+  RTCIceConnectionState? _iceState;
+  Timer? _iceDisconnectedTimer;
+
+  final Map<String, LocalTrackPublication> _publications = {};
+  final Set<RemoteTrackSubscription> _subscriptions = {};
+
+  /// The connection state, replaying the current value to each new
+  /// listener. Completes after [close].
+  Stream<SfuConnectionState> get connectionState => _connectionState.stream;
+
+  /// The current connection state.
+  SfuConnectionState get currentConnectionState => _connectionState.value;
+
+  /// Why the session failed, or null if it hasn't.
+  SfuSessionFailure? get failure => _failure;
+
+  /// Emits the session's failure, at most once, then completes. A listener
+  /// that subscribes after the failure receives it immediately. Also
+  /// completes on [close].
+  Stream<SfuSessionFailure> get failures => Stream.multi((controller) {
+    final failure = _failure;
+    if (failure != null || _failures.isClosed) {
+      if (failure != null) controller.add(failure);
+      controller.close();
+      return;
+    }
+    final subscription = _failures.stream.listen(
+      controller.add,
+      onDone: controller.close,
+    );
+    controller.onCancel = subscription.cancel;
+  }, isBroadcast: true);
+
+  /// Whether [close] has been called.
+  bool get isClosed => _closed;
+
+  /// Whether operations can still run: not closed and not failed.
+  bool get isUsable => !_closed && _failure == null;
+
+  /// The publications on this session, including ones still being pushed.
+  List<LocalTrackPublication> get publications =>
+      List.unmodifiable(_publications.values);
+
+  /// The subscriptions on this session, including ones still being pulled.
+  List<RemoteTrackSubscription> get subscriptions =>
+      List.unmodifiable(_subscriptions);
+
+  // ---------------------------------------------------------------------------
+  // Public operations
+  // ---------------------------------------------------------------------------
+
+  /// Publishes [track] (push): adds a `sendonly` transceiver, sends the
+  /// offer with `tracks/new`, and applies the SFU's answer.
+  ///
+  /// Video uses [PublishOptions.sendEncodings] or
+  /// [SfuSessionDefaults.videoEncodings] (simulcast `a`/`b`/`c` by default).
+  /// Codec preferences default to VP8 on Windows.
+  ///
+  /// Completes with the publication once the SFU accepted the track. Call
+  /// [LocalTrackPublication.whenSending] before advertising it. Throws an
+  /// [SfuTrackException] if the SFU rejected this track, or the broker's
+  /// exception if the request failed. Nothing stays on the session then, so
+  /// publishing again (even under the same name) is safe.
+  Future<LocalTrackPublication> publish(
+    MediaStreamTrack track, {
+    PublishOptions options = const PublishOptions(),
+  }) {
+    final publication = _newPublication(track.kind, track, options);
+    return _push(publication).then((_) => publication);
+  }
+
+  /// Publishes whatever [tracks] currently holds, following it from then on:
+  /// each new track replaces the sent one without renegotiation, and null
+  /// mutes (nothing is sent; the transceiver stays). [kind] (`audio` or
+  /// `video`) fixes the transceiver's kind; values of another kind are
+  /// ignored.
+  ///
+  /// Meant for a media source's track stream, for example
+  /// `source.broadcastTrack.map((t) => t?.track)`. A stream that replays
+  /// its current value (like the media layer's) is read before the push
+  /// goes out; if it has no track yet, the push carries none and media
+  /// starts with the first track.
+  ///
+  /// The publication stops following [tracks] when it closes. If the push
+  /// fails, the publication is closed and the error thrown, as for
+  /// [publish].
+  Future<LocalTrackPublication> publishTrackStream(
+    Stream<MediaStreamTrack?> tracks, {
+    required String kind,
+    PublishOptions options = const PublishOptions(),
+  }) {
+    final publication = _newPublication(kind, null, options);
+    final pushed = _push(publication);
+    publication._follow(tracks);
+    return pushed.then(
+      (_) => publication,
+      onError: (Object error, StackTrace stackTrace) {
+        // The caller never got the publication: stop following the source.
+        publication._close();
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
+  }
+
+  LocalTrackPublication _newPublication(
+    String? kind,
+    MediaStreamTrack? track,
+    PublishOptions options,
+  ) {
+    if (kind != 'audio' && kind != 'video') {
+      throw ArgumentError.value(kind, 'kind', 'must be audio or video');
+    }
+    final trackName = options.trackName ?? generateTrackName();
+    if (trackName.isEmpty) {
+      throw ArgumentError.value(trackName, 'options.trackName', 'is empty');
+    }
+    final defaults = this.options.defaults;
+    return LocalTrackPublication._(
+      trackName: trackName,
+      kind: kind!,
+      track: track,
+      sendEncodings: List.unmodifiable(
+        options.sendEncodings ??
+            (kind == 'video' ? defaults.videoEncodings : const []),
+      ),
+      codecPreferences: List.unmodifiable(
+        options.codecPreferences ??
+            (kind == 'video'
+                ? defaults.videoCodecPreferences ??
+                      defaultVideoCodecPreferences()
+                : defaults.audioCodecPreferences),
+      ),
+    );
+  }
+
+  /// Pushes an existing [publication] to this session under the same
+  /// [LocalTrackPublication.trackName], with its current track, encodings
+  /// and codec preferences. Use it after the publication's previous session
+  /// failed or closed, or to retry a failed push.
+  ///
+  /// Throws a [StateError] if the publication is closed or still on a
+  /// session.
+  Future<void> republish(LocalTrackPublication publication) {
+    if (publication.state == SfuTrackState.closed) {
+      throw StateError('The publication is closed.');
+    }
+    if (publication._session != null) {
+      throw StateError(
+        'The publication is still on a session. Unpublish it first.',
+      );
+    }
+    return _push(publication);
+  }
+
+  Future<void> _push(LocalTrackPublication publication) {
+    _throwIfUnusable();
+    if (_publications.containsKey(publication.trackName)) {
+      throw StateError(
+        'A track named "${publication.trackName}" is already published on '
+        'this session.',
+      );
+    }
+    _publications[publication.trackName] = publication;
+    publication._bind(this);
+    final item = _PushItem(publication);
+    _pushes.add(item);
+    return item.done.future;
+  }
+
+  /// Subscribes to (pulls) the track [trackName] published by the session
+  /// [remoteSessionId].
+  ///
+  /// For a simulcast track, pass [preferredRid] (`a` is the highest layer).
+  /// [ridNotAvailable] defaults to [SimulcastOrdering.asciibetical], so the
+  /// SFU falls back to another layer when the preferred one stops.
+  /// [priorityOrdering] is left to the SFU default (`none`) unless given.
+  /// Without [preferredRid], no simulcast preferences are sent.
+  ///
+  /// Completes once the track is pulled and its [MediaStreamTrack] is
+  /// available. Throws an [SfuTrackException] if the SFU rejected this
+  /// track, or the broker's exception if the request failed.
+  Future<RemoteTrackSubscription> subscribe({
+    required String remoteSessionId,
+    required String trackName,
+    String? preferredRid,
+    SimulcastOrdering? priorityOrdering,
+    SimulcastOrdering ridNotAvailable = SimulcastOrdering.asciibetical,
+  }) {
+    if (remoteSessionId.isEmpty || trackName.isEmpty) {
+      throw ArgumentError('remoteSessionId and trackName must not be empty');
+    }
+    final subscription = RemoteTrackSubscription._(
+      remoteSessionId: remoteSessionId,
+      trackName: trackName,
+      simulcast: preferredRid == null
+          ? null
+          : SimulcastConfig(
+              preferredRid: preferredRid,
+              priorityOrdering: priorityOrdering,
+              ridNotAvailable: ridNotAvailable,
+            ),
+    );
+    return _pull(subscription).then((_) => subscription);
+  }
+
+  /// Pulls an existing [subscription] on this session, from
+  /// [remoteSessionId] if given (the publisher moved to a new session) or
+  /// from its current [RemoteTrackSubscription.remoteSessionId]. Its
+  /// [RemoteTrackSubscription.trackStream] then emits the new track.
+  ///
+  /// Throws a [StateError] if the subscription is closed or still on a
+  /// session.
+  Future<void> resubscribe(
+    RemoteTrackSubscription subscription, {
+    String? remoteSessionId,
+  }) {
+    if (subscription.state == SfuTrackState.closed) {
+      throw StateError('The subscription is closed.');
+    }
+    if (subscription._session != null) {
+      throw StateError(
+        'The subscription is still on a session. Unsubscribe it first.',
+      );
+    }
+    if (remoteSessionId != null) {
+      if (remoteSessionId.isEmpty) {
+        throw ArgumentError.value(remoteSessionId, 'remoteSessionId');
+      }
+      subscription._remoteSessionId = remoteSessionId;
+    }
+    return _pull(subscription);
+  }
+
+  Future<void> _pull(RemoteTrackSubscription subscription) {
+    _throwIfUnusable();
+    _subscriptions.add(subscription);
+    subscription._bind(this);
+    final item = _PullItem(subscription);
+    _pulls.add(item);
+    return item.done.future;
+  }
+
+  /// Asks the SFU to forward simulcast layer [rid] of [subscription]
+  /// (`tracks/update`), keeping its other simulcast preferences.
+  ///
+  /// Updates in the same event-loop turn go out in one request; for a
+  /// subscription updated more than once, the last [rid] wins. Throws an
+  /// [SfuTrackException] if the SFU rejected the update, and leaves
+  /// [RemoteTrackSubscription.preferredRid] unchanged.
+  Future<void> setPreferredRid(
+    RemoteTrackSubscription subscription,
+    String rid,
+  ) {
+    if (rid.isEmpty) throw ArgumentError.value(rid, 'rid', 'is empty');
+    if (!identical(subscription._session, this)) {
+      throw StateError('The subscription is not on this session.');
+    }
+    _throwIfUnusable();
+    final item = _UpdateItem(subscription, subscription._withRid(rid));
+    _updates.add(item);
+    return item.done.future;
+  }
+
+  /// Unpublishes [publication] (`tracks/close`): stops its transceiver,
+  /// sends a new offer with the close request, and applies the answer.
+  /// Unpublishes in the same event-loop turn share one request.
+  ///
+  /// The publication is [SfuTrackState.closed] afterwards, even if the
+  /// request fails. The track itself isn't stopped. On a failed or closed
+  /// session, only the local state changes.
+  Future<void> unpublish(LocalTrackPublication publication) =>
+      _close(_CloseItem.publication(publication));
+
+  /// Unsubscribes [subscription] (`tracks/close`), like [unpublish].
+  Future<void> unsubscribe(RemoteTrackSubscription subscription) =>
+      _close(_CloseItem.subscription(subscription));
+
+  Future<void> _close(_CloseItem item) {
+    final owner = item.owner;
+    if (owner == null) {
+      item.closeLocally();
+      return Future.value();
+    }
+    if (!identical(owner, this)) {
+      throw StateError('The track is not on this session.');
+    }
+    if (!isUsable) {
+      // Nothing to negotiate on a dead session.
+      item.forget(this);
+      item.closeLocally();
+      return Future.value();
+    }
+    _closes.add(item);
+    return item.done.future;
+  }
+
+  /// Closes the peer connection and releases the session.
+  ///
+  /// Queued operations fail with an [SfuSessionClosedException]. Active
+  /// publications and subscriptions become [SfuTrackState.interrupted], so
+  /// they can move to another session. Local tracks aren't stopped.
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    _iceDisconnectedTimer?.cancel();
+    for (final s in _pcSubscriptions) {
+      await s.cancel();
+    }
+    _detachAll(SfuTrackState.interrupted, const SfuSessionClosedException());
+    _connectionState.set(SfuConnectionState.closed);
+    await _connectionState.close();
+    await _failures.close();
+    _broker.forgetSession(sessionId);
+    try {
+      await _pc.close();
+    } catch (_) {
+      // Already closed, or the platform failed to close it: nothing to do.
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Queue plumbing
+  // ---------------------------------------------------------------------------
+
+  void _enqueue<T extends _OpItem>(
+    List<T> batch,
+    Future<void> Function(List<T> batch) run, {
+    required bool requireAlive,
+  }) {
+    unawaited(
+      _queue.schedule(() async {
+        Object? error;
+        StackTrace? stackTrace;
+        try {
+          if (requireAlive) _throwIfUnusable();
+          // Heal anything a previous operation left half-negotiated.
+          await _recoverSignaling();
+          if (requireAlive) _throwIfUnusable();
+          await run(batch);
+        } catch (e, s) {
+          error = e;
+          stackTrace = s;
+        }
+        if (error != null) {
+          // A failed exchange can leave `have-local-offer` or
+          // `have-remote-offer` behind, which would reject the next one.
+          await _recoverSignaling();
+          // A platform error from a peer connection closed under the
+          // operation reads better as "closed".
+          final reported =
+              _closed &&
+                  error is! SfuSessionException &&
+                  error is! BrokerException
+              ? const SfuSessionClosedException()
+              : error;
+          for (final item in batch) {
+            item.fail(this, reported, stackTrace);
+          }
+        } else {
+          for (final item in batch) {
+            item.fail(
+              this,
+              const SfuSessionException('the operation had no result'),
+            );
+          }
+        }
+        // Clean up inside the queue, so the next operation starts clean.
+        for (final item in batch) {
+          try {
+            await item.cleanUp(this);
+          } catch (_) {
+            // Best effort.
+          }
+        }
+        for (final item in batch) {
+          item.settle();
+        }
+      }),
+    );
+  }
+
+  /// Rolls back a half-finished SDP exchange so the signaling state is
+  /// `stable` again. If that fails, the session is failed with
+  /// [PeerConnectionFailureKind.signalingStuck] rather than left wedged.
+  Future<void> _recoverSignaling() async {
+    if (!isUsable) return;
+    try {
+      if (await _pc.signalingState() == _stable) return;
+      await _pc.rollback();
+      if (await _pc.signalingState() == _stable) return;
+    } catch (_) {
+      // Rollback unsupported or rejected: fall through.
+    }
+    _fail(
+      const SfuPeerConnectionFailed(PeerConnectionFailureKind.signalingStuck),
+    );
+  }
+
+  static const _stable = RTCSignalingState.RTCSignalingStateStable;
+
+  void _throwIfUnusable() {
+    if (_closed) throw const SfuSessionClosedException();
+    final failure = _failure;
+    if (failure != null) throw SfuSessionFailedException(failure);
+  }
+
+  /// Runs a broker call, turning a [SessionGoneException] into a session
+  /// failure before rethrowing it.
+  Future<T> _call<T>(Future<T> Function() call) async {
+    try {
+      return await call();
+    } on SessionGoneException catch (e) {
+      _fail(SfuSessionGone(e));
+      rethrow;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Push
+  // ---------------------------------------------------------------------------
+
+  Future<void> _runPushBatch(List<_PushItem> batch) async {
+    // Transceivers are added inside the queued operation (partytracks adds
+    // them before queueing), so an unrelated offer in flight never carries
+    // an undeclared m-line.
+    final added = <_PushItem>[];
+    for (final item in batch) {
+      final publication = item.publication;
+      if (!identical(publication._session, this)) {
+        item.fail(this, const SfuSessionException('unpublished before push'));
+        continue;
+      }
+      try {
+        final track = publication.track;
+        final transceiver = await _pc.addSendTransceiver(
+          kind: publication.kind,
+          track: track,
+          sendEncodings: publication.kind == 'video'
+              ? publication.sendEncodings
+              : const [],
+        );
+        item.transceiver = transceiver;
+        publication._transceiver = transceiver;
+        if (!identical(publication.track, track)) {
+          // replaceTrack() ran while the transceiver was being added.
+          await transceiver.replaceTrack(publication.track);
+        }
+        if (publication.codecPreferences.isNotEmpty) {
+          try {
+            await transceiver.setCodecPreferences(
+              publication.kind,
+              publication.codecPreferences,
+            );
+          } catch (_) {
+            // Not supported on this platform: keep the default order.
+          }
+        }
+        added.add(item);
+      } catch (error, stackTrace) {
+        item.fail(this, error, stackTrace);
+      }
+    }
+    if (added.isEmpty) return;
+    _throwIfUnusable();
+
+    final offer = await _pc.createOffer();
+    await _pc.setLocalDescription(offer);
+    final requested = <_PushItem>[];
+    for (final item in added) {
+      final mid = await item.transceiver!.mid();
+      if (mid == null) {
+        item.fail(
+          this,
+          const SfuSessionException('the transceiver has no mid'),
+        );
+      } else {
+        item.mid = mid;
+        requested.add(item);
+      }
+    }
+    if (requested.isEmpty) return;
+
+    final response = await _call(
+      () => _broker.newTracks(
+        sessionId,
+        TracksRequest(
+          sessionDescription: offer,
+          tracks: [
+            for (final item in requested)
+              TrackObject.local(
+                mid: item.mid!,
+                trackName: item.publication.trackName,
+              ),
+          ],
+        ),
+      ),
+    );
+    _throwIfUnusable();
+    _throwIfRequestError('tracks/new', response);
+    final answer = response.sessionDescription;
+    if (answer == null) {
+      throw const SfuSessionException('tracks/new returned no answer');
+    }
+    await _pc.setRemoteDescription(answer);
+    _throwIfUnusable();
+
+    final results = _TrackResults(response.tracks);
+    for (final item in requested) {
+      final publication = item.publication;
+      final result =
+          results.take((r) => r.mid == item.mid) ??
+          results.take((r) => r.trackName == publication.trackName);
+      if (result == null || result.hasError) {
+        item.fail(
+          this,
+          SfuTrackException(
+            operation: 'tracks/new',
+            trackName: publication.trackName,
+            errorCode: result?.errorCode,
+            errorDescription: result?.errorDescription,
+          ),
+        );
+        continue;
+      }
+      publication._activate(this, item.transceiver!, item.mid!);
+      item.succeed();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pull
+  // ---------------------------------------------------------------------------
+
+  Future<void> _runPullBatch(List<_PullItem> batch) async {
+    final requested = <_PullItem>[];
+    for (final item in batch) {
+      if (identical(item.subscription._session, this)) {
+        requested.add(item);
+      } else {
+        item.fail(this, const SfuSessionException('unsubscribed before pull'));
+      }
+    }
+    if (requested.isEmpty) return;
+
+    final response = await _call(
+      () => _broker.newTracks(
+        sessionId,
+        TracksRequest(
+          tracks: [
+            for (final item in requested)
+              TrackObject.remote(
+                sessionId: item.subscription.remoteSessionId,
+                trackName: item.subscription.trackName,
+                simulcast: item.subscription.simulcast,
+              ),
+          ],
+        ),
+      ),
+    );
+    _throwIfUnusable();
+    _throwIfRequestError('tracks/new', response);
+
+    final results = _TrackResults(response.tracks);
+    final pulled = <_PullItem>[];
+    for (final item in requested) {
+      final subscription = item.subscription;
+      final result = results.take(
+        (r) =>
+            r.trackName == subscription.trackName &&
+            (r.sessionId == null ||
+                r.sessionId == subscription.remoteSessionId),
+      );
+      if (result == null || result.hasError || result.mid == null) {
+        item.fail(
+          this,
+          SfuTrackException(
+            operation: 'tracks/new',
+            trackName: subscription.trackName,
+            errorCode: result?.errorCode,
+            errorDescription: result?.errorDescription,
+          ),
+        );
+        continue;
+      }
+      item.mid = result.mid;
+      pulled.add(item);
+    }
+
+    if (response.requiresImmediateRenegotiation) {
+      await _renegotiate('tracks/new', response.sessionDescription);
+      _throwIfUnusable();
+    }
+
+    for (final item in pulled) {
+      final transceiver = await _pc.transceiverForMid(
+        item.mid!,
+        timeout: options.remoteTrackTimeout,
+      );
+      _throwIfUnusable();
+      if (transceiver == null) {
+        item.fail(
+          this,
+          SfuTrackException(
+            operation: 'tracks/new',
+            trackName: item.subscription.trackName,
+            errorDescription: 'no transceiver for the returned mid',
+          ),
+        );
+        continue;
+      }
+      item.subscription._activate(this, transceiver, item.mid!);
+      item.succeed();
+    }
+  }
+
+  /// Applies an SFU offer, answers it, and sends the answer with
+  /// `renegotiate`.
+  Future<void> _renegotiate(String operation, SessionDescription? offer) async {
+    if (offer == null || offer.type != SdpType.offer) {
+      throw SfuSessionException(
+        '$operation asked for renegotiation without an offer',
+      );
+    }
+    await _pc.setRemoteDescription(offer);
+    final answer = await _pc.createAnswer();
+    await _pc.setLocalDescription(answer);
+    _throwIfUnusable();
+    final response = await _call(
+      () => _broker.renegotiate(
+        sessionId,
+        RenegotiateRequest(sessionDescription: answer),
+      ),
+    );
+    if (response.hasError) {
+      throw SfuRequestException(
+        operation: 'renegotiate',
+        errorCode: response.errorCode!,
+        errorDescription: response.errorDescription,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Update
+  // ---------------------------------------------------------------------------
+
+  Future<void> _runUpdateBatch(List<_UpdateItem> batch) async {
+    // The last update per subscription wins; earlier ones share its result.
+    final latest = <RemoteTrackSubscription, List<_UpdateItem>>{};
+    for (final item in batch) {
+      final subscription = item.subscription;
+      if (subscription.state != SfuTrackState.active ||
+          !identical(subscription._session, this)) {
+        // Not pulled here (any more): remember the layer for the next pull.
+        if (subscription.state != SfuTrackState.closed) {
+          subscription._simulcast = item.config;
+        }
+        item.succeed();
+        continue;
+      }
+      (latest[subscription] ??= []).add(item);
+    }
+    if (latest.isEmpty) return;
+
+    final response = await _call(
+      () => _broker.updateTracks(
+        sessionId,
+        UpdateTracksRequest(
+          tracks: [
+            for (final MapEntry(key: sub, value: items) in latest.entries)
+              TrackObject.remote(
+                sessionId: sub.remoteSessionId,
+                trackName: sub.trackName,
+                mid: sub.mid,
+                simulcast: items.last.config,
+              ),
+          ],
+        ),
+      ),
+    );
+    _throwIfUnusable();
+    _throwIfRequestError('tracks/update', response);
+    if (response.requiresImmediateRenegotiation) {
+      await _renegotiate('tracks/update', response.sessionDescription);
+    }
+
+    final results = _TrackResults(response.tracks);
+    for (final MapEntry(key: sub, value: items) in latest.entries) {
+      final result =
+          results.take((r) => r.mid != null && r.mid == sub.mid) ??
+          results.take((r) => r.trackName == sub.trackName);
+      // The SFU may omit results for successful updates: only an explicit
+      // error fails the update.
+      if (result != null && result.hasError) {
+        for (final item in items) {
+          item.fail(
+            this,
+            SfuTrackException(
+              operation: 'tracks/update',
+              trackName: sub.trackName,
+              errorCode: result.errorCode,
+              errorDescription: result.errorDescription,
+            ),
+          );
+        }
+        continue;
+      }
+      sub._simulcast = items.last.config;
+      for (final item in items) {
+        item.succeed();
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Close
+  // ---------------------------------------------------------------------------
+
+  Future<void> _runCloseBatch(List<_CloseItem> batch) async {
+    final closing = <_CloseItem>[];
+    for (final item in batch) {
+      final transceiver = item.transceiverOn(this);
+      final mid = item.midOn(this);
+      item.forget(this);
+      item.closeLocally();
+      if (transceiver == null || mid == null) {
+        item.succeed(); // Never pushed or pulled here: nothing to close.
+        continue;
+      }
+      try {
+        await transceiver.stop();
+      } catch (_) {
+        // Already stopped.
+      }
+      item.mid = mid;
+      closing.add(item);
+    }
+    if (closing.isEmpty) return;
+    if (!isUsable) {
+      // As in partytracks, don't negotiate on a dead connection.
+      for (final item in closing) {
+        item.succeed();
+      }
+      return;
+    }
+
+    final offer = await _pc.createOffer();
+    await _pc.setLocalDescription(offer);
+    final response = await _call(
+      () => _broker.closeTracks(
+        sessionId,
+        CloseTracksRequest(
+          mids: [for (final item in closing) item.mid!],
+          sessionDescription: offer,
+        ),
+      ),
+    );
+    _throwIfUnusable();
+    _throwIfRequestError('tracks/close', response);
+    final description = response.sessionDescription;
+    if (description != null && description.type == SdpType.answer) {
+      await _pc.setRemoteDescription(description);
+    } else if (response.requiresImmediateRenegotiation) {
+      // The SFU answered our offer with an offer of its own: withdraw ours
+      // (we are in `have-local-offer`) and answer theirs.
+      await _pc.rollback();
+      await _renegotiate('tracks/close', description);
+    }
+
+    final results = _TrackResults(response.tracks);
+    for (final item in closing) {
+      final result = results.take((r) => r.mid == item.mid);
+      // `close_track_error` means already closed: the goal is reached.
+      if (result != null &&
+          result.hasError &&
+          result.errorCode != 'close_track_error') {
+        item.fail(
+          this,
+          SfuTrackException(
+            operation: 'tracks/close',
+            trackName: item.trackName,
+            errorCode: result.errorCode,
+            errorDescription: result.errorDescription,
+          ),
+        );
+      } else {
+        item.succeed();
+      }
+    }
+  }
+
+  void _throwIfRequestError(String operation, TracksResponse response) {
+    if (response.hasError) {
+      throw SfuRequestException(
+        operation: operation,
+        errorCode: response.errorCode!,
+        errorDescription: response.errorDescription,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connection state and failures
+  // ---------------------------------------------------------------------------
+
+  void _onConnectionState(RTCPeerConnectionState state) {
+    if (_closed) return;
+    switch (state) {
+      case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        _fail(
+          const SfuPeerConnectionFailed(
+            PeerConnectionFailureKind.connectionFailed,
+          ),
+        );
+      case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        _fail(
+          const SfuPeerConnectionFailed(
+            PeerConnectionFailureKind.closedUnexpectedly,
+          ),
+        );
+      case _:
+        if (_failure == null) _connectionState.set(_mapState(state));
+    }
+  }
+
+  void _onIceConnectionState(RTCIceConnectionState state) {
+    if (_closed) return;
+    _iceState = state;
+    _iceDisconnectedTimer?.cancel();
+    _iceDisconnectedTimer = null;
+    switch (state) {
+      case RTCIceConnectionState.RTCIceConnectionStateFailed:
+        _fail(
+          const SfuPeerConnectionFailed(PeerConnectionFailureKind.iceFailed),
+        );
+      case RTCIceConnectionState.RTCIceConnectionStateClosed:
+        _fail(
+          const SfuPeerConnectionFailed(
+            PeerConnectionFailureKind.closedUnexpectedly,
+          ),
+        );
+      case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
+        final timeout = options.iceDisconnectedTimeout;
+        if (timeout == null) return;
+        _iceDisconnectedTimer = Timer(timeout, () {
+          if (_iceState ==
+              RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+            _fail(
+              const SfuPeerConnectionFailed(
+                PeerConnectionFailureKind.iceDisconnectedTimeout,
+              ),
+            );
+          }
+        });
+      case _:
+        break;
+    }
+  }
+
+  static SfuConnectionState _mapState(RTCPeerConnectionState state) =>
+      switch (state) {
+        RTCPeerConnectionState.RTCPeerConnectionStateNew =>
+          SfuConnectionState.initial,
+        RTCPeerConnectionState.RTCPeerConnectionStateConnecting =>
+          SfuConnectionState.connecting,
+        RTCPeerConnectionState.RTCPeerConnectionStateConnected =>
+          SfuConnectionState.connected,
+        RTCPeerConnectionState.RTCPeerConnectionStateDisconnected =>
+          SfuConnectionState.disconnected,
+        RTCPeerConnectionState.RTCPeerConnectionStateFailed =>
+          SfuConnectionState.failed,
+        RTCPeerConnectionState.RTCPeerConnectionStateClosed =>
+          SfuConnectionState.closed,
+      };
+
+  /// Marks the session dead, once.
+  void _fail(SfuSessionFailure failure) {
+    if (_closed || _failure != null) return;
+    _failure = failure;
+    _iceDisconnectedTimer?.cancel();
+    _connectionState.set(SfuConnectionState.failed);
+    _detachAll(SfuTrackState.interrupted, SfuSessionFailedException(failure));
+    _failures.add(failure);
+    unawaited(_failures.close());
+  }
+
+  void _detachAll(SfuTrackState state, Object error) {
+    for (final publication in _publications.values.toList()) {
+      publication._detach(this, state, error);
+    }
+    _publications.clear();
+    for (final subscription in _subscriptions.toList()) {
+      subscription._detach(this, state, error);
+    }
+    _subscriptions.clear();
+  }
+
+  @override
+  String toString() =>
+      'SfuSession($sessionId, ${currentConnectionState.name}'
+      '${_failure == null ? '' : ', $_failure'})';
+}
+
+/// [SfuSession.connect] with an injectable [PeerConnectionFactory].
+///
+/// Internal: not exported from the package barrel. Tests and higher layers
+/// (such as `Room`) use it to substitute a fake peer connection.
+Future<SfuSession> connectSfuSession({
+  required BrokerClient broker,
+  SfuSessionOptions options = const SfuSessionOptions(),
+  PeerConnectionFactory createPeerConnection =
+      createFlutterWebrtcPeerConnection,
+}) async {
+  // partytracks requests the session and the ICE servers together
+  // (`forkJoin`), then creates the peer connection.
+  final configuredIceServers = options.iceServers;
+  final NewSessionResponse session;
+  final List<Map<String, dynamic>> iceServers;
+  try {
+    (session, iceServers) = await (
+      broker.newSession(
+        NewSessionRequest(correlationId: options.correlationId),
+      ),
+      configuredIceServers == null
+          ? broker.getIceServers()
+          : Future.value(configuredIceServers),
+    ).wait;
+  } on ParallelWaitError<
+    (NewSessionResponse?, List<Map<String, dynamic>>?),
+    (AsyncError?, AsyncError?)
+  > catch (e) {
+    final created = e.values.$1;
+    if (created != null) broker.forgetSession(created.sessionId);
+    final error = e.errors.$1 ?? e.errors.$2!;
+    Error.throwWithStackTrace(error.error, error.stackTrace);
+  }
+
+  if (session.hasError) {
+    broker.forgetSession(session.sessionId);
+    throw SfuRequestException(
+      operation: 'sessions/new',
+      errorCode: session.errorCode!,
+      errorDescription: session.errorDescription,
+    );
+  }
+
+  final PeerConnection peerConnection;
+  try {
+    peerConnection = await createPeerConnection({
+      'iceServers': iceServers,
+      'bundlePolicy': 'max-bundle',
+      'sdpSemantics': 'unified-plan',
+    });
+  } catch (_) {
+    broker.forgetSession(session.sessionId);
+    rethrow;
+  }
+  return SfuSession._(
+    broker: broker,
+    sessionId: session.sessionId,
+    peerConnection: peerConnection,
+    options: options,
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Queue items
+// -----------------------------------------------------------------------------
+
+/// One queued request. Its outcome is decided during the operation
+/// ([succeed] or [fail]); [done] completes only at [settle], after the
+/// queue has cleaned up, so callers see a consistent peer connection.
+abstract class _OpItem {
+  final Completer<void> done = Completer<void>();
+  bool _succeeded = false;
+  Object? _error;
+  StackTrace? _stackTrace;
+
+  bool get isPending => !_succeeded && _error == null;
+
+  bool get failed => _error != null;
+
+  void succeed() {
+    if (isPending) _succeeded = true;
+  }
+
+  void fail(SfuSession session, Object error, [StackTrace? stackTrace]) {
+    if (!isPending) return;
+    _error = error;
+    _stackTrace = stackTrace;
+    onFailed(session, error);
+  }
+
+  /// Updates local state after a failure. Runs synchronously in [fail].
+  void onFailed(SfuSession session, Object error) {}
+
+  /// Releases peer-connection resources after the operation, inside the
+  /// queue and before [settle].
+  Future<void> cleanUp(SfuSession session) async {}
+
+  void settle() {
+    if (done.isCompleted) return;
+    final error = _error;
+    if (error != null) {
+      done.completeError(error, _stackTrace);
+    } else {
+      done.complete();
+    }
+  }
+}
+
+class _PushItem extends _OpItem {
+  _PushItem(this.publication);
+
+  final LocalTrackPublication publication;
+  PeerTransceiver? transceiver;
+  String? mid;
+
+  @override
+  Future<void> cleanUp(SfuSession session) async {
+    final t = transceiver;
+    if (!failed || t == null || !session.isUsable) return;
+    // A stopped transceiver is left out of later offers (or rejected with
+    // port 0 if it was negotiated), so it never sends again. A retry with
+    // `republish` adds a fresh one.
+    await t.stop();
+  }
+
+  @override
+  void onFailed(SfuSession session, Object error) {
+    if (identical(publication._session, session)) {
+      session._publications.remove(publication.trackName);
+      publication._detach(session, SfuTrackState.failed, error);
+    }
+  }
+}
+
+class _PullItem extends _OpItem {
+  _PullItem(this.subscription);
+
+  final RemoteTrackSubscription subscription;
+  String? mid;
+
+  @override
+  void onFailed(SfuSession session, Object error) {
+    if (identical(subscription._session, session)) {
+      session._subscriptions.remove(subscription);
+      subscription._detach(session, SfuTrackState.failed, error);
+    }
+  }
+}
+
+class _UpdateItem extends _OpItem {
+  _UpdateItem(this.subscription, this.config);
+
+  final RemoteTrackSubscription subscription;
+  final SimulcastConfig config;
+}
+
+class _CloseItem extends _OpItem {
+  _CloseItem.publication(LocalTrackPublication this.publication)
+    : subscription = null;
+
+  _CloseItem.subscription(RemoteTrackSubscription this.subscription)
+    : publication = null;
+
+  final LocalTrackPublication? publication;
+  final RemoteTrackSubscription? subscription;
+  String? mid;
+
+  String get trackName => publication?.trackName ?? subscription!.trackName;
+
+  SfuSession? get owner => publication?._session ?? subscription?._session;
+
+  PeerTransceiver? transceiverOn(SfuSession session) {
+    if (!identical(owner, session)) return null;
+    return publication?._transceiver ?? subscription?._transceiver;
+  }
+
+  String? midOn(SfuSession session) {
+    if (!identical(owner, session)) return null;
+    return publication?._mid ?? subscription?._mid;
+  }
+
+  /// Removes the track from [session]'s bookkeeping.
+  void forget(SfuSession session) {
+    final p = publication;
+    if (p != null && identical(p._session, session)) {
+      session._publications.remove(p.trackName);
+    }
+    final s = subscription;
+    if (s != null && identical(s._session, session)) {
+      session._subscriptions.remove(s);
+    }
+  }
+
+  void closeLocally() {
+    publication?._close();
+    subscription?._close();
+  }
+}
+
+/// Matches track results to requests, using each result at most once.
+class _TrackResults {
+  _TrackResults(List<TrackResult> results) : _remaining = [...results];
+
+  final List<TrackResult> _remaining;
+
+  TrackResult? take(bool Function(TrackResult result) test) {
+    final index = _remaining.indexWhere(test);
+    if (index < 0) return null;
+    return _remaining.removeAt(index);
+  }
+}

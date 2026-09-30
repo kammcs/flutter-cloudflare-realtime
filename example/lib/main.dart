@@ -64,7 +64,16 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
 
   final _roomController = TextEditingController(text: 'demo');
   final _nameController = TextEditingController(text: 'me');
+  final _brokerUrlController = TextEditingController();
+  final _brokerTokenController = TextEditingController();
   late final InMemorySignaling _signaling = InMemorySignaling(widget.hub);
+
+  /// The broker and SFU session, when a broker URL was given.
+  HttpBrokerClient? _broker;
+  SfuSession? _session;
+  CameraSource? _cameraSource;
+  LocalTrackPublication? _cameraPublication;
+  bool _joining = false;
   late final Stream<List<ParticipantState>> _participants =
       _signaling.participants;
 
@@ -78,16 +87,93 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
   Future<void> _join() async {
     final roomId = _roomController.text.trim();
     final name = _nameController.text.trim();
-    if (roomId.isEmpty || name.isEmpty) return;
+    if (roomId.isEmpty || name.isEmpty || _joining) return;
+    setState(() => _joining = true);
     try {
+      final sessionId = await _connectSession(roomId);
       await _signaling.join(
         roomId,
-        ParticipantState(participantId: name, metadata: {'displayName': name}),
+        ParticipantState(
+          participantId: name,
+          sessionId: sessionId,
+          metadata: {'displayName': name},
+        ),
       );
       setState(() => _error = null);
+      // TODO(M3): replace this with a Room, which also publishes the
+      // microphone and pulls what others publish.
+      if (_session case final session?) {
+        _publishCamera(session, name).catchError((Object e) {
+          if (mounted) setState(() => _error = 'Camera not published: $e');
+        });
+      }
     } on StateError catch (e) {
+      await _closeSession();
       setState(() => _error = e.message);
+    } on Exception catch (e) {
+      // Broker and session exceptions never contain SDP or tokens.
+      await _closeSession();
+      setState(() => _error = 'Could not connect: $e');
+    } finally {
+      if (mounted) setState(() => _joining = false);
     }
+  }
+
+  /// Creates an SFU session through the broker, if a broker URL was given.
+  /// Returns its session ID, or null without a broker.
+  Future<String?> _connectSession(String roomId) async {
+    final url = _brokerUrlController.text.trim();
+    if (url.isEmpty) return null;
+    final token = _brokerTokenController.text.trim();
+    final broker = _broker = HttpBrokerClient(
+      roomId: roomId,
+      config: BrokerConfig(
+        baseUrl: Uri.parse(url),
+        headers: () async => {
+          if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+        },
+      ),
+    );
+    final session = _session = await SfuSession.connect(broker: broker);
+    return session.sessionId;
+  }
+
+  /// Pushes the local camera to [session] and, once media flows, advertises
+  /// it in signaling so others could pull it.
+  Future<void> _publishCamera(SfuSession session, String name) async {
+    final camera = _cameraSource = CameraSource(backend: widget.mediaBackend);
+    if (!await camera.startBroadcasting()) {
+      throw StateError('the camera could not start');
+    }
+    final publication = _cameraPublication = await session.publishTrackStream(
+      camera.broadcastTrack.map((captured) => captured?.track),
+      kind: 'video',
+      options: PublishOptions(trackName: '$name-camera'),
+    );
+    await publication.whenSending().timeout(const Duration(seconds: 15));
+    final self = _signaling.self;
+    if (self == null || !identical(_session, session)) return;
+    await _signaling.update(
+      self.copyWith(tracks: {...self.tracks, publication.trackName: _camera}),
+    );
+  }
+
+  Future<void> _closeSession() async {
+    final publication = _cameraPublication;
+    _cameraPublication = null;
+    if (publication != null) {
+      try {
+        await publication.unpublish();
+      } on Exception {
+        // The session is closing anyway.
+      }
+    }
+    await _cameraSource?.dispose();
+    _cameraSource = null;
+    await _session?.close();
+    _session = null;
+    _broker?.dispose();
+    _broker = null;
   }
 
   Future<void> _leave() async {
@@ -96,6 +182,7 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
     }
     _guests.clear();
     await _signaling.leave();
+    await _closeSession();
     setState(() {});
   }
 
@@ -134,8 +221,13 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
       guest.dispose();
     }
     _signaling.dispose();
+    _cameraSource?.dispose();
+    _session?.close();
+    _broker?.dispose();
     _roomController.dispose();
     _nameController.dispose();
+    _brokerUrlController.dispose();
+    _brokerTokenController.dispose();
     super.dispose();
   }
 
@@ -188,8 +280,28 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Your name'),
               ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _brokerUrlController,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'Broker URL (optional)',
+                  helperText: 'Set it to create a real SFU session.',
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _brokerTokenController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Broker bearer token (optional)',
+                ),
+              ),
               const SizedBox(height: 16),
-              FilledButton(onPressed: _join, child: const Text('Join')),
+              FilledButton(
+                onPressed: _joining ? null : _join,
+                child: Text(_joining ? 'Connecting…' : 'Join'),
+              ),
               if (_error != null) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -209,6 +321,7 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Expanded(flex: 2, child: _VideoPlaceholder()),
+        if (_session case final session?) _SessionStatus(session: session),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           child: Text(
@@ -246,7 +359,7 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
   }
 }
 
-/// Where video tiles will go once rooms can pull media (roadmap M2 and M3).
+/// Where video tiles will go once rooms can pull media (roadmap M3).
 class _VideoPlaceholder extends StatelessWidget {
   const _VideoPlaceholder();
 
@@ -267,6 +380,29 @@ class _VideoPlaceholder extends StatelessWidget {
           const SizedBox(height: 8),
           const Text('Video tiles will appear here.'),
         ],
+      ),
+    );
+  }
+}
+
+/// The SFU session's ID and connection state.
+class _SessionStatus extends StatelessWidget {
+  const _SessionStatus({required this.session});
+
+  final SfuSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<SfuConnectionState>(
+      stream: session.connectionState,
+      initialData: session.currentConnectionState,
+      builder: (context, snapshot) => ListTile(
+        leading: const Icon(Icons.cloud_outlined),
+        title: Text('SFU session ${session.sessionId}'),
+        subtitle: Text(
+          'Connection: ${snapshot.data?.name}'
+          '${session.failure == null ? '' : ' (${session.failure!.reason})'}',
+        ),
       ),
     );
   }

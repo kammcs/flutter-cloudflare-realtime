@@ -6,7 +6,7 @@ Effort is in developer-weeks for the whole package. The total is **about 10–16
 |---|---|---|---|
 | M0 | Repo and CI (**done**) | Scaffold, CI (analyze, format, test, gitleaks), example app shell with the in-memory `Signaling` | S |
 | M1 | Broker (**done**) | The broker contract ([design.md §5](design.md#5-broker-contract)), with its security rules. A reference **Cloudflare Worker** and a **Supabase Edge Function** in `broker/` (shared core, tests and CI; see [broker/README.md](../broker/README.md)). A `BrokerClient` in Dart (typed models, `HttpBrokerClient`, error mapping). ICE servers from `generate-ice-servers` | 1–2 wk |
-| M2 | Core session | `SfuSession`: push, pull, update, close, renegotiation, a serialized op queue with batching, per-track errors. Port from partytracks | 3–4 wk |
+| M2 | Core session (**done**, pending a real-broker run) | `SfuSession`: push, pull, update, close, renegotiation, a serialized op queue with batching, per-track errors. Port from partytracks. **Status:** implemented with unit tests against a fake broker and a fake peer connection; session failures are surfaced and publications/subscriptions can move to a new session (the hooks M5 needs). The loopback integration test (`example/integration_test/`) still has to be run against a real broker | 3–4 wk |
 | M3 | Rooms | `Room` on top of the `Signaling` interface (the interface and `InMemorySignaling` landed with M0), participant diffing, and pull-on-subscribe | 1 wk |
 | M4 | Simulcast and active speaker | Publish a/b/c encodings, set `preferredRid` by tile size, `ridNotAvailable` fallback, active speaker from `getStats` | 1–2 wk |
 | M5 | Reconnection | Replace the session on failure, 410 handling, network changes, mobile background/foreground, backoff | 2–3 wk |
