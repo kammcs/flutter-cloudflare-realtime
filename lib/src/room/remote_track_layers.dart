@@ -288,7 +288,11 @@ class _TrackLayers {
       return;
     }
     final session = subscription.session;
-    if (session != null && !session.isUsable) return;
+    if (session != null) {
+      if (!session.isUsable) return;
+      // A pull on its way: applied once it lands (see `_onPulled`).
+      if (subscription.state == SfuTrackState.pending) return;
+    }
     _updating = rid;
     try {
       await subscription.setPreferredRid(rid);
