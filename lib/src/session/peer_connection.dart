@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show
         MediaStreamTrack,
+        RTCDataChannelMessage,
+        RTCDataChannelState,
         RTCIceConnectionState,
         RTCPeerConnectionState,
         RTCSignalingState;
@@ -74,7 +76,55 @@ abstract interface class PeerConnection {
     Duration timeout = const Duration(seconds: 5),
   });
 
+  /// Creates a negotiated DataChannel (`negotiated: true`) with the SCTP
+  /// stream [id] the SFU assigned. [ordered] and [maxRetransmits] must
+  /// mirror the channel's delivery policy; null [maxRetransmits] means
+  /// reliable. Binary messages arrive as bytes.
+  Future<PeerDataChannel> createDataChannel(
+    String label, {
+    required int id,
+    bool ordered = true,
+    int? maxRetransmits,
+  });
+
   /// Closes the connection. Safe to call more than once.
+  Future<void> close();
+}
+
+/// The slice of `RTCDataChannel` that the DataChannel layer uses.
+///
+/// Internal: not exported from the package barrel.
+abstract interface class PeerDataChannel {
+  /// The SCTP stream ID.
+  int get id;
+
+  /// The channel's label.
+  String get label;
+
+  /// The current state, or null before the platform reported one.
+  RTCDataChannelState? get state;
+
+  /// State changes.
+  Stream<RTCDataChannelState> get onStateChange;
+
+  /// Incoming messages.
+  Stream<RTCDataChannelMessage> get onMessage;
+
+  /// Bytes queued for sending. On native platforms this is the last value
+  /// the platform reported.
+  int get bufferedAmount;
+
+  /// The threshold for [onBufferedAmountLow].
+  set bufferedAmountLowThreshold(int value);
+
+  /// Emits the buffered amount each time it falls to or below the
+  /// threshold from above it.
+  Stream<int> get onBufferedAmountLow;
+
+  /// Sends [message].
+  Future<void> send(RTCDataChannelMessage message);
+
+  /// Closes the channel. Safe to call more than once.
   Future<void> close();
 }
 
