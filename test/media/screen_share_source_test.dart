@@ -203,6 +203,39 @@ void main() {
       await share.dispose();
     });
 
+    test('recovers from the macOS "No source found" answer too', () async {
+      // macOS answers {error: ...} instead of throwing, which flutter_webrtc
+      // 1.6 reads as a null streamId: a TypeError.
+      backend.platform = MediaPlatform.macos;
+      final share = ScreenShareSource(backend: backend);
+      final Map<String, dynamic> answer = {
+        'error': 'No source found for id: window-1',
+      };
+      var calls = 0;
+      backend.onDisplayMedia = (constraints) async {
+        if (calls++ == 0) {
+          final String streamId = answer['streamId'];
+          throw StateError('unreachable: $streamId');
+        }
+        return FakeStream([FakeTrack(kind: 'video')]);
+      };
+      expect(await share.start(source: window1), isTrue);
+      expect(desktop.getSourcesCalls, 1);
+      await share.dispose();
+
+      // Elsewhere a TypeError is just a failure.
+      backend.platform = MediaPlatform.windows;
+      final other = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      other.errors.listen(errors.add);
+      calls = 0;
+      expect(await other.start(source: window1), isFalse);
+      await pumpEventQueue();
+      expect(errors.single, isA<MediaCaptureException>());
+      expect(desktop.getSourcesCalls, 1);
+      await other.dispose();
+    });
+
     test(
       'reports ScreenSourceNotFoundException if the source is gone',
       () async {
@@ -251,7 +284,7 @@ void main() {
       expect(backend.displayMediaCalls.single, {
         'audio': false,
         'video': {
-          'frameRate': {'ideal': 30},
+          'frameRate': {'ideal': 15},
         },
       });
       await share.dispose();

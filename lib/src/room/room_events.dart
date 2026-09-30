@@ -166,13 +166,49 @@ final class LocalTrackPublishedEvent extends RoomEvent {
 /// The local participant unpublished a track (or a screen share ended).
 final class LocalTrackUnpublishedEvent extends RoomEvent {
   /// Creates the event.
-  const LocalTrackUnpublishedEvent(this.publication);
+  const LocalTrackUnpublishedEvent(this.publication, {this.endReason});
 
   /// The closed publication.
   final LocalMediaPublication publication;
 
+  /// Why the room unpublished a screen share (and its audio) by itself: the
+  /// user stopped it outside the app ([ScreenShareEndReason.userStopped],
+  /// the browser's "Stop sharing" button) or the shared window or display
+  /// went away ([ScreenShareEndReason.sourceClosed]). `null` when the app
+  /// unpublished the track.
+  final ScreenShareEndReason? endReason;
+
   @override
-  String toString() => 'LocalTrackUnpublishedEvent(${publication.trackName})';
+  String toString() =>
+      'LocalTrackUnpublishedEvent(${publication.trackName}'
+      '${endReason == null ? '' : ', ${endReason!.name}'})';
+}
+
+/// A local screen share sends no video: its capture delivered no frames
+/// for [RoomOptions.screenShareStallTimeout] while the room was connected.
+///
+/// On macOS this is what a missing Screen Recording permission looks like
+/// (the capture starts but stays empty), so [error] is then a
+/// [ScreenCapturePermissionException] with guidance to show. Elsewhere it
+/// is a [MediaCaptureException]; a minimized window, for example, sends no
+/// frames on Windows and macOS.
+///
+/// The share stays published (others see an empty tile); the app decides
+/// whether to stop it. Reported at most once per capture: again only after
+/// unmuting or switching the source.
+final class LocalScreenShareStalledEvent extends RoomEvent {
+  /// Creates the event.
+  const LocalScreenShareStalledEvent(this.publication, this.error);
+
+  /// The screen share.
+  final LocalMediaPublication publication;
+
+  /// What probably went wrong.
+  final MediaException error;
+
+  @override
+  String toString() =>
+      'LocalScreenShareStalledEvent(${publication.trackName}, $error)';
 }
 
 /// [Room.connectionState] changed.

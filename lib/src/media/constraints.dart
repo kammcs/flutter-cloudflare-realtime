@@ -161,13 +161,18 @@ class MicrophoneOptions {
 class ScreenShareOptions {
   /// Creates screen share settings.
   const ScreenShareOptions({
-    this.frameRate = 30,
+    this.frameRate = 15,
     this.captureAudio = false,
     this.showCursor,
   });
 
   /// Frames per second. On desktop this is `flutter_webrtc`'s
   /// `mandatory.frameRate`; in browsers it is an ideal.
+  ///
+  /// The default, 15, suits documents, slides and code: screen content
+  /// needs sharp text more than motion, and fewer frames leave more bits
+  /// for each (`docs/design.md` §12, question 2). Use 30 for video or
+  /// animation, with `ScreenSharePresets.motion` when publishing.
   final int frameRate;
 
   /// Whether to also capture system or tab audio.

@@ -360,6 +360,12 @@ class _SourceGrid extends StatelessWidget {
                 ),
               ],
             ),
+            if (state.permissionProblem case final problem?)
+              Text(
+                'This app may not have permission to record the screen. '
+                '${problem.guidance}',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             if (state.error != null)
               Text(
                 state.error!.noScreens
@@ -405,6 +411,13 @@ class _SourceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final thumbnail = source.thumbnail;
+    final icon = Icon(
+      source.type == ScreenSourceType.screen
+          ? Icons.desktop_windows
+          : Icons.web_asset,
+      size: 40,
+      color: colors.outline,
+    );
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -421,14 +434,14 @@ class _SourceTile extends StatelessWidget {
           children: [
             Expanded(
               child: thumbnail == null
-                  ? Icon(
-                      source.type == ScreenSourceType.screen
-                          ? Icons.desktop_windows
-                          : Icons.web_asset,
-                      size: 40,
-                      color: colors.outline,
-                    )
-                  : Image.memory(thumbnail, gaplessPlayback: true),
+                  ? icon
+                  : Image.memory(
+                      thumbnail,
+                      gaplessPlayback: true,
+                      // macOS thumbnails are TIFF, which Flutter's codecs
+                      // may not decode.
+                      errorBuilder: (_, _, _) => icon,
+                    ),
             ),
             Text(
               source.name,

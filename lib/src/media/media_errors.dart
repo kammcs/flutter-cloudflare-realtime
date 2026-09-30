@@ -32,6 +32,55 @@ final class MediaPermissionDeniedException extends MediaException {
   const MediaPermissionDeniedException(super.message, {super.cause});
 }
 
+/// The OS doesn't let this app capture the screen, or probably doesn't.
+///
+/// On macOS, capturing the screen needs the user's **Screen Recording**
+/// permission (System Settings → Privacy & Security → Screen & System Audio
+/// Recording; "Screen Recording" on macOS 14 and earlier). There is no
+/// entitlement or `Info.plist` key for it, and `flutter_webrtc` 1.6 neither
+/// asks for it nor reports it: without it, windows go missing from the
+/// source list, thumbnails come back empty or black, and a share starts but
+/// never delivers a frame. The package detects those symptoms, so this is
+/// usually a suspicion ([suspected]) rather than a verdict. macOS applies a
+/// newly granted permission only after the app restarts.
+///
+/// Reported in [ScreenPickerState.permissionProblem] and by the room when a
+/// screen share on macOS sends no frames. Show [guidance] to the user.
+final class ScreenCapturePermissionException
+    extends MediaPermissionDeniedException {
+  /// Creates the exception.
+  const ScreenCapturePermissionException(
+    super.message, {
+    this.platform = MediaPlatform.macos,
+    this.suspected = true,
+    super.cause,
+  });
+
+  /// The platform whose permission is missing.
+  final MediaPlatform platform;
+
+  /// Whether this is inferred from symptoms (the usual case) rather than
+  /// reported by the OS.
+  final bool suspected;
+
+  /// What the user should do, in a sentence or two, ready to show.
+  String get guidance => switch (platform) {
+    MediaPlatform.macos => macOSGuidance,
+    MediaPlatform.web =>
+      'Allow screen sharing for this site in the browser, then try again.',
+    _ =>
+      'Allow screen capture for this app in the system settings, then '
+          'try again.',
+  };
+
+  /// [guidance] on macOS.
+  static const macOSGuidance =
+      'Open System Settings → Privacy & Security → Screen & System Audio '
+      'Recording (Screen Recording on macOS 14 and earlier), turn this app '
+      'on, then quit and reopen it. macOS applies the permission only after '
+      'a restart.';
+}
+
 /// Every candidate device failed to produce a track.
 ///
 /// Named after partytracks' `DevicesExhaustedError`. [failures] holds each
@@ -110,5 +159,17 @@ bool isPermissionError(Object error) {
 
 /// Whether [error], as thrown by the desktop `getDisplayMedia`, means the
 /// requested source isn't in the plugin's source list.
-bool isSourceNotFoundError(Object error) =>
-    error.toString().toLowerCase().contains('source not found');
+///
+/// Windows and Linux say "source not found!". macOS answers
+/// `{error: "No source found for id: ..."}` instead of throwing, which
+/// `flutter_webrtc` 1.6 then fails to read (a `TypeError` about a `Null`
+/// `streamId`), so on [platform] macOS that `TypeError` counts too.
+bool isSourceNotFoundError(Object error, {MediaPlatform? platform}) {
+  final text = error.toString().toLowerCase();
+  if (text.contains('source not found') || text.contains('no source found')) {
+    return true;
+  }
+  return platform == MediaPlatform.macos &&
+      error is TypeError &&
+      text.contains('null');
+}

@@ -1,58 +1,28 @@
 // Pushes a local track on one SFU session and pulls it on another, through
 // a real broker.
 //
-// Skipped unless CF_REALTIME_BROKER_URL is set. Pass settings with
-// --dart-define (works on every device) or, on desktop, the environment:
-//
-//   CF_REALTIME_BROKER_URL    the broker's base URL (required)
-//   CF_REALTIME_BROKER_TOKEN  sent as `Authorization: Bearer <token>`
-//   CF_REALTIME_ROOM          the room ID (default: integration-test)
-//
-//   cd example
-//   flutter test integration_test -d windows \
-//     --dart-define=CF_REALTIME_BROKER_URL=https://broker.example.test/realtime
-//
-// The test never prints these values.
-
-import 'dart:io' show Platform;
+// Skipped unless CF_REALTIME_BROKER_URL is set; see broker_settings.dart
+// for the settings (including the dev server's X-Dev-User) and a
+// command line. The test never prints them.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:integration_test/integration_test.dart';
 
-const _definedUrl = String.fromEnvironment('CF_REALTIME_BROKER_URL');
-const _definedToken = String.fromEnvironment('CF_REALTIME_BROKER_TOKEN');
-const _definedRoom = String.fromEnvironment('CF_REALTIME_ROOM');
-
-String? _setting(String defined, String name) {
-  if (defined.isNotEmpty) return defined;
-  if (kIsWeb) return null;
-  final value = Platform.environment[name];
-  return value == null || value.isEmpty ? null : value;
-}
+import 'broker_settings.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  final brokerUrl = _setting(_definedUrl, 'CF_REALTIME_BROKER_URL');
-  final token = _setting(_definedToken, 'CF_REALTIME_BROKER_TOKEN');
-  final room = _setting(_definedRoom, 'CF_REALTIME_ROOM') ?? 'integration-test';
+  final settings = BrokerSettings.read();
+  final room = settings.room;
   const timeout = Duration(seconds: 20);
 
   testWidgets(
     'pushes and pulls a loopback track between two sessions',
     (tester) async {
-      final broker = HttpBrokerClient(
-        roomId: room,
-        config: BrokerConfig(
-          baseUrl: Uri.parse(brokerUrl!),
-          headers: () async => {
-            if (token != null) 'Authorization': 'Bearer $token',
-          },
-        ),
-      );
+      final broker = HttpBrokerClient(roomId: room, config: settings.config());
       addTearDown(broker.dispose);
 
       final publisher = await SfuSession.connect(broker: broker);
@@ -102,7 +72,7 @@ void main() {
       expect(publisher.failure, isNull);
       expect(subscriber.failure, isNull);
     },
-    skip: brokerUrl == null,
+    skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 2)),
   );
 }

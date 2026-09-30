@@ -4,57 +4,27 @@
 // publisher's session is failed and replaced, then the subscriber's, and
 // each time the subscriber must receive the track again.
 //
-// Skipped unless CF_REALTIME_BROKER_URL is set. Settings are the same as in
-// sfu_loopback_test.dart:
-//
-//   CF_REALTIME_BROKER_URL    the broker's base URL (required)
-//   CF_REALTIME_BROKER_TOKEN  sent as `Authorization: Bearer <token>`
-//   CF_REALTIME_ROOM          the room ID (default: integration-test)
-//
-//   cd example
-//   flutter test integration_test/reconnect_test.dart -d windows \
-//     --dart-define=CF_REALTIME_BROKER_URL=https://broker.example.test/realtime
-//
-// The test never prints these values.
-
-import 'dart:io' show Platform;
+// Skipped unless CF_REALTIME_BROKER_URL is set; see broker_settings.dart
+// for the settings (including the dev server's X-Dev-User) and a
+// command line. The test never prints them.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
-const _definedUrl = String.fromEnvironment('CF_REALTIME_BROKER_URL');
-const _definedToken = String.fromEnvironment('CF_REALTIME_BROKER_TOKEN');
-const _definedRoom = String.fromEnvironment('CF_REALTIME_ROOM');
-
-String? _setting(String defined, String name) {
-  if (defined.isNotEmpty) return defined;
-  if (kIsWeb) return null;
-  final value = Platform.environment[name];
-  return value == null || value.isEmpty ? null : value;
-}
+import 'broker_settings.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  final brokerUrl = _setting(_definedUrl, 'CF_REALTIME_BROKER_URL');
-  final token = _setting(_definedToken, 'CF_REALTIME_BROKER_TOKEN');
-  final roomId =
-      _setting(_definedRoom, 'CF_REALTIME_ROOM') ?? 'integration-test';
+  final settings = BrokerSettings.read();
+  final roomId = settings.room;
   const timeout = Duration(seconds: 30);
 
   testWidgets(
     'a call recovers from a network drop on either side',
     (tester) async {
-      final realtime = CloudflareRealtime(
-        broker: BrokerConfig(
-          baseUrl: Uri.parse(brokerUrl!),
-          headers: () async => {
-            if (token != null) 'Authorization': 'Bearer $token',
-          },
-        ),
-      );
+      final realtime = CloudflareRealtime(broker: settings.config());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;
@@ -154,7 +124,7 @@ void main() {
       expect(alice.currentConnectionState, RoomConnectionState.connected);
       expect(bob.currentConnectionState, RoomConnectionState.connected);
     },
-    skip: brokerUrl == null,
+    skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),
   );
 }

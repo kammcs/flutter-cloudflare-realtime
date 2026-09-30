@@ -115,7 +115,7 @@ void main() {
         'audio': true,
         'video': {
           'deviceId': {'exact': '42'},
-          'mandatory': {'frameRate': 30.0},
+          'mandatory': {'frameRate': 15.0},
           'cursor': 'never',
         },
       },

@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import 'screen_share_dialog.dart';
 
 /// What the join screen hands the call screen: how to reach the others
 /// (signaling) and the broker, independent of which signaling was chosen.
@@ -115,9 +116,51 @@ class _CallPageState extends State<CallPage> {
         _show('${_nameOf(participant)} joined.');
       case ParticipantLeftEvent(:final participant):
         _show('${_nameOf(participant)} left.');
+      case LocalTrackUnpublishedEvent(:final endReason?, :final publication)
+          when publication.source == TrackSource.screen:
+        _show(switch (endReason) {
+          ScreenShareEndReason.userStopped => 'You stopped sharing.',
+          ScreenShareEndReason.sourceClosed =>
+            'Screen share ended: the shared window or display went away.',
+          ScreenShareEndReason.stopped => 'Screen share ended.',
+        });
+      case LocalScreenShareStalledEvent(:final error, :final publication):
+        _showStalledShare(publication, error);
       case _:
         break;
     }
+  }
+
+  /// A share that sends no frames: on macOS, almost always the missing
+  /// Screen Recording permission.
+  Future<void> _showStalledShare(
+    LocalMediaPublication share,
+    MediaException error,
+  ) async {
+    if (!mounted) return;
+    final stop = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.screen_share_outlined),
+        title: const Text('Your screen share is empty'),
+        content: Text(
+          error is ScreenCapturePermissionException
+              ? '${error.message}\n\n${error.guidance}'
+              : error.message,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep sharing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Stop sharing'),
+          ),
+        ],
+      ),
+    );
+    if (stop ?? false) await _run(share.unpublish);
   }
 
   void _show(String message) {
@@ -169,22 +212,37 @@ class _CallPageState extends State<CallPage> {
       await screen.unpublish();
       return;
     }
-    if (kIsWeb) {
-      await _local.publishScreen(); // The browser shows its picker.
-      return;
+    final platform = widget.mediaBackend.platform;
+    final web = platform == MediaPlatform.web;
+    ScreenSourcePicker? picker;
+    if (!web) {
+      picker = ScreenSourcePicker(backend: widget.mediaBackend);
+      if (!picker.isSupported) {
+        await picker.dispose();
+        _show('Screen share on mobile is not implemented yet (roadmap M6).');
+        return;
+      }
     }
-    final picker = ScreenSourcePicker(backend: widget.mediaBackend);
-    if (!picker.isSupported) {
-      await picker.dispose();
-      _show('Screen share on this platform is not implemented yet (M6).');
-      return;
+    final ShareChoice? choice;
+    try {
+      choice = await showDialog<ShareChoice>(
+        context: context,
+        builder: (_) => ScreenShareDialog(
+          picker: picker,
+          // Loopback audio on Windows, tab audio in Chromium browsers.
+          canShareAudio: web || platform == MediaPlatform.windows,
+        ),
+      );
+    } finally {
+      await picker?.dispose();
     }
-    final source = await showDialog<ScreenSource>(
-      context: context,
-      builder: (_) => _ScreenPickerDialog(picker: picker),
+    if (choice == null) return;
+    // On the web the browser shows its own picker now.
+    await _local.publishScreen(
+      source: choice.source,
+      options: choice.options,
+      encodings: choice.encodings,
     );
-    await picker.dispose();
-    if (source != null) await _local.publishScreen(source: source);
   });
 
   /// The checkpoint demo: fails the SFU session as a network drop would,
@@ -943,90 +1001,6 @@ class _LayerOverlayState extends State<_LayerOverlay> {
           child: chip,
         );
       },
-    );
-  }
-}
-
-/// The desktop "choose what to share" dialog.
-class _ScreenPickerDialog extends StatefulWidget {
-  const _ScreenPickerDialog({required this.picker});
-
-  final ScreenSourcePicker picker;
-
-  @override
-  State<_ScreenPickerDialog> createState() => _ScreenPickerDialogState();
-}
-
-class _ScreenPickerDialogState extends State<_ScreenPickerDialog> {
-  @override
-  void initState() {
-    super.initState();
-    widget.picker.start();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Share your screen'),
-      content: SizedBox(
-        width: 560,
-        height: 380,
-        child: StreamBuilder<ScreenPickerState>(
-          stream: widget.picker.state,
-          initialData: widget.picker.currentState,
-          builder: (context, snapshot) {
-            final state = snapshot.data!;
-            if (state.error != null && state.sources.isEmpty) {
-              return const Center(
-                child: Text('Listing screens failed. Close and try again.'),
-              );
-            }
-            if (state.sources.isEmpty) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            return GridView.extent(
-              maxCrossAxisExtent: 180,
-              childAspectRatio: 4 / 3,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              children: [
-                for (final source in state.sources)
-                  InkWell(
-                    onTap: () => Navigator.of(context).pop(source),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: source.thumbnail == null
-                              ? Icon(
-                                  source.type == ScreenSourceType.screen
-                                      ? Icons.desktop_windows
-                                      : Icons.web_asset,
-                                  size: 40,
-                                )
-                              : Image.memory(
-                                  source.thumbnail!,
-                                  gaplessPlayback: true,
-                                ),
-                        ),
-                        Text(
-                          source.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-      ],
     );
   }
 }

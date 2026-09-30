@@ -277,7 +277,7 @@ class ScreenShareSource extends LocalMediaSource {
     try {
       return await _media.getDisplayMedia(constraints);
     } catch (error) {
-      if (!isSourceNotFoundError(error)) rethrow;
+      if (!isSourceNotFoundError(error, platform: _media.platform)) rethrow;
     }
     final capturer = _media.desktopCapturer;
     try {
@@ -291,7 +291,7 @@ class ScreenShareSource extends LocalMediaSource {
     try {
       return await _media.getDisplayMedia(constraints);
     } catch (error) {
-      if (!isSourceNotFoundError(error)) rethrow;
+      if (!isSourceNotFoundError(error, platform: _media.platform)) rethrow;
       throw ScreenSourceNotFoundException(
         'The screen or window to share is no longer available.',
         sourceId: sourceId,
@@ -334,9 +334,11 @@ class ScreenShareSource extends LocalMediaSource {
   Future<void> _release(ScreenShareEndReason? reason) async {
     _watchTimer?.cancel();
     _watchTimer = null;
-    final removed = _removedSubscription;
+    // Not awaited: cancelling a broadcast subscription takes effect at once,
+    // and its future (the root zone's null future) never completes under
+    // fake_async, which would stall the release in tests.
+    unawaited(_removedSubscription?.cancel());
     _removedSubscription = null;
-    await removed?.cancel();
     final current = currentTrack;
     _endReason = null;
     if (current == null) return;
