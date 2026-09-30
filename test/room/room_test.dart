@@ -753,7 +753,7 @@ void main() {
       );
     });
 
-    test('is published as one encoding and unpublished when the source '
+    test('is published as one layer and unpublished when the source '
         'goes away', () async {
       final alice = await h.join('alice');
       final bob = await h.join('bob');
@@ -762,7 +762,10 @@ void main() {
       final share = await alice.localParticipant.publishScreen(source: screen1);
       expect(share.source, TrackSource.screen);
       expect(share.simulcast, isNull);
-      expect(h.pcOf(alice).transceivers.single.sendEncodings, isEmpty);
+      expect(
+        h.pcOf(alice).transceivers.single.sendEncodings,
+        ScreenSharePresets.detail,
+      );
       await _settle();
       expect(
         h.announced('alice')!.tracks[share.trackName],

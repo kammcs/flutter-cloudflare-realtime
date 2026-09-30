@@ -184,6 +184,7 @@ class RoomOptions {
     this.hiddenVideoLinger = const Duration(seconds: 5),
     this.leaseReleaseGrace = const Duration(milliseconds: 500),
     this.activeSpeaker = const ActiveSpeakerConfig(),
+    this.screenShareStallTimeout = const Duration(seconds: 8),
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -241,4 +242,12 @@ class RoomOptions {
   /// are read and how they are smoothed. `null` turns detection off: then
   /// [Room.activeSpeakers] stays empty and no stats are polled.
   final ActiveSpeakerConfig? activeSpeaker;
+
+  /// How long a local screen share may go without a captured or encoded
+  /// frame, counted while the room is connected, before the room reports
+  /// [LocalScreenShareStalledEvent]. On macOS that is the symptom of a
+  /// missing Screen Recording permission. Checked once a second through
+  /// `getStats()` while a share captures. Default 8 s; `null` turns the
+  /// check off.
+  final Duration? screenShareStallTimeout;
 }

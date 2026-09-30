@@ -5,6 +5,28 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
+import 'tiff.dart';
+
+/// A capturer that, like `flutter_webrtc` on macOS, announces each source
+/// with its thumbnail (`onAdded`) while listing, and returns the list
+/// without thumbnails.
+class _AnnouncingCapturer extends FakeDesktopCapturer {
+  _AnnouncingCapturer(super.sources, this.thumbnails);
+
+  final Map<String, Uint8List> thumbnails;
+
+  @override
+  Future<List<ScreenSource>> getSources({
+    required Set<ScreenSourceType> types,
+    ({int width, int height})? thumbnailSize,
+  }) async {
+    for (final source in sources) {
+      final thumbnail = thumbnails[source.id];
+      if (thumbnail != null) added.add(source.copyWith(thumbnail: thumbnail));
+    }
+    return super.getSources(types: types, thumbnailSize: thumbnailSize);
+  }
+}
 
 const screen1 = ScreenSource(
   id: 'screen-1',
@@ -224,6 +246,109 @@ void main() {
     expect(web.isSupported, isFalse);
     expect(web.start, throwsUnsupportedError);
     await web.dispose();
+  });
+
+  group('thumbnails', () {
+    test('survive a new listing, which carries none', () async {
+      await picker.start();
+      final thumbnail = Uint8List.fromList([1, 2, 3]);
+      desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: thumbnail));
+      await picker.refresh();
+      expect(picker.currentState.screens.first.thumbnail, same(thumbnail));
+
+      // A source that is no longer listed forgets its thumbnail.
+      desktop.sources = [editor, screen2];
+      await picker.refresh();
+      desktop.sources = [editor, screen1, screen2];
+      await picker.refresh();
+      expect(picker.currentState.screens.first.thumbnail, isNull);
+    });
+
+    test('announced while listing are kept (macOS)', () async {
+      final thumbnail = Uint8List.fromList([4, 5, 6]);
+      final listing = _AnnouncingCapturer(
+        [screen1, editor],
+        {screen1.id: thumbnail},
+      );
+      final mac = ScreenSourcePicker(
+        backend: FakeMediaBackend(
+          platform: MediaPlatform.macos,
+          desktop: listing,
+        ),
+      );
+      await mac.start();
+      expect(mac.currentState.screens.single.thumbnail, same(thumbnail));
+      await mac.dispose();
+    });
+
+    test('an empty thumbnail reads as none', () async {
+      await picker.start();
+      desktop.thumbnailChanged.add(
+        screen1.copyWith(thumbnail: Uint8List.fromList([7])),
+      );
+      desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: Uint8List(0)));
+      await pumpEventQueue();
+      expect(picker.currentState.screens.first.thumbnail, isNull);
+      expect(picker.currentState.permissionProblem, isNull, reason: 'Windows');
+    });
+  });
+
+  group('macOS Screen Recording permission', () {
+    late ScreenSourcePicker mac;
+
+    setUp(() {
+      backend.platform = MediaPlatform.macos;
+      mac = ScreenSourcePicker(backend: backend);
+    });
+
+    tearDown(() => mac.dispose());
+
+    test('is suspected when every screen thumbnail is blank', () async {
+      await mac.start();
+      expect(mac.currentState.permissionProblem, isNull, reason: 'unknown');
+
+      desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: Uint8List(0)));
+      await pumpEventQueue();
+      expect(mac.currentState.permissionProblem, isNull, reason: 'one left');
+
+      final black = solidTiff(32, 18, rgb: (0, 0, 0));
+      desktop.thumbnailChanged.add(screen2.copyWith(thumbnail: black));
+      await pumpEventQueue();
+      final problem = mac.currentState.permissionProblem!;
+      expect(problem, isA<MediaPermissionDeniedException>());
+      expect(problem.suspected, isTrue);
+      expect(problem.platform, MediaPlatform.macos);
+      expect(problem.guidance, contains('Screen Recording'));
+      expect(problem.guidance, contains('quit and reopen'));
+      // The black TIFF still shows (as a thumbnail); the empty one doesn't.
+      expect(mac.currentState.screens.last.thumbnail, same(black));
+
+      // A screen that shows something clears it.
+      desktop.thumbnailChanged.add(
+        screen1.copyWith(thumbnail: solidTiff(32, 18, rgb: (30, 90, 200))),
+      );
+      await pumpEventQueue();
+      expect(mac.currentState.permissionProblem, isNull);
+    });
+
+    test('is suspected when no screen is listed', () async {
+      desktop.sources = [editor];
+      await mac.start();
+      expect(mac.currentState.error!.noScreens, isTrue);
+      expect(mac.currentState.permissionProblem, isNotNull);
+
+      desktop.sources = [editor, screen1];
+      await mac.refresh();
+      expect(mac.currentState.permissionProblem, isNull);
+    });
+
+    test('is never reported on other platforms', () async {
+      backend.platform = MediaPlatform.windows;
+      desktop.sources = [editor];
+      await picker.start();
+      expect(picker.currentState.error!.noScreens, isTrue);
+      expect(picker.currentState.permissionProblem, isNull);
+    });
   });
 
   test('dispose stops listening and completes the state stream', () async {

@@ -42,6 +42,7 @@ import '../util/state_stream.dart';
 import 'participant_diff.dart';
 import 'room_audio_levels.dart';
 import 'room_options.dart';
+import 'screen_share_presets.dart';
 import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
@@ -51,6 +52,7 @@ part 'room_data.dart';
 part 'room_events.dart';
 part 'room_reconnection.dart';
 part 'room_speakers.dart';
+part 'screen_share_watchdog.dart';
 
 /// Connects a new [SfuSession] through a broker: the room's session
 /// factory, used when joining and on every re-session.

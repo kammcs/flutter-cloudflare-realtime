@@ -194,14 +194,24 @@ class LocalParticipant {
   /// [ScreenShareOptions.captureAudio], where the platform captures audio,
   /// the audio is published too, as [screenAudio].
   ///
-  /// The share is sent as one encoding by default (sharp text; roadmap
-  /// open question 2 in `docs/design.md`); pass simulcast [encodings] to
-  /// change that.
+  /// The share is sent as one layer tuned for text by default
+  /// ([ScreenSharePresets.detail]: up to 15 fps and 2.5 Mbps, captured at
+  /// 15 fps by the default [options]; `docs/design.md` §12, question 2).
+  /// Pass [ScreenSharePresets.motion] (with `frameRate: 30`) for video, or
+  /// [ScreenSharePresets.simulcast] to add a thumbnail layer, whose layers
+  /// are then announced in [TrackInfo.simulcast]. On Windows the video is
+  /// sent as VP8, like every video track (the session default).
   ///
   /// When the share ends outside the app (the shared window closes, or the
-  /// browser's "Stop sharing" button), it is unpublished. Muting it ends
-  /// the capture but keeps it published; unmuting shares the same source
-  /// again (on the web, the browser asks again).
+  /// browser's "Stop sharing" button), it is unpublished with its audio,
+  /// and signaling is updated; the [LocalTrackUnpublishedEvent] carries the
+  /// [LocalTrackUnpublishedEvent.endReason]. Muting it ends the capture but
+  /// keeps it published; unmuting shares the same source again (on the
+  /// web, the browser asks again).
+  ///
+  /// If the capture delivers no frames (on macOS: no Screen Recording
+  /// permission), the room reports a [LocalScreenShareStalledEvent]; see
+  /// [RoomOptions.screenShareStallTimeout].
   ///
   /// Throws [UnsupportedError] on Android and iOS (roadmap M6), an
   /// [ArgumentError] on desktop without a [source], and a [MediaException]
@@ -220,15 +230,23 @@ class LocalParticipant {
       if (source != null) await share.select(source);
       return share.startBroadcasting();
     });
-    final effective = encodings ?? const <SendEncoding>[];
-    final video = await _publish(
-      share,
-      source: TrackSource.screen,
-      kind: TrackKind.video,
-      ownsSource: true,
-      encodings: effective,
-      simulcast: simulcastInfoFor(effective),
-    );
+    // A share that ends while it is being pushed is unpublished right after.
+    ScreenShareEndReason? endedEarly;
+    final earlyEnd = share.ended.listen((reason) => endedEarly = reason);
+    final effective = encodings ?? ScreenSharePresets.detail;
+    final LocalMediaPublication video;
+    try {
+      video = await _publish(
+        share,
+        source: TrackSource.screen,
+        kind: TrackKind.video,
+        ownsSource: true,
+        encodings: effective,
+        simulcast: simulcastInfoFor(effective),
+      );
+    } finally {
+      unawaited(earlyEnd.cancel());
+    }
     if (share.currentAudioTrack != null) {
       try {
         video._companion = await _publish(
@@ -242,10 +260,23 @@ class LocalParticipant {
         _room._emit(RoomErrorEvent('publish screen audio', error));
       }
     }
-    video._endedListener = share.ended.listen((reason) {
+    void onEnded(ScreenShareEndReason reason) {
       // `stopped` is the app's own doing (mute or unpublish).
-      if (reason != ScreenShareEndReason.stopped) unawaited(unpublish(video));
-    });
+      if (reason == ScreenShareEndReason.stopped) return;
+      unawaited(_unpublish(video, endReason: reason));
+    }
+
+    video._endedListener = share.ended.listen(onEnded);
+    if (endedEarly case final reason?) onEnded(reason);
+    if (_room.options.screenShareStallTimeout case final timeout?
+        when video.isPublished) {
+      video._watchdog = _ScreenShareWatchdog(
+        _room,
+        video,
+        share,
+        timeout: timeout,
+      );
+    }
     return video;
   }
 
@@ -278,7 +309,13 @@ class LocalParticipant {
   /// Unpublishing a screen share also unpublishes its audio.
   ///
   /// Does nothing if it is already unpublished.
-  Future<void> unpublish(LocalMediaPublication publication) async {
+  Future<void> unpublish(LocalMediaPublication publication) =>
+      _unpublish(publication);
+
+  Future<void> _unpublish(
+    LocalMediaPublication publication, {
+    ScreenShareEndReason? endReason,
+  }) async {
     if (publication._unpublished || !_publications.contains(publication)) {
       return;
     }
@@ -298,7 +335,7 @@ class LocalParticipant {
     await Future.wait([for (final p in closing) _closeQuietly(p.publication)]);
     for (final p in closing) {
       if (p.ownsMediaSource) await _disposeQuietly(p.mediaSource);
-      _room._emit(LocalTrackUnpublishedEvent(p));
+      _room._emit(LocalTrackUnpublishedEvent(p, endReason: endReason));
     }
   }
 
@@ -472,6 +509,7 @@ class LocalMediaPublication {
   LocalMediaPublication? _companion;
   StreamSubscription<bool>? _broadcastingListener;
   StreamSubscription<ScreenShareEndReason>? _endedListener;
+  _ScreenShareWatchdog? _watchdog;
 
   /// The track's SFU name. Stable for the publication's lifetime.
   String get trackName => publication.trackName;
@@ -524,8 +562,10 @@ class LocalMediaPublication {
   Future<void> _stopListening() async {
     unawaited(_broadcastingListener?.cancel());
     unawaited(_endedListener?.cancel());
+    _watchdog?.dispose();
     _broadcastingListener = null;
     _endedListener = null;
+    _watchdog = null;
   }
 
   @override

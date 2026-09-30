@@ -8,6 +8,7 @@ export 'src/room/cloudflare_realtime.dart'
     show BrokerClientFactory, CloudflareRealtime, SfuSessionConnector;
 export 'src/room/room.dart' hide joinRoom;
 export 'src/room/room_options.dart';
+export 'src/room/screen_share_presets.dart';
 
 // Rendering (design.md §4.3).
 export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
@@ -50,6 +51,7 @@ export 'src/media/media_errors.dart'
         MediaCaptureException,
         MediaException,
         MediaPermissionDeniedException,
+        ScreenCapturePermissionException,
         ScreenSourceNotFoundException,
         ScreenSourcesException;
 export 'src/media/media_types.dart'
