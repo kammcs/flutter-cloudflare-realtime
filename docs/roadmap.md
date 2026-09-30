@@ -10,7 +10,7 @@ Effort is in developer-weeks for the whole package. The total is **about 10–16
 | M3 | Rooms | `Room` on top of the `Signaling` interface (the interface and `InMemorySignaling` landed with M0), participant diffing, and pull-on-subscribe | 1 wk |
 | M4 | Simulcast and active speaker | Publish a/b/c encodings, set `preferredRid` by tile size, `ridNotAvailable` fallback, active speaker from `getStats` | 1–2 wk |
 | M5 | Reconnection | Replace the session on failure, 410 handling, network changes, mobile background/foreground, backoff | 2–3 wk |
-| M6 | Screen share | Desktop picker (`desktopCapturer`), Android MediaProjection, iOS Broadcast Upload Extension, web `getDisplayMedia`. VP8 by default on Windows | 3–4 wk (includes QA) |
+| M6 | Screen share | Desktop picker (`desktopCapturer`) and web `getDisplayMedia` capture (**landed early**, with the media layer: [design.md §10](design.md#10-screen-share-by-platform)). Still to do: Android MediaProjection, iOS Broadcast Upload Extension, publishing the share, VP8 by default on Windows, device QA | 3–4 wk (includes QA) |
 | M7 | DataChannels | Reliable and unreliable profiles, `canReply`, sender `sessionId` exposed | S–M |
 | M8 | Publish to pub.dev | API review, dartdoc, README setup guides (iOS extension, Android FGS, broker), example app, remove `publish_to: none`, widen the SDK constraint, 0.1.0 | M |
 
