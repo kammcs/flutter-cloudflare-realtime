@@ -13,6 +13,10 @@ cd example
 flutter run -d macos   # or windows, android, ios, chrome
 ```
 
+## Multi-device calls with the dev server
+
+[`tools/dev-server/`](../tools/dev-server/README.md) is a DEV ONLY local broker plus WebSocket presence signaling. `lib/ws_signaling.dart` (`WsSignaling`) is the `Signaling` client for it. `lib/dev_config.dart` (`DevServerConfig`) turns a server URL, the dev token and a user name into a `BrokerConfig` and a `WsSignaling`. Debug Android builds allow cleartext HTTP to reach the server on a LAN IP; release builds don't. See the dev server's README for the step-by-step setup.
+
 The platform folders already declare what later milestones need: camera, microphone and network permissions on Android, iOS and macOS.
 
 ## Integration test

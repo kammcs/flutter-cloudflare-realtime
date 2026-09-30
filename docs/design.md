@@ -179,6 +179,7 @@ abstract interface class Signaling {
 - `participants` replays the current list to new listeners, emits `[]` while not in a room, and never includes the caller's own entry.
 - **Ship an in-memory implementation** for tests and the example app: `InMemorySignaling`, where participants share an `InMemorySignalingHub` (several rooms per hub).
 - **Keep backend adapters out of the core package.** For example, a Supabase Realtime presence adapter would be a separate package, such as `cloudflare_realtime_supabase`, or it lives in the app.
+- **Dev signaling is an example, not core.** For multi-device testing there is a DEV ONLY local stack in [`tools/dev-server/`](../tools/dev-server/README.md). It mounts the broker core with a shared dev token, and adds a WebSocket presence endpoint whose protocol maps 1:1 to `Signaling`. Its Dart client, `WsSignaling`, lives in `example/lib/ws_signaling.dart`, and `web_socket_channel` is an example-only dependency. The core package gains no WebSocket or backend dependency from it.
 - The core must not depend on any backend SDK.
 
 ### 4.5 Media

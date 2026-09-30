@@ -35,5 +35,5 @@ If any fails, that app switches to LiveKit behind its own `VideoProvider` interf
   - participant diffing;
   - layer selection;
   - backoff.
-- **Integration:** use a real SFU app with the example app and a local broker. Keep the credentials in the environment only (see [CLAUDE.md](../CLAUDE.md)).
+- **Integration:** use a real SFU app with the example app and a local broker. The DEV ONLY [`tools/dev-server/`](../tools/dev-server/README.md) provides the broker and WebSocket signaling for multi-device runs, including the week-6 checkpoint calls. Keep the credentials in the environment only (see [CLAUDE.md](../CLAUDE.md)).
 - **Device matrix before 1.0:** Windows, macOS, Android, iOS, and Web (Chrome, Safari, Firefox).
