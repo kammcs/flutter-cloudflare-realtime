@@ -9,3 +9,4 @@
 - Example app: a local media page with camera and microphone toggles, device dropdowns and a screen-source picker with preview.
 - `SfuSession` (ported from partytracks): push, pull, simulcast layer updates and close through one serialized, batching operation queue; per-track errors; `LocalTrackPublication`/`RemoteTrackSubscription` that survive a failed session; `SimulcastPresets`; VP8 by default on Windows.
 - Example app: an optional broker URL creates a real SFU session. A loopback integration test runs against a real broker when `CF_REALTIME_BROKER_URL` is set.
+- Quality and reconnection building blocks (not yet wired to a session): the `SimulcastLayerReporter` widget with `LayerDemandReporter`/`TileDemand`, tuning via `LayerSelectionConfig`, `ActiveSpeakerConfig`, `BackoffConfig` and `ReconnectTriggerConfig`, plus internal layer-selection, active-speaker and reconnect-trigger logic.

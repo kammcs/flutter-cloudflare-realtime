@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), the `Signaling` interface with its in-memory implementation (§4.4), and the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10). The rest is design.
+- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), the `Signaling` interface with its in-memory implementation (§4.4), the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10), and the pure-logic building blocks for layer selection (§6.1), active speaker (§7) and reconnection (§8), not yet wired to a room. The rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -298,9 +298,37 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
   - Pick `preferredRid` from the rendered tile size: the stage gets `a`, a gallery tile `b`, a thumbnail `c`.
   - Change it with `tracks/update`.
   - Set `ridNotAvailable: "asciibetical"` so a subscriber falls back when a layer stops, for example when the publisher's CPU throttles.
-  - Decide deliberately whether to use `priorityOrdering: "asciibetical"`, which lets the SFU drop layers under bandwidth pressure.
+  - **`priorityOrdering` is left at the SFU default (`none`)**, so a subscriber gets exactly the layer the client chose. That keeps layer switching predictable for the week-6 checkpoint. `LayerSelectionConfig.priorityOrdering` opts in to `asciibetical` (the SFU may step down under bandwidth pressure). Revisit after measuring on constrained links.
 - **Screen share:** open question. It could be a single high-quality layer, or simulcast with a low layer for thumbnails. Measure both.
 - **Codec:** **default to VP8 on Windows.** H.264 crashes have been reported there (flutter-webrtc #982). Use `setCodecPreferences` on the transceiver.
+
+### 6.1 Layer selection
+
+The building blocks are implemented in `lib/src/quality/`, but not yet wired. The Room (M3/M4) will own a `LayerSelectionController`, send its changes with `tracks/update`, and hand the app a `LayerDemandReporter`.
+
+- **Publisher ladder** (`SimulcastLadder`, internal): the layers a publisher sends, highest first. `SimulcastLadder.fromPreset(VideoPreset.h720)` is `a`=1280×720, `b`=640×360, `c`=320×180.
+  - **Encoder layer limit.** libwebrtc's legacy simulcast limit sends 3 layers from 960×540 up, 2 from 480×270 up, and otherwise 1. It drops the **lowest** layers, so a 360p publisher sends only `a` and `b`. The ladder applies this limit by default, so the policy never asks for a layer the publisher doesn't send.
+  - This is an expectation, not a guarantee: capture can come out smaller than requested, and libwebrtc versions differ. `ridNotAvailable: asciibetical` covers the remaining mismatch. **Check it on devices.**
+  - `TrackInfo` doesn't carry the publisher's preset yet, so the Room assumes `h720` until it does (the controller's `defaultLadder`).
+- **Demand** (`TileDemand`, public): the tile's size in **physical** pixels (logical size × device-pixel ratio), plus whether it is visible.
+- **Policy** (`SimulcastLayerPolicy`, internal), for a visible `w×h` tile:
+  1. **Required lines:** `max(h, w × layerHeight / layerWidth)`. This assumes the video fills the tile ("cover"), which errs towards quality.
+  2. **Up:** the lowest layer with `height × maxUpscale ≥ required`, or the highest layer if none is big enough.
+  3. **Down:** the same with `height × maxUpscale × (1 − downgradeHysteresis)`, which is stricter.
+  4. With no current layer, take "up". Otherwise upgrade at once if "up" is higher, downgrade only if "down" is lower, and stay put in between.
+  5. A hidden or empty tile is **paused**. The SFU has no pause for a pulled track, so the Room decides what paused means: switch to the lowest layer, or close the pull after it has stayed paused for a while.
+- **Defaults** (`LayerSelectionConfig`, public): `maxUpscale` 1.5, `downgradeHysteresis` 0.15, `debounce` 300 ms, `ridNotAvailable` `asciibetical`, `priorityOrdering` unset.
+  - With a 720p publisher, a tile up to 270 physical lines gets `c`, up to 540 gets `b`, and anything bigger gets `a`. So a 2×2 gallery on a 1080p screen pulls `b`, which is what the egress estimate above assumes.
+  - Once on `a`, a tile drops to `b` only at 459 lines or fewer (540 × 0.85).
+- **Aggregation and debounce** (`LayerSelectionController`, internal): one per Room, keyed by a subscription ID.
+  - Several views of one track each report under their own key. Each view goes through the policy (with the subscription's current layer, for hysteresis), and the **highest** layer wins. With no visible view, the subscription is paused.
+  - The **first** choice for a subscription (after its first view reports) is emitted at once, so a new pull starts with the right layer. So is a change from **paused to visible**, so video appears as soon as a tile scrolls into view.
+  - Every other change waits until the new choice has stood for the debounce. A choice that reverts before then emits nothing.
+- **Widget** (`SimulcastLayerReporter`, public): wraps a video view.
+  - After each frame, it reports the child's laid-out size × `MediaQuery.devicePixelRatioOf`, and only when the demand changed.
+  - The view counts as hidden when `visible` is `false` (the app knows about scrolling and tabs) or when `TickerMode` is off (a covered route).
+  - It removes its view on dispose, and when its subscription ID or reporter changes.
+  - It talks only to the `LayerDemandReporter` interface, which the Room will implement.
 
 ## 7. Active speaker
 
@@ -308,6 +336,34 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
 - Smooth with a short window, and apply a threshold plus hold time so the speaker doesn't flicker.
 - Include the local microphone level, so "you are speaking while muted" hints are possible.
 - Emit an ordered list of participant IDs.
+
+The building blocks are implemented in `lib/src/quality/`, but not yet wired. The Room will own an `ActiveSpeakerMonitor` and expose `activeSpeakers`. Only `ActiveSpeakerConfig` is public.
+
+- **Levels** (`AudioLevelSource`; `StatsAudioLevelSource` reads a peer connection's `getStats()`):
+  - **Remote:** audio `inbound-rtp` reports. The Room maps each report's `trackIdentifier`/`mid` to a participant. It returns `null` for streams that shouldn't count, such as screen-share audio. When several streams map to one participant, the loudest wins.
+  - **Local:** audio `media-source` reports, under the local participant's ID. The Room can name the microphone track, so other audio sources don't count.
+  - **The level** is the report's `audioLevel`. When that's missing, it's `sqrt(ΔtotalAudioEnergy / ΔtotalSamplesDuration)` between polls, which is the RMS of `audioLevel` per the W3C stats spec. A stream's first poll then has no reading, and a duration that didn't grow reads as 0.
+  - **What `flutter_webrtc` 1.6.2 reports:**
+    - Every platform returns W3C stats. Native platforms copy libwebrtc's members as they are.
+    - Native libwebrtc has `audioLevel`, `totalAudioEnergy` and `totalSamplesDuration` on audio `inbound-rtp` and `media-source`, and `trackIdentifier` and `mid` on `inbound-rtp`. The legacy `track` stats type is gone.
+    - Browsers vary (Firefox has lacked `audioLevel` on some types), which is what the energy fallback is for.
+    - Report timestamps are µs on native and ms on the web, so they are never used.
+- **Poller** (`ActiveSpeakerMonitor`):
+  - It polls every `pollInterval`. Polls never overlap: a tick during a running poll is skipped.
+  - A failed poll is skipped silently, since `getStats` can fail briefly during renegotiation.
+  - It exposes `speakers`, `dominantSpeaker`, `localSpeakingWhileMuted` and `snapshots` (with smoothed levels, for meters). Each replays its current value.
+- **Detector** (`ActiveSpeakerDetector`, pure Dart), per participant and per sample:
+  1. **Smooth:** an exponential moving average with time constant τ: `level += (1 − e^(−Δt/τ)) × (raw − level)`. A participant missing from a sample counts as 0.
+  2. **Start speaking** once the smoothed level has stayed ≥ `speakingThreshold` for `activationTime`.
+  3. **Stop speaking** once it has stayed < `silenceThreshold` for `releaseTime`. The gap between the thresholds is the hysteresis; the release time bridges pauses between words.
+  4. **Order** loudest first. Speakers keep their previous order and newcomers are appended by level. Then neighbours swap only when the lower one is louder by more than `reorderMargin`.
+  5. **Dominant speaker:** the first speaker is dominant at once. A new loudest speaker takes over after staying loudest for `dominantSwitchTime`. A dominant speaker who falls silent stays dominant until someone else takes over, or leaves. The local participant can't be dominant unless `localCanBeDominant` is set.
+  6. **Muted local participant:** left out of `speakers`, because nobody hears them. The same state machine, with `mutedActivationTime`, drives `localSpeakingWhileMuted` instead. Muting or unmuting restarts the local speaking state, so the hint doesn't pop up the moment someone mutes mid-sentence.
+- **Defaults** (`ActiveSpeakerConfig`): poll every 250 ms, τ 300 ms, speaking threshold 0.04 (about −28 dBFS), silence threshold 0.02, activation 200 ms (two loud polls in a row), release 800 ms, reorder margin 0.02, dominant switch 1.5 s, local not dominant, muted-hint activation 500 ms.
+- **Open for M4: the muted microphone's level.**
+  - With `MutePolicy.keepCapture` the mic keeps capturing, but M2 plans `replaceTrack(null)` on the sender (§4.5).
+  - A sender without a track has no `media-source` report, and a disabled track reports silence. So `getStats` alone can't see a muted user talking.
+  - M4 must pick a way: for example, a second, local-only level source for the captured track. Otherwise the hint only works where such a source exists.
 
 ## 8. Reconnection
 
@@ -326,6 +382,25 @@ Cloudflare's guidance is to **replace the connection**: create a new session and
   5. Re-pull our own subscriptions from peers' current sessions.
 - **Backoff:** exponential with jitter. Expose `reconnecting` and `reconnected` states.
 - **Don't lose local capture.** Keep the `MediaStreamTrack`s and only replace the transport.
+
+The building blocks are implemented in `lib/src/reconnect/`. They are pure decision logic, with no timers or I/O; M5 wires them to `SfuSession` and the Room. `BackoffConfig`, `ReconnectTriggerConfig` and `ReconnectReason` are public.
+
+- **`Backoff`** (internal) covers one reconnection episode.
+  - The delay before attempt `n` (0-based) is uniform in `[0, min(maxDelay, initialDelay × multiplier^n)]`. This is exponential backoff with **full jitter**, so clients that dropped together don't come back together.
+  - `nextDelay()` returns `null` once `maxAttempts` delays have been handed out, or once `maxElapsed` has passed since the episode's first attempt.
+  - `reset()` after a successful reconnection starts a fresh episode.
+  - The random source and the clock are injectable.
+  - **Defaults** (`BackoffConfig`): initial 500 ms, ×2, cap 10 s, no attempt limit, give up after 2 minutes.
+- **`ReconnectTrigger`** (internal) decides *when* to re-session. The caller feeds it events with a monotonic timestamp, schedules a timer for `nextCheckAt`, and calls `check` when it fires. Every input returns a `ReconnectReason` when it decides to reconnect.
+  - `failed` triggers at once.
+  - `disconnected` triggers after `disconnectedTimeout`, or at once if a network change happened within `networkChangeWindow` before it.
+  - A network change **while disconnected** triggers at once. While connected, it only arms that window, because platforms report changes that don't break the connection (a second interface coming up).
+  - `new`/`connecting` for longer than `connectTimeout` triggers.
+  - Resuming after at least `backgroundThreshold` in the background triggers, because the OS may have killed the sockets while the peer connection still says `connected`. Resuming also runs `check`, since timers may not have run while suspended.
+  - `sessionGone` (a `SessionGoneException`: 410 or `session_error`) triggers at once.
+  - `closed` clears the timers, because the package closed the connection itself.
+  - Once triggered, it ignores input until `reset()`, so one outage causes one re-session. `reset()` keeps the background state.
+  - **Defaults** (`ReconnectTriggerConfig`): disconnected timeout 5 s, connect timeout 15 s, network-change window 10 s, background threshold 30 s.
 
 ## 9. DataChannels
 
