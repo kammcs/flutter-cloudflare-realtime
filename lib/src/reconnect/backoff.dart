@@ -98,7 +98,7 @@ class BackoffConfig {
 /// The random source and the clock are injectable, so tests are
 /// deterministic.
 ///
-/// Internal: not exported from the package barrel. M5's reconnection loop
+/// Internal: not exported from the package barrel. The Room's reconnection
 /// owns it; apps tune it through [BackoffConfig].
 class Backoff {
   /// Creates a backoff with [config].

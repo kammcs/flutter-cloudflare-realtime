@@ -84,7 +84,7 @@ class ReconnectTriggerConfig {
 /// network changes, app lifecycle and session errors.
 ///
 /// This is only the decision: it has no timers and does no I/O. The caller
-/// (M5's reconnection loop) feeds it events with a monotonic timestamp
+/// (the Room's reconnection) feeds it events with a monotonic timestamp
 /// (`now`), schedules a timer for [nextCheckAt] and calls [check] when it
 /// fires. Every input returns the [ReconnectReason] when it decides to
 /// reconnect, or `null`.
