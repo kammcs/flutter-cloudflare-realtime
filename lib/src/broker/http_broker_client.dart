@@ -22,8 +22,8 @@ const _sessionErrorCode = 'session_error';
 ///
 /// If the broker returns `X-Realtime-Session-Token` from `sessions/new`, the
 /// token is kept per session ID and sent back on every later call for that
-/// session. Brokers that bind sessions server-side and send no token work
-/// too.
+/// session, until [forgetSession] (a [SessionGoneException] doesn't drop
+/// it). Brokers that bind sessions server-side and send no token work too.
 ///
 /// This class never logs. Exceptions never include SDP, header values or
 /// tokens.
@@ -344,7 +344,10 @@ class HttpBrokerClient implements BrokerClient {
       );
     }
     if (status == 410 || errorCode == _sessionErrorCode) {
-      if (sessionId != null) _sessionTokens.remove(sessionId);
+      // The session token is kept: a request that names other sessions (a
+      // pull) can report one of *them* gone, and the session layer then
+      // confirms its own with `GET sessions/{id}`, which needs the token.
+      // [forgetSession] drops it once the session is abandoned.
       return SessionGoneException(
         operation: operation,
         sessionId: sessionId,

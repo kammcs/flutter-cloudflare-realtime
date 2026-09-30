@@ -573,6 +573,7 @@ class RemoteTrackPublication {
     final previous = _track.value;
     final renderable = RenderableTrack(track: track, stream: stream);
     _track.set(renderable);
+    _room._audio.trackChanged(this, track);
     if (previous != null) unawaited(_disposeStream(previous.stream));
     _room._emit(TrackSubscribedEvent(this, renderable));
     _notify();
@@ -611,6 +612,7 @@ class RemoteTrackPublication {
     _wrapGeneration++;
     final previous = _track.value;
     if (!_track.isClosed) _track.set(null);
+    _room._audio.trackChanged(this, null);
     if (previous != null) unawaited(_disposeStream(previous.stream));
   }
 

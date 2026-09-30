@@ -91,6 +91,10 @@ class RoomHarness {
   /// The shared fake broker.
   FakeBrokerClient get broker => sessions.broker;
 
+  /// Whether peer connections created from now on connect by themselves
+  /// once negotiated (`FakePeerConnection.autoConnect`).
+  set autoConnect(bool value) => sessions.peerConnections.autoConnect = value;
+
   /// The shared signaling hub.
   final InMemorySignalingHub hub = InMemorySignalingHub();
 

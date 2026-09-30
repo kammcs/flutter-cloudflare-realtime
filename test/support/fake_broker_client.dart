@@ -244,9 +244,26 @@ class FakeBrokerClient implements BrokerClient {
         defaultCloseTracks(sessionId, request);
   }
 
+  /// Sessions `GET sessions/{id}` reports gone (a 410 `session_error`), as
+  /// the SFU does for an expired session. Other sessions are alive.
+  final Set<String> goneSessions = {};
+
+  /// Replaces the default `GET sessions/{id}` behaviour.
+  Future<SessionState> Function(String sessionId)? onGetSessionState;
+
   @override
   Future<SessionState> getSessionState(String sessionId) async {
     calls.add(BrokerCall('sessions/{id}', sessionId: sessionId));
+    final handler = onGetSessionState;
+    if (handler != null) return handler(sessionId);
+    if (goneSessions.contains(sessionId)) {
+      throw SessionGoneException(
+        operation: 'sessions/{id}',
+        sessionId: sessionId,
+        statusCode: 410,
+        errorCode: 'session_error',
+      );
+    }
     return const SessionState();
   }
 

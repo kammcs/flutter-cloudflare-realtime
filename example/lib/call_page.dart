@@ -263,6 +263,7 @@ class _CallPageState extends State<CallPage> {
           child: Column(
             children: [
               _ConnectionBanner(room: _room, onReconnect: _reconnect),
+              _AudioBlockedBanner(room: _room),
               Expanded(
                 child: StreamBuilder<LocalParticipant>(
                   stream: _local.changes,
@@ -579,6 +580,49 @@ class _ConnectionBanner extends StatelessWidget {
           case _:
             return const SizedBox.shrink();
         }
+      },
+    );
+  }
+}
+
+/// A "Click to enable audio" banner while the browser's autoplay policy
+/// blocks remote audio (web only; native platforms never block). The
+/// click is the user gesture the browser waits for.
+class _AudioBlockedBanner extends StatelessWidget {
+  const _AudioBlockedBanner({required this.room});
+
+  final Room room;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: room.audioPlaybackBlockedChanges,
+      initialData: room.audioPlaybackBlocked,
+      builder: (context, snapshot) {
+        if (snapshot.data != true) return const SizedBox.shrink();
+        return Material(
+          color: Theme.of(context).colorScheme.secondaryContainer,
+          child: InkWell(
+            // Call startAudio() straight from the tap, with nothing
+            // awaited first, so the browser counts the gesture.
+            onTap: room.startAudio,
+            child: const Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.volume_off),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Your browser blocked the call audio. '
+                      'Click to enable audio.',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
       },
     );
   }
