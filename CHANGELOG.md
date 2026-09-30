@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Video defaults to VP8 on every platform (was Windows only): the SFU forwards each publisher's codec, so a Windows subscriber must never receive H.264 (flutter-webrtc #982). Opt out with `SfuSessionDefaults.videoCodecPreferences: const []`.
+
 - Repository scaffold and design docs.
 - `Signaling` interface, `ParticipantState`/`TrackInfo` with a JSON wire shape, and `InMemorySignaling` with a shared `InMemorySignalingHub`.
 - Example app shell (`example/`) with platform permissions for camera, microphone and network.
@@ -27,7 +29,7 @@
 - After a reconnection, the room stays `reconnecting` until the new peer connection is connected (when tracks or DataChannels are on it), instead of briefly showing `connected`, `connecting`, `connected`.
 - Example app: a "Click to enable audio" banner when the browser blocks playback.
 - README: a "Testing your app" section on widget tests against a `Room`.
-- Screen share (M6, desktop and web): `publishScreen` sends one text-friendly layer by default (`ScreenSharePresets.detail`: 15 fps, 2.5 Mbps), with `ScreenSharePresets.motion` and `ScreenSharePresets.simulcast` as options; `ScreenShareOptions.frameRate` now defaults to 15. VP8 on Windows covers screen video too (tested).
+- Screen share (M6, desktop and web): `publishScreen` sends one text-friendly layer by default (`ScreenSharePresets.detail`: 15 fps, 2.5 Mbps), with `ScreenSharePresets.motion` and `ScreenSharePresets.simulcast` as options; `ScreenShareOptions.frameRate` now defaults to 15. VP8 covers screen video too (tested).
 - A share that ends outside the app is unpublished with its audio even while it is still being pushed, and `LocalTrackUnpublishedEvent.endReason` says why.
 - macOS Screen Recording permission: `ScreenCapturePermissionException` (with `guidance`), `ScreenPickerState.permissionProblem` (no screens listed, or every screen thumbnail empty or black), and `LocalScreenShareStalledEvent` when a share sends no frames (`RoomOptions.screenShareStallTimeout`, 8 s). The picker keeps thumbnails across listings and treats empty ones as none; macOS's "No source found" answer triggers the stale-list retry.
 - Example app: a screen-share dialog (text, motion or text + thumbnail layer; audio on Windows and the web; macOS permission guidance), notices when a share ends or sends no frames. Integration tests accept `CF_REALTIME_BROKER_USER` (sent as `X-Dev-User`) so they run against the dev server.

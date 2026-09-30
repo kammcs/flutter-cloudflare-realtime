@@ -37,7 +37,7 @@ flutter test integration_test -d macos \
 
 ## Video codec
 
-Every participant sends VP8 by default (`--dart-define=VIDEO_CODEC=video/VP8`): the SFU forwards each publisher's codec unchanged, and Windows has crashed on H.264 (flutter-webrtc #982). `--dart-define=VIDEO_CODEC=default` uses the platform's order (the package default: VP8 on Windows only).
+Every participant sends VP8 by default (`--dart-define=VIDEO_CODEC=video/VP8`): the SFU forwards each publisher's codec unchanged, and Windows has crashed on H.264 (flutter-webrtc #982). `--dart-define=VIDEO_CODEC=default` uses the platform's order (overriding the package default, which is VP8 everywhere).
 
 ## Week-6 checkpoint
 

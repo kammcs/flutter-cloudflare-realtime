@@ -100,13 +100,16 @@ abstract final class SimulcastPresets {
 /// The default video codec preference for the current platform, as MIME
 /// types in order of preference.
 ///
-/// On Windows (not web) this is `['video/VP8']`: H.264 crashes have been
-/// reported there (flutter-webrtc #982). Elsewhere it is empty, which leaves
-/// the platform's default order.
-List<String> defaultVideoCodecPreferences() =>
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
-    ? const ['video/VP8']
-    : const [];
+/// `['video/VP8']` on every platform.
+///
+/// The SFU forwards each publisher's codec unchanged, so one publisher's
+/// codec choice is every subscriber's decoder. H.264 has crashed
+/// `flutter_webrtc` on Windows (flutter-webrtc #982), so a Windows participant
+/// must not receive it from a Mac or phone that prefers it. VP8 decodes
+/// everywhere. Set [SfuSessionDefaults.videoCodecPreferences] (or
+/// [PublishOptions.codecPreferences]) to `const []` for the platform's own
+/// order, for example to use hardware H.264 in a room without Windows peers.
+List<String> defaultVideoCodecPreferences() => const ['video/VP8'];
 
 /// Options for one published track.
 ///

@@ -14,7 +14,7 @@ void main() {
 
 /// The video codec every participant sends, from `--dart-define=VIDEO_CODEC`:
 /// a MIME type (default `video/VP8`), or `default` for the platform's own
-/// order (the package default: VP8 on Windows only).
+/// order, which overrides the package default (VP8 everywhere).
 ///
 /// The SFU forwards video as it was sent, so in a mixed call every device
 /// decodes what every other device encodes. VP8 everywhere keeps Windows

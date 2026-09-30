@@ -176,7 +176,7 @@ void main() {
       );
       expect(h.pc.transceivers[0].codecPreferences, ['video/H264']);
       expect(h.pc.transceivers[1].codecPreferences, isNull);
-      expect(defaultVideoCodecPreferences(), isEmpty);
+      expect(defaultVideoCodecPreferences(), ['video/VP8']);
     });
 
     test('generates unique UUID track names', () async {

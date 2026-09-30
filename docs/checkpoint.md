@@ -319,7 +319,7 @@ Android blocks cleartext `http://` and `ws://` by default. The example allows it
 
 ### Windows H.264 crash
 
-`flutter_webrtc` on Windows has crashed with H.264 video (flutter-webrtc #982). The package sends VP8 from Windows by default, and the example sends VP8 from **every** platform (its `VIDEO_CODEC` define defaults to `video/VP8`), because the SFU forwards each publisher's codec unchanged, so a Windows receiver would otherwise decode a Mac's or phone's H.264. If a Windows device crashes when another participant joins, check that no device was started with `--dart-define=VIDEO_CODEC=default` or `video/H264`.
+`flutter_webrtc` on Windows has crashed with H.264 video (flutter-webrtc #982). The package sends VP8 from every platform by default (and so does the example: its `VIDEO_CODEC` define defaults to `video/VP8`), because the SFU forwards each publisher's codec unchanged, so a Windows receiver would otherwise decode a Mac's or phone's H.264. If a Windows device crashes when another participant joins, check that no device was started with `--dart-define=VIDEO_CODEC=default` or `video/H264`.
 
 ### TURN and different networks
 

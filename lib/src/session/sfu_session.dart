@@ -202,7 +202,7 @@ class SfuSession {
   ///
   /// Video uses [PublishOptions.sendEncodings] or
   /// [SfuSessionDefaults.videoEncodings] (simulcast `a`/`b`/`c` by default).
-  /// Codec preferences default to VP8 on Windows.
+  /// Codec preferences default to VP8 on every platform.
   ///
   /// Completes with the publication once the SFU accepted the track. Call
   /// [LocalTrackPublication.whenSending] before advertising it. Throws an
