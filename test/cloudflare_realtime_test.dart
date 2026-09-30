@@ -15,4 +15,18 @@ void main() {
       hasLength(1),
     );
   });
+
+  test('the barrel exports the media API', () {
+    const MediaBackend backend = FlutterWebrtcMediaBackend();
+    expect(backend, isA<MediaBackend>());
+    expect(VideoPreset.h720.width, 1280);
+    expect(MutePolicy.values, hasLength(2));
+    expect(ScreenShareEndReason.values, contains(ScreenShareEndReason.stopped));
+    expect(ScreenPickerState().sources, isEmpty);
+    expect(
+      const MediaDevice(deviceId: 'a', kind: MediaDeviceKind.audioInput),
+      isA<MediaDevice>(),
+    );
+    expect(const ScreenSourcesException('x'), isA<MediaException>());
+  });
 }
