@@ -2,7 +2,9 @@
 
 ## partytracks
 
-Parts of this package are ported from [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks) (version 0.0.56, `cloudflare/partykit` commit `f0a2e97`):
+Parts of this package are ported from [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks). The reference brokers in `broker/` follow the path layout and ICE-server handling of its `routePartyTracksRequest` proxy.
+
+Ported Dart code (from partytracks version 0.0.56, `cloudflare/partykit` commit `f0a2e97`):
 
 | This package | partytracks source |
 |---|---|

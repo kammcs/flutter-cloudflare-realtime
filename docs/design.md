@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), and the `Signaling` interface with its in-memory implementation (§4.4). The rest is design.
+- **Status:** pre-release. Implemented so far: the broker client (§4.1), the SFU session (§4.2), the `Signaling` interface with its in-memory implementation (§4.4), and the media layer: devices, local camera/microphone/screen capture and the desktop screen-source picker (§4.5, §10). The rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -180,10 +180,50 @@ abstract interface class Signaling {
 
 ### 4.5 Media
 
-This layer:
-- wraps `flutter_webrtc` capture: `getUserMedia`, `getDisplayMedia`, and `desktopCapturer.getSources`;
-- lists devices and tracks the preferred device. It recovers when a device is unplugged, which partytracks does with its `devices$`/`activeDevice$` streams;
-- handles the mute model: "source enabled" is separate from "broadcasting", as in partytracks.
+**Implemented** in `lib/src/media/`. It ports partytracks' `getDevices.ts`, `deviceManager.ts`, `resilientTrack$.ts`, `makeBroadcastTrack.ts` and `getScreenshare.ts` to Dart streams. Publishing is not part of it: M2's `SfuSession` consumes the tracks.
+
+- **`MediaBackend`** wraps the `flutter_webrtc` APIs: `getUserMedia`, `getDisplayMedia`, `enumerateDevices`, `ondevicechange`, and `desktopCapturer` (`getSources`, `updateSources` and the `onAdded`/`onRemoved`/`onNameChanged`/`onThumbnailChanged` events).
+  - Everything above it is unit-tested with fakes. `FlutterWebrtcMediaBackend` is the production implementation.
+  - `desktopCapturer` is `null` on web and mobile.
+- **`MediaDeviceList`** holds cameras, microphones and audio outputs.
+  - It enumerates once, then again on every `devicechange`, and emits only real changes. This is partytracks' `devices$`.
+  - Camera and microphone sources can share one list.
+  - Choosing the audio output device isn't wrapped yet. Apps can call `Helper.selectAudioOutput`.
+- **`CameraSource` and `MicrophoneSource`** (both `DeviceMediaSource`) handle device selection:
+  - A **preferred device** sorts first. The priority order is: preferred, then the rest, then virtual devices and the "iPhone Microphone", then devices that recently failed.
+  - **Capture tries devices in that order** until one yields a track. A permission error stops the search at once (`MediaPermissionDeniedException`). If every device fails, the source reports `DevicesExhaustedException` and turns off.
+  - **Fallback:** when the active device is unplugged (a device-list change, or the track's `onEnded` on web), the source captures from the next device.
+  - **Return:** when the preferred device comes back, the source switches back to it.
+  - **Deviation from partytracks:** partytracks restarts capture on *any* device-list change. Here, capture restarts only when:
+    - the active device went away,
+    - the preferred device became available,
+    - the options changed, or
+    - the track ended.
+  - **Deviation from partytracks:** it persists the preference and the failed-device list in `localStorage`. Here the app persists the preference (`currentPreferredDevice` / the `preferredDevice:` argument). A failed device is tried last only until it is unplugged or chosen again.
+  - Consumers never re-subscribe. `track` emits the replacement track. When switching to a different device, the new track is captured before the old one is stopped, so there's no `null` gap.
+  - **Options:**
+    - Camera: `VideoPreset` (`h1080`, `h720`, `h540`, `h360`, `h180`; ideal width, height and frame rate) and facing mode. `h720` scaled by ½ and ¼ gives `h360` and `h180`, which are the simulcast layers in §6.
+    - Microphone: echo cancellation, noise suppression and AGC, all on by default.
+    - `setOptions` recaptures.
+- **The mute model.** `LocalMediaSource` has two switches, as in partytracks:
+  - **enabled** means capturing. `track` is the live track, or `null`.
+  - **broadcasting** means sending. `broadcastTrack` is the track while it is both enabled and broadcasting, else `null`.
+  - The two are linked: `startBroadcasting` enables the source, and `disable` stops broadcasting.
+  - **Mute policy.** `MutePolicy` decides what `stopBroadcasting` does. It is partytracks' `retainIdleTrack`, made explicit:
+    - `keepCapture` (default for the microphone): stay capturing. Unmute is instant, and "talking while muted" is possible. The OS mic indicator stays on.
+    - `releaseCapture` (default for the camera and screen): also disable, so the camera light goes off.
+  - `flutter_webrtc` can't synthesize partytracks' fallback tracks (the black canvas and inaudible tone). So "not broadcasting" is a `null` `broadcastTrack`. **M2 should `replaceTrack(null)` on the sender** (or send a disabled clone) and keep the SFU track published.
+  - **Failures** go to `errors` and turn the source off. The methods return whether capture is running; they don't throw for capture failures. All capture work runs through one coalescing reconcile loop per source, so concurrent calls can't race.
+  - The source owns its tracks: it stops them and disposes their streams when it replaces or releases them.
+- **`flutter_webrtc` realities** (checked against 1.6.2+hotfix.3, the version in `pubspec.lock`):
+  - **Native `getUserMedia` ignores the W3C `deviceId: {exact: id}`.**
+    - Windows and Linux read only `optional: [{sourceId: id}]`, and treat a string `deviceId` on audio as the *output* device.
+    - Android and Darwin read `deviceId` as a plain string.
+    - So native platforms get `optional.sourceId`, and the web gets `deviceId.exact`.
+  - **Windows silently opens the first camera** when the requested one is missing. The source trusts the track's `deviceId` setting over what it asked for.
+  - **Native tracks never fire `onEnded`.** Device loss on native platforms is detected from the device list, and a desktop share ending from the capturer's source list (§10).
+  - `ondevicechange` is a single callback slot. The backend multiplexes it and chains any previous handler.
+  - Native errors are plain strings (`"Unable to getUserMedia: ..."`). Errors are classified by text.
 
 ## 5. Broker contract
 
@@ -205,9 +245,9 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
 | `PUT {base}/sessions/{id}/datachannels/close` | 〃 |
 | `POST {base}/generate-ice-servers` | TURN credentials: `POST /turn/keys/{turnKeyId}/credentials/generate-ice-servers`. Without TURN, it returns Cloudflare STUN only. |
 
-**Wire details.** Both the Dart client and the reference brokers follow these exactly.
+**Wire details.** Both the Dart `BrokerClient` and the reference brokers follow these exactly.
 
-- **Headers on every request:**
+- **Headers on every request**, including `generate-ice-servers` (so TURN credentials only go to room members):
   - the app's own auth headers, from the `headers` provider;
   - `X-Realtime-Room: <roomId>`, the room the caller is acting in.
 - **Session token (optional).**
@@ -215,12 +255,14 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
   - If it does, the client sends it back as the request header `X-Realtime-Session-Token` on every later call for that session. The client keeps one token per session ID, because reconnection creates new sessions.
   - A broker may instead bind sessions server-side and never send a token. The client works either way.
   - The client never lets the app's headers set `X-Realtime-Room` or `X-Realtime-Session-Token`.
+  - Browsers can only read the header if the broker lists it in `Access-Control-Expose-Headers`.
 - **`sessions/new` body:** none, unless the client has an initial offer. `correlationId` travels as a query parameter, which the broker passes through.
 - **Broker errors:**
   - `401`: the caller isn't authenticated. The body is unspecified.
-  - `403` with `{"errorCode": "forbidden", "errorDescription": "..."}`: the caller isn't in the room, doesn't own the session, or pulls from a session in another room.
+  - `403` with `{"errorCode": "forbidden", "errorDescription": "..."}`: the caller isn't in the room, doesn't own the session, or names a session from another room.
+  - The reference brokers also use `400` (missing room header, malformed body), `404`/`405` (unknown path or method), `413` (body over 1 MiB) and `502` (Cloudflare unreachable).
   - Otherwise the SFU's status and body pass through unchanged, including `410` with `errorCode: session_error` for an expired session.
-- **`generate-ice-servers` response:** `{"iceServers": [{"urls": ["..."], "username"?: "...", "credential"?: "..."}]}`. Without TURN configured, the broker returns Cloudflare STUN only: `{"iceServers": [{"urls": ["stun:stun.cloudflare.com:3478"]}]}`.
+- **`generate-ice-servers`** responds `200` with `{"iceServers": [{"urls": ["..."], "username"?: "...", "credential"?: "..."}]}`. Without TURN configured, it returns Cloudflare STUN only: `{"iceServers": [{"urls": ["stun:stun.cloudflare.com:3478"]}]}`. The reference brokers drop TURN URLs on port 53, which browsers block, and also accept `GET`, as partytracks clients use it.
 
 **The broker must enforce these security requirements.** Document them in the README, and follow them in any reference broker:
 
@@ -228,13 +270,15 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
    - partytracks uses cookies, but native Flutter clients don't keep cookies. So the package sends whatever headers the app's `headers` provider returns.
    - The broker then replaces `Authorization` with the App Secret before forwarding.
 2. **Authorize the room.** The client names the room it's joining in the `X-Realtime-Room` header. The broker checks that the caller is a member of it.
-3. **Bind sessions to their creator.** After `sessions/new`, only the same caller may mutate that session.
+3. **Bind sessions to their creator.** After `sessions/new`, only the same caller, in the same room, may use that session (every `sessions/{id}` route, including `GET`).
    - partytracks does this with a JWT cookie. Here, the broker either keeps a server-side map, or returns a signed session token in `X-Realtime-Session-Token` that the client echoes on later calls.
    - The package supports echoing such a token (see the wire details above).
 4. **Restrict pulls to the same room.** A `tracks/new` pull names another participant's `sessionId`. The broker must check that the session belongs to the same room. **Otherwise anyone with a valid login could subscribe to any room's media by guessing or learning a session ID.**
-5. Strip client-supplied headers that shouldn't reach Cloudflare. Never log the App Secret, SDP bodies or tokens.
+   - The same applies to every body that names a `sessionId`: `tracks/update` (reusing a transceiver for another publisher's track), `datachannels/new` and `datachannels/update` (subscriptions and `canReply`). The reference brokers check each `sessionId` found anywhere in any request body.
+   - So the broker needs a **session store** (session → room, owner) even when it uses signed tokens: only the store knows another participant's room. The store must be readable from every broker instance within seconds of a write, because peers pull new sessions quickly.
+5. Strip client-supplied headers that shouldn't reach Cloudflare: forward only `Authorization: Bearer <App Secret>` and `Content-Type`. Never log the App Secret, SDP bodies or tokens.
 
-**Reference brokers** are roadmap items: a Cloudflare Worker and a Supabase Edge Function (Deno). Keep them in `broker/` in this repo.
+**Reference brokers** live in [`broker/`](../broker/README.md): a Cloudflare Worker (Durable Object session store, `jose` JWT auth) and a Supabase Edge Function (Postgres session store, Supabase JWT auth). They share a dependency-free TypeScript core in `broker/supabase/functions/_shared/broker-core/`, which is where the Supabase CLI can bundle it and where wrangler can import it too. Both ship a room-membership stub that fails closed; the app implements it.
 
 ## 6. Simulcast
 
@@ -304,10 +348,26 @@ Cloudflare's guidance is to **replace the connection**: create a new session and
 | **iOS** | Needs a Broadcast Upload Extension **in the host app** | n/a | | | | |
 | **Android** | MediaProjection plus a foreground service of type `mediaProjection` **in the host app** | n/a | | | | |
 
-- Document the iOS and Android host-app setup in the README, and show it in the example app.
+- Document the iOS and Android host-app setup in the README, and show it in the example app. **Not done yet** (M6): on Android and iOS, `ScreenShareSource.start` throws `UnsupportedError` and says what's missing.
+- **Implemented (desktop and web):** `ScreenSourcePicker` and `ScreenShareSource` in `lib/src/media/`.
+  - **The picker** lists screens and windows with thumbnails through `desktopCapturer.getSources`, screens first.
+    - The plugin reports changes only while someone calls `updateSources`. So the picker re-scans every 3 s (configurable), like the `flutter_webrtc` example, and applies added, removed, renamed and new-thumbnail events.
+    - On Windows the first listing has no thumbnails; the first re-scan, which runs immediately, brings them.
+    - The plugin keeps a single global source list, so run one picker at a time.
+  - **Desktop capture** uses `getDisplayMedia({video: {deviceId: {exact: id}, mandatory: {frameRate}}, audio})`, as in the `flutter_webrtc` desktop example. The default frame rate is 30.
+  - **Web capture** uses `getDisplayMedia` and the browser's picker. A cancelled picker returns `false`; it isn't an error.
+  - **Ending a share** is surfaced on `ended` with a `ScreenShareEndReason`:
+    - `stopped`: the app stopped it.
+    - `userStopped`: the browser's "Stop sharing" button fired the track's `onEnded`.
+    - `sourceClosed`: the shared window or display went away. Native tracks never fire `onEnded`, so while sharing, the desktop source re-scans the source list and ends the share on `onRemoved` for its source.
+  - **Switching sources** releases the old capture before starting the new one. On Windows, stopping any desktop capturer also stops the single loopback-audio capturer.
+  - **Windows listing failures** (#1539, #1085) are data, not crashes:
+    - `getSources` errors, or a list with no screens, become `ScreenPickerState.error` (`ScreenSourcesException`). The picker retries once at once, and `refresh()` retries again.
+    - "source not found!" from `getDisplayMedia` means the plugin's list was stale. The share rebuilds it with `getSources` and retries once, then reports `ScreenSourceNotFoundException`.
+- **Correction to the table:** since `flutter_webrtc` 1.5.0 (#2060), Windows can capture system audio via loopback, with `ScreenShareOptions(captureAudio: true)`. It arrives as `ScreenShareSource.audioTrack`. Whether it's good enough to replace the "No (#1952)" cell needs device testing.
 - **Known `flutter_webrtc` issues to plan around:**
   - Windows HDR screens look washed out; WGC capture is requested (#2205).
-  - Windows sometimes fails to list sources (#1539, #1085).
+  - Windows sometimes fails to list sources (#1539, #1085); handled as above.
   - There's no hardware-encoder selection on Windows (#2200).
   - The macOS 14+ system picker exists only in Stream's fork.
 
@@ -331,7 +391,7 @@ final room = await rt.join(
 
 await room.localParticipant.publishCamera(simulcast: SimulcastPreset.h720);
 await room.localParticipant.publishMicrophone();
-await room.localParticipant.publishScreen(source: pickedSource); // desktopCapturer / getDisplayMedia
+await room.localParticipant.publishScreen(source: pickedSource); // a ScreenSource from ScreenSourcePicker; none on web
 
 room.participants;                     // Stream<List<RemoteParticipant>>
 room.activeSpeakers;                   // Stream<List<String>>

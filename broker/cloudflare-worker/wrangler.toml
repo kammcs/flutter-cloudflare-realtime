@@ -1,0 +1,41 @@
+# Reference broker for cloudflare_realtime. See ../README.md.
+#
+# Only NON-SECRET settings belong in this file. Set secrets with:
+#   npx wrangler secret put REALTIME_APP_SECRET
+#   npx wrangler secret put TURN_KEY_API_TOKEN      # optional, enables TURN
+#   npx wrangler secret put SESSION_TOKEN_SECRET    # optional, enables signed session tokens
+#   npx wrangler secret put JWT_SECRET              # only if you verify HS256 tokens
+# For local development, put them in .dev.vars (git-ignored), never here.
+
+name = "realtime-broker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[vars]
+# Cloudflare Realtime SFU App ID (not a secret).
+REALTIME_APP_ID = "replace-with-your-sfu-app-id"
+# Cloudflare TURN key ID (not a secret). Leave empty for STUN only.
+TURN_KEY_ID = ""
+TURN_TTL_SECONDS = "86400"
+# Path the broker is served under, without a trailing slash ("" = root).
+BASE_PATH = ""
+# How long the broker remembers a session (and a session token's lifetime).
+SESSION_TTL_SECONDS = "86400"
+# Comma-separated web origins allowed to call the broker (Flutter Web), e.g.
+# "https://app.example.com". Leave empty to allow native clients only.
+ALLOWED_ORIGINS = ""
+# Extra request headers your app's `headers` provider sends (comma-separated).
+EXTRA_ALLOWED_HEADERS = ""
+# Caller authentication (see src/auth.ts). Set JWT_JWKS_URL for RS256/ES256,
+# or the JWT_SECRET secret for HS256, not both.
+JWT_ISSUER = "https://auth.example.com/"
+JWT_AUDIENCE = "replace-with-your-audience"
+JWT_JWKS_URL = ""
+
+[[durable_objects.bindings]]
+name = "REALTIME_SESSIONS"
+class_name = "RealtimeSessionObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeSessionObject"]

@@ -1,0 +1,27 @@
+{
+  // Type-checks the core and the Worker against the Workers runtime types.
+  // The Deno entry (supabase/functions/realtime-broker/index.ts) is excluded:
+  // it uses Deno globals and a jsr: import. Tests use tsconfig.test.json.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "supabase/functions/_shared/**/*.ts",
+    "supabase/functions/realtime-broker/**/*.ts",
+    "cloudflare-worker/src/**/*.ts"
+  ],
+  "exclude": ["supabase/functions/realtime-broker/index.ts"]
+}

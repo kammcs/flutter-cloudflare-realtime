@@ -6,6 +6,8 @@ For now it joins a room through `InMemorySignaling`: every participant lives in 
 
 If you fill in **Broker URL** (and, if your broker needs it, a bearer token), joining also creates a real SFU session through your broker and shows its ID and connection state. Nothing is published yet: pushing the local camera comes with the media layer and `Room`.
 
+The **Local media** button (camera-and-mic icon in the app bar) opens a local preview: camera and microphone toggles with device dropdowns, the mute model, and on desktop a screen and window picker with thumbnails that previews the chosen share. On the web, the browser shows its own picker. Nothing is published yet.
+
 ```sh
 cd example
 flutter run -d macos   # or windows, android, ios, chrome
