@@ -1,0 +1,9 @@
+# Minimal Supabase CLI settings for the reference broker. Settings that aren't
+# listed keep the CLI's defaults. If you add the broker to an existing Supabase
+# project, copy the [functions.realtime-broker] section into its config.toml.
+project_id = "realtime-broker"
+
+[functions.realtime-broker]
+# The function verifies the caller's Supabase JWT itself (auth.getUser), and
+# CORS preflight requests carry no JWT, so the gateway check is off.
+verify_jwt = false

@@ -148,19 +148,28 @@ The broker is a small HTTPS endpoint **the app operates**. It holds the App ID a
 | `PUT {base}/sessions/{id}/datachannels/close` | 〃 |
 | `POST {base}/generate-ice-servers` | TURN credentials: `POST /turn/keys/{turnKeyId}/credentials/generate-ice-servers`. Without TURN, it returns Cloudflare STUN only. |
 
+**Wire details** (the Dart `BrokerClient` and the reference brokers both follow them):
+
+- **Every request** carries the app's own auth headers (from the `headers` provider) and `X-Realtime-Room: <roomId>`. That includes `generate-ice-servers`, so TURN credentials only go to room members.
+- **Session token.** On `sessions/new`, the broker MAY return the response header `X-Realtime-Session-Token`. If it does, the client echoes it as the request header `X-Realtime-Session-Token` on every later call for that session. A broker may instead bind sessions server-side only and never send one; the client works either way. Browsers can only read the header if the broker lists it in `Access-Control-Expose-Headers`.
+- **Errors.** `401` when unauthenticated. `403` with `{"errorCode":"forbidden","errorDescription":"..."}` when the caller isn't in the room, doesn't own the session, or names a session from another room. The reference brokers also use `400` (missing room header, malformed body), `404`/`405` (unknown path or method) and `502` (Cloudflare unreachable). Otherwise the SFU's status and body pass through unchanged, including `410` / `session_error`.
+- **`generate-ice-servers`** responds `{"iceServers":[{"urls":[...],"username"?:...,"credential"?:...}]}` with status 200. Without TURN, it returns `stun:stun.cloudflare.com:3478` only. The reference brokers drop TURN URLs on port 53, which browsers block, and also accept `GET`, as partytracks clients use it.
+
 **The broker must enforce these security requirements.** Document them in the README, and follow them in any reference broker:
 
 1. **Authenticate the caller** with the app's own credential.
    - partytracks uses cookies, but native Flutter clients don't keep cookies. So the package sends whatever headers the app's `headers` provider returns.
    - The broker then replaces `Authorization` with the App Secret before forwarding.
 2. **Authorize the room.** The client names the room it's joining (for example, in an `X-Realtime-Room` header). The broker checks that the caller is a member of it.
-3. **Bind sessions to their creator.** After `sessions/new`, only the same caller may mutate that session.
+3. **Bind sessions to their creator.** After `sessions/new`, only the same caller, in the same room, may use that session (every `sessions/{id}` route, including `GET`).
    - partytracks does this with a JWT cookie. Here, the broker either keeps a server-side map, or returns a signed session token that the client echoes on later calls.
    - The package must support echoing such a token.
 4. **Restrict pulls to the same room.** A `tracks/new` pull names another participant's `sessionId`. The broker must check that the session belongs to the same room. **Otherwise anyone with a valid login could subscribe to any room's media by guessing or learning a session ID.**
-5. Strip client-supplied headers that shouldn't reach Cloudflare. Never log the App Secret, SDP bodies or tokens.
+   - The same applies to every body that names a `sessionId`: `tracks/update` (reusing a transceiver for another publisher's track), `datachannels/new` and `datachannels/update` (subscriptions and `canReply`). The reference brokers check each `sessionId` found anywhere in any request body.
+   - So the broker needs a **session store** (session → room, owner) even when it uses signed tokens: only the store knows another participant's room. The store must be readable from every broker instance within seconds of a write, because peers pull new sessions quickly.
+5. Strip client-supplied headers that shouldn't reach Cloudflare: forward only `Authorization: Bearer <App Secret>` and `Content-Type`. Never log the App Secret, SDP bodies or tokens.
 
-**Reference brokers** are roadmap items: a Cloudflare Worker and a Supabase Edge Function (Deno). Keep them in `broker/` in this repo.
+**Reference brokers** live in [`broker/`](../broker/README.md): a Cloudflare Worker (Durable Object session store, `jose` JWT auth) and a Supabase Edge Function (Postgres session store, Supabase JWT auth). They share a dependency-free TypeScript core in `broker/supabase/functions/_shared/broker-core/`, which is where the Supabase CLI can bundle it and where wrangler can import it too. Both ship a room-membership stub that fails closed; the app implements it.
 
 ## 6. Simulcast
 

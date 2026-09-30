@@ -2,7 +2,7 @@
 
 ## partytracks
 
-Parts of this package are ported from [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks).
+Parts of this package are ported from [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks). The reference brokers in `broker/` follow the path layout and ICE-server handling of its `routePartyTracksRequest` proxy.
 
 ```
 ISC License
