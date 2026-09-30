@@ -3,6 +3,8 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../quality/active_speaker_config.dart';
+import '../quality/layer_selection.dart';
 import '../reconnect/backoff.dart';
 import '../session/sfu_session.dart';
 
@@ -49,6 +51,10 @@ class AutoSubscribe {
 /// [high] is `a`, [medium] is `b` and [low] is `c`. When the publisher
 /// advertises its layers ([TrackInfo.simulcast]), the layer is picked by
 /// rank from them instead, so [low] is always the lowest layer it sends.
+///
+/// The room normally picks the layer from the size of the views that show
+/// the track (§6.1); [RemoteTrackPublication.setPreferredLayer] overrides
+/// that.
 enum SimulcastLayer {
   /// The full-resolution layer (`a`): a stage or full-screen view.
   high('a'),
@@ -108,13 +114,19 @@ class RoomOptions {
       maxAttempts: 8,
       maxElapsed: Duration(minutes: 1),
     ),
+    this.layerSelection = const LayerSelectionConfig(),
+    this.hiddenVideoLinger = const Duration(seconds: 5),
+    this.leaseReleaseGrace = const Duration(milliseconds: 500),
+    this.activeSpeaker = const ActiveSpeakerConfig(),
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
   final AutoSubscribe autoSubscribe;
 
-  /// The layer a simulcast video track is first pulled at, until
-  /// [RemoteTrackPublication.setPreferredLayer] picks another. Default
+  /// The layer a simulcast video track is pulled at while no view has
+  /// reported its size (for example after an explicit
+  /// [RemoteTrackPublication.subscribe]) and no layer was picked with
+  /// [RemoteTrackPublication.setPreferredLayer]. Default
   /// [SimulcastLayer.medium], the gallery size.
   final SimulcastLayer defaultVideoLayer;
 
@@ -130,4 +142,33 @@ class RoomOptions {
   /// backoff, and again whenever the publisher's state changes (for example
   /// when they unmute or move to a new session).
   final BackoffConfig pullRetry;
+
+  /// How simulcast layers are picked from the size of the views that show
+  /// a remote video (`docs/design.md` §6.1), and the `simulcast` fallback
+  /// settings sent with pulls and `tracks/update`
+  /// ([LayerSelectionConfig.ridNotAvailable] is `asciibetical` by default).
+  final LayerSelectionConfig layerSelection;
+
+  /// How long a remote video stays pulled, at its lowest layer, after every
+  /// view showing it became hidden (`visible: false`, or a covered route),
+  /// before the pull is released. A view that becomes visible again sooner
+  /// gets its layer back without a new pull. Default 5 s; `null` keeps the
+  /// lowest layer for as long as the views stay mounted.
+  ///
+  /// Only pulls held by views ([RemoteTrackPublication.retain]) are
+  /// released this way; an explicit [RemoteTrackPublication.subscribe] (or
+  /// [autoSubscribe]) keeps the track pulled at its lowest layer.
+  final Duration? hiddenVideoLinger;
+
+  /// How long a released [RemoteTrackLease] keeps its track pulled. A view
+  /// that is unmounted and mounted again within this time (a rebuild with a
+  /// new key, or a move between layouts) keeps the pull instead of closing
+  /// and pulling it again. Default 500 ms; [Duration.zero] releases at
+  /// once.
+  final Duration leaseReleaseGrace;
+
+  /// Active-speaker detection (`docs/design.md` §7): how often audio levels
+  /// are read and how they are smoothed. `null` turns detection off: then
+  /// [Room.activeSpeakers] stays empty and no stats are polled.
+  final ActiveSpeakerConfig? activeSpeaker;
 }

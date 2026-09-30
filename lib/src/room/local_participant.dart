@@ -52,6 +52,37 @@ class LocalParticipant {
   /// [Room.leave].
   Stream<LocalParticipant> get changes => _changes.stream;
 
+  /// Whether this participant is speaking now: their microphone is unmuted
+  /// and they are in [Room.activeSpeakers].
+  bool get isSpeaking =>
+      _room._speakers.monitor.currentSpeakers.contains(participantId);
+
+  /// [isSpeaking], replaying the current value to each new listener and
+  /// then emitting its changes.
+  Stream<bool> get speakingChanges => _room._speakers.monitor.speakers
+      .map((speakers) => speakers.contains(participantId))
+      .distinct();
+
+  /// Whether the room can tell that this participant speaks while their
+  /// microphone is muted ([isSpeakingWhileMuted]).
+  ///
+  /// Always `false` for now (`docs/design.md` §7): muting stops the sender
+  /// with `replaceTrack(null)`, so `getStats()` has no `media-source` level
+  /// for the microphone, and `flutter_webrtc` 1.6 has no other way to read
+  /// the level of a local track that isn't attached to a sender.
+  bool get canDetectSpeakingWhileMuted => false;
+
+  /// Whether this participant speaks while their microphone is muted, for
+  /// a "you are muted" hint. Stays `false` while
+  /// [canDetectSpeakingWhileMuted] is `false`.
+  bool get isSpeakingWhileMuted =>
+      _room._speakers.monitor.snapshot.localSpeakingWhileMuted;
+
+  /// [isSpeakingWhileMuted], replaying the current value to each new
+  /// listener and then emitting its changes.
+  Stream<bool> get speakingWhileMutedChanges =>
+      _room._speakers.monitor.localSpeakingWhileMuted;
+
   /// The state announced through signaling: the session, every published
   /// track with its mute flag and simulcast layers, and [metadata].
   ParticipantState get state => ParticipantState(

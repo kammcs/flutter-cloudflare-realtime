@@ -400,15 +400,46 @@ void main() {
       expect(changes, containsAllInOrder([true, false, true]));
     });
 
-    test('leases keep a track pulled until the last one is released', () async {
+    test('unwrapping only disposes the wrapper stream: the remote track is '
+        'neither removed from it nor stopped', () async {
+      // Native flutter_webrtc 1.6: `streamDispose` drops the stream and
+      // detaches its tracks without stopping them (Android, Darwin,
+      // Windows), while `mediaStreamRemoveTrack` only finds local tracks on
+      // Android and Darwin, so it must not be called for a pulled track.
       await ann.join('ann-1', {'c': _cam});
       await _settle();
       final cam = bob.participant('ann')!.camera!;
+      await cam.subscribe();
+      final renderable = cam.currentTrack!;
+      final stream = renderable.stream as FakeWrappedStream;
+      final track = renderable.track as FakeMediaStreamTrack;
+
+      await cam.unsubscribe();
+      await _settle();
+      expect(stream.calls, ['dispose']);
+      expect(track.stopped, isFalse);
+
+      // Pulling again wraps the new track in a new stream.
+      await cam.subscribe();
+      expect(cam.currentTrack!.stream, isNot(same(stream)));
+      expect(h.wrapped, hasLength(2));
+    });
+
+    test('leases keep a track pulled until the last one is released', () async {
+      // No grace period, so releases take effect at once.
+      final eve = await h.join(
+        'eve',
+        options: const RoomOptions(leaseReleaseGrace: Duration.zero),
+      );
+      addTearDown(eve.leave);
+      await ann.join('ann-1', {'c': _cam});
+      await _settle();
+      final cam = eve.participant('ann')!.camera!;
 
       final first = cam.retain();
       final second = cam.retain();
       await _settle();
-      expect(h.pullsOf(bob), ['ann-1/c']);
+      expect(h.pullsOf(eve), ['ann-1/c']);
 
       await cam.unsubscribe();
       expect(cam.isSubscribed, isTrue, reason: 'leases still hold it');
@@ -416,12 +447,12 @@ void main() {
       first.release();
       await _settle();
       expect(cam.isSubscribed, isTrue);
-      expect(h.closesOf(bob), isEmpty);
+      expect(h.closesOf(eve), isEmpty);
 
       second.release();
       await _settle();
       expect(cam.isSubscribed, isFalse);
-      expect(h.closesOf(bob), hasLength(1));
+      expect(h.closesOf(eve), hasLength(1));
       expect(first.isReleased && second.isReleased, isTrue);
     });
 
