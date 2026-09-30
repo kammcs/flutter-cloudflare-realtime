@@ -32,5 +32,8 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed .
+      # `flutter pub get` and `flutter analyze` at the root also cover example/.
       - run: flutter analyze
       - run: flutter test
+      - run: flutter test
+        working-directory: example
