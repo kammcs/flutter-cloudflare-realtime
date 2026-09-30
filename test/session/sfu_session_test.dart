@@ -231,6 +231,7 @@ void main() {
       expect(h.pc.log, [
         'addTransceiver(audio)',
         'addTransceiver(video)',
+        'setCodecPreferences(video, video/VP8)',
         'createOffer',
         'setLocalDescription(offer)',
         'setRemoteDescription(answer)',
@@ -1278,6 +1279,7 @@ void main() {
 
         expect(h.pc.log, [
           'addTransceiver(video)',
+          'setCodecPreferences(video, video/VP8)',
           'createOffer',
           'setLocalDescription(offer)',
           'rollback(local)',

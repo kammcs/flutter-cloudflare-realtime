@@ -80,20 +80,25 @@ void main() {
       await bob.leave();
     });
 
-    test('is VP8 on Windows (flutter-webrtc #982), like cameras', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
-      final alice = await h.join('alice');
-      await alice.localParticipant.publishScreen(source: _screen1);
-      expect(h.pcOf(alice).transceivers.single.codecPreferences, ['video/VP8']);
-      await alice.leave();
+    test(
+      'is VP8 on every platform (flutter-webrtc #982), like cameras',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final alice = await h.join('alice');
+        await alice.localParticipant.publishScreen(source: _screen1);
+        expect(h.pcOf(alice).transceivers.single.codecPreferences, [
+          'video/VP8',
+        ]);
+        await alice.leave();
 
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      final eve = await h.join('eve');
-      await eve.localParticipant.publishScreen(source: _screen1);
-      expect(h.pcOf(eve).transceivers.single.codecPreferences, isNull);
-      await eve.leave();
-    });
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        final eve = await h.join('eve');
+        await eve.localParticipant.publishScreen(source: _screen1);
+        expect(h.pcOf(eve).transceivers.single.codecPreferences, ['video/VP8']);
+        await eve.leave();
+      },
+    );
   });
 
   group('ending outside the app', () {
