@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# Secrets go in .env (ignored here and at the repo root). Only .env.example is committed.
+.env
+.env.*
+!.env.example
