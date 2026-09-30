@@ -3,11 +3,13 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack;
 
 import '../broker/broker_client.dart';
+import '../data/data_channel_manager.dart';
 import '../media/constraints.dart';
 import '../media/device_media_source.dart';
 import '../media/local_media_source.dart';
@@ -32,6 +34,7 @@ import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
 part 'remote_participant.dart';
+part 'room_data.dart';
 part 'room_events.dart';
 
 /// A call: one SFU session tied to one room on the app's [Signaling].
@@ -80,6 +83,10 @@ class Room {
   /// The local participant: publish, mute and unpublish here.
   late final LocalParticipant localParticipant;
 
+  /// DataChannels between participants: publish a channel, or subscribe to
+  /// another participant's (`docs/design.md` §9).
+  late final RoomData data = RoomData._(this);
+
   final SfuSession _session;
   final BrokerClient _broker;
   final MediaBackend _mediaBackend;
@@ -87,6 +94,10 @@ class Room {
 
   final Map<String, RemoteParticipant> _remotes = {};
   List<ParticipantState> _signaled = const [];
+  // Every SFU session a remote participant announced, to attribute
+  // DataChannel messages. Null marks a session claimed by more than one
+  // participant.
+  final Map<String, String?> _sessionOwners = {};
   final StateStream<List<RemoteParticipant>> _participants = StateStream(
     const [],
   );
@@ -169,6 +180,13 @@ class Room {
     final self = localParticipant.state;
     await signaling.join(roomId, self);
     _announced = self;
+    // Take the session's state now, so the room is returned connected.
+    final failure = _session.failure;
+    if (failure != null) {
+      _onSessionFailure(failure);
+    } else {
+      _onSessionState(_session.currentConnectionState);
+    }
     _subscriptions
       ..add(_session.connectionState.listen(_onSessionState))
       ..add(_session.failures.listen(_onSessionFailure))
@@ -231,6 +249,17 @@ class Room {
     final diff = diffParticipants(_signaled, others);
     _signaled = others;
     if (diff.isEmpty) return;
+    for (final state in [
+      ...diff.joined,
+      for (final change in diff.updated) change.current,
+    ]) {
+      final sessionId = state.sessionId!;
+      final owner = _sessionOwners[sessionId];
+      _sessionOwners[sessionId] =
+          !_sessionOwners.containsKey(sessionId) || owner == state.participantId
+          ? state.participantId
+          : null;
+    }
 
     for (final state in diff.left) {
       final remote = _remotes.remove(state.participantId);
@@ -253,10 +282,11 @@ class Room {
     _participants.set(List.unmodifiable(_remotes.values));
   }
 
-  void _onRemoteChanged() {
-    if (_left || _participants.isClosed) return;
-    _participants.set(List.unmodifiable(_remotes.values));
-  }
+  /// The participant that announced [sessionId], or `null` if none did (or
+  /// several did). Sessions a participant used before reconnecting still
+  /// map to them, so late messages keep their sender.
+  String? _participantIdForSession(String? sessionId) =>
+      sessionId == null ? null : _sessionOwners[sessionId];
 
   Future<void> _leave() async {
     _left = true;
@@ -265,8 +295,9 @@ class Room {
     }
     _subscriptions.clear();
 
-    // Remote tracks: closing the session releases the pulls, so only the
-    // local state is torn down here.
+    // Remote tracks and DataChannel subscriptions: closing the session
+    // releases them, so only the local state is torn down here.
+    data._disposeForLeave();
     final remotes = _remotes.values.toList();
     _remotes.clear();
     for (final remote in remotes) {

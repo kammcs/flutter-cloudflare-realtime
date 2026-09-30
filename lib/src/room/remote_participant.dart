@@ -65,9 +65,9 @@ class RemoteParticipant {
     return null;
   }
 
+  // Room.participants is emitted once per signaling update, by the room.
   void _notify() {
     if (!_changes.isClosed) _changes.add(this);
-    _room._onRemoteChanged();
   }
 
   void _addTracks(Map<String, TrackInfo> tracks) {
