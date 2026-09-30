@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG BUILDS ONLY (src/debug). Allows cleartext HTTP/WS so a debug build
+     can reach the local dev server (tools/dev-server) at a LAN IP such as
+     http://192.168.1.10:8787. Android can't scope this to private IP ranges,
+     so it applies to every host, which is why it never ships in release or
+     profile builds. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

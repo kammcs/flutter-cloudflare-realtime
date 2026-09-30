@@ -23,6 +23,8 @@ This project isn't affiliated with or endorsed by Cloudflare.
 
 See [docs/design.md](docs/design.md) for the architecture, the broker contract and its security rules.
 
+To try a real call across devices from your laptop, use the DEV ONLY local broker and WebSocket signaling in [tools/dev-server/](tools/dev-server/README.md). It needs just your Cloudflare SFU credentials in environment variables. Reference brokers for deployment are in [broker/](broker/README.md).
+
 ## Docs
 
 | | |
