@@ -12,6 +12,28 @@ void main() {
   runApp(ExampleApp(hub: InMemorySignalingHub()));
 }
 
+/// The video codec every participant sends, from `--dart-define=VIDEO_CODEC`:
+/// a MIME type (default `video/VP8`), or `default` for the platform's own
+/// order (the package default: VP8 on Windows only).
+///
+/// The SFU forwards video as it was sent, so in a mixed call every device
+/// decodes what every other device encodes. VP8 everywhere keeps Windows
+/// away from H.264 (flutter-webrtc #982) whichever side encodes it, and is
+/// libwebrtc's most exercised simulcast path (docs/checkpoint.md).
+const videoCodec = String.fromEnvironment(
+  'VIDEO_CODEC',
+  defaultValue: 'video/VP8',
+);
+
+/// The room options the example joins with.
+const roomOptions = RoomOptions(
+  sessionOptions: SfuSessionOptions(
+    defaults: SfuSessionDefaults(
+      videoCodecPreferences: videoCodec == 'default' ? null : [videoCodec],
+    ),
+  ),
+);
+
 /// The example app.
 class ExampleApp extends StatelessWidget {
   const ExampleApp({
@@ -146,6 +168,7 @@ class _JoinPageState extends State<JoinPage> {
               signaling: setup.signaling,
               participantId: setup.participantId,
               metadata: {'displayName': setup.displayName},
+              options: roomOptions,
             );
       } catch (_) {
         await setup.disposeSignaling();

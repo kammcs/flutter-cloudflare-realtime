@@ -40,6 +40,7 @@ Widget tests (`testWidgets`, or anything under `fake_async`) run in fake time, a
 | [docs/design.md](docs/design.md) | Architecture, broker contract, simulcast, reconnection, DataChannels, platform notes |
 | [docs/cloudflare-sfu.md](docs/cloudflare-sfu.md) | What the SFU API provides, and its rules |
 | [docs/roadmap.md](docs/roadmap.md) | Milestones |
+| [docs/checkpoint.md](docs/checkpoint.md) | Runbook: demonstrate the week-6 checkpoint (calls on Windows, macOS and Android, simulcast layer switching, recovery from a network drop) with the example app |
 
 ## License
 
