@@ -41,3 +41,6 @@ migrate_working_dir/
 credentials*.json
 *.secret
 .dev.vars
+
+# Claude Code agent worktrees
+.claude/worktrees/
