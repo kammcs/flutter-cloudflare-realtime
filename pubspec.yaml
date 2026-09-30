@@ -1,0 +1,28 @@
+name: cloudflare_realtime
+description: "Unofficial Flutter client for the Cloudflare Realtime SFU: rooms, simulcast, screen share and data channels, built on flutter_webrtc."
+version: 0.0.1
+repository: https://github.com/kammcs/flutter-cloudflare-realtime
+issue_tracker: https://github.com/kammcs/flutter-cloudflare-realtime/issues
+topics:
+  - webrtc
+  - cloudflare
+  - video
+  - realtime
+  - sfu
+# Remove at the first pub.dev release (roadmap M8).
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_webrtc: ^1.6.2
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
