@@ -1,6 +1,8 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 
+import 'local_media_page.dart';
+
 void main() {
   runApp(ExampleApp(hub: InMemorySignalingHub()));
 }
@@ -10,9 +12,16 @@ void main() {
 /// Signaling runs in memory for now: every participant shares [hub], so the
 /// demo works in a single process without a backend.
 class ExampleApp extends StatelessWidget {
-  const ExampleApp({super.key, required this.hub});
+  const ExampleApp({
+    super.key,
+    required this.hub,
+    this.mediaBackend = const FlutterWebrtcMediaBackend(),
+  });
 
   final InMemorySignalingHub hub;
+
+  /// Where the local media page captures from. Tests pass a fake.
+  final MediaBackend mediaBackend;
 
   @override
   Widget build(BuildContext context) {
@@ -23,16 +32,21 @@ class ExampleApp extends StatelessWidget {
         colorSchemeSeed: Colors.orange,
         brightness: Brightness.dark,
       ),
-      home: RoomDemoPage(hub: hub),
+      home: RoomDemoPage(hub: hub, mediaBackend: mediaBackend),
     );
   }
 }
 
 /// Joins a room through [InMemorySignaling] and lists who else is there.
 class RoomDemoPage extends StatefulWidget {
-  const RoomDemoPage({super.key, required this.hub});
+  const RoomDemoPage({
+    super.key,
+    required this.hub,
+    this.mediaBackend = const FlutterWebrtcMediaBackend(),
+  });
 
   final InMemorySignalingHub hub;
+  final MediaBackend mediaBackend;
 
   @override
   State<RoomDemoPage> createState() => _RoomDemoPageState();
@@ -106,6 +120,14 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
     setState(() {});
   }
 
+  void _openLocalMedia() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LocalMediaPage(backend: widget.mediaBackend),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     for (final guest in _guests.values) {
@@ -123,6 +145,11 @@ class _RoomDemoPageState extends State<RoomDemoPage> {
       appBar: AppBar(
         title: Text(_joined ? 'Room: ${_signaling.roomId}' : 'Join a room'),
         actions: [
+          IconButton(
+            tooltip: 'Local media',
+            icon: const Icon(Icons.perm_camera_mic),
+            onPressed: _openLocalMedia,
+          ),
           if (_joined)
             IconButton(
               tooltip: 'Leave',
