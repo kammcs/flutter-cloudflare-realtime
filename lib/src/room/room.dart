@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
 
+import '../audio/remote_audio_sink.dart';
 import '../broker/broker_client.dart';
 import '../data/data_channel_manager.dart';
 import '../media/constraints.dart';
@@ -45,6 +46,7 @@ import 'room_options.dart';
 import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
+part 'room_audio.dart';
 part 'remote_participant.dart';
 part 'remote_track_layers.dart';
 part 'room_data.dart';
@@ -149,6 +151,8 @@ class Room {
   // room_speakers.dart.
   late final _RoomLayers _layers = _RoomLayers(this);
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
+  // Remote audio playback (the web's audio elements): room_audio.dart.
+  late final _RoomAudio _audio = _RoomAudio();
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -265,6 +269,42 @@ class Room {
   /// The current value of [dominantSpeaker].
   String? get currentDominantSpeaker =>
       _speakers.monitor.currentDominantSpeaker;
+
+  /// Whether the browser is refusing to play remote audio until the user
+  /// interacts with the page (its autoplay policy). Show a "click to enable
+  /// audio" prompt that calls [startAudio] while it is `true`.
+  ///
+  /// Only the web can block: native platforms play pulled audio by
+  /// themselves, so this is always `false` there.
+  bool get audioPlaybackBlocked => _audio.blocked.value;
+
+  /// [audioPlaybackBlocked], replaying the current value to each new
+  /// listener and then emitting its changes. Completes after [leave].
+  Stream<bool> get audioPlaybackBlockedChanges => _audio.blocked.stream;
+
+  /// Starts remote audio that the browser refused to autoplay
+  /// ([audioPlaybackBlocked]). Completes with whether audio plays now.
+  ///
+  /// **Call it directly from a user gesture** (a button's `onPressed`), with
+  /// nothing awaited before it: browsers only allow playback in response
+  /// to one. On native platforms it does nothing and completes with `true`.
+  Future<bool> startAudio() => _audio.start();
+
+  /// Whether [setAudioOutputDevice] works here: on native platforms, and in
+  /// browsers that support `HTMLMediaElement.setSinkId` (not all do).
+  bool get canSelectAudioOutput => _audio.canSelectOutput;
+
+  /// Plays remote audio through the output device [deviceId], a
+  /// [MediaDeviceKind.audioOutput] device's [MediaDevice.deviceId].
+  ///
+  /// On the web it applies to this room's audio elements (now and later),
+  /// through `setSinkId`. On native platforms it calls `flutter_webrtc`'s
+  /// `Helper.selectAudioOutput`, which switches the whole app's output.
+  /// Throws an [UnsupportedError] where [canSelectAudioOutput] is `false`.
+  Future<void> setAudioOutputDevice(String deviceId) {
+    _checkNotLeft();
+    return _audio.setOutput(deviceId);
+  }
 
   /// Leaves the room and releases everything it holds.
   ///
@@ -485,6 +525,8 @@ class Room {
     }
     _subscriptions.clear();
     await _speakers.dispose();
+    // Stop remote audio first: nothing should play once leave() starts.
+    await _audio.dispose();
 
     // Remote tracks and DataChannel subscriptions: closing the session
     // releases them, so only the local state is torn down here.

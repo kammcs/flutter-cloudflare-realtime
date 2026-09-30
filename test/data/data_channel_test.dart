@@ -636,6 +636,53 @@ void main() {
       expect(session.failure, isA<SfuSessionGone>());
     });
 
+    test('a subscribe reporting a gone session fails only the channel when '
+        'ours is alive', () async {
+      final session = await h.connect();
+      final pub = await session.publishDataChannel('chat');
+      h.broker.onNewDataChannels = (_, request) async {
+        if (request.dataChannels.any((d) => d.sessionId == 'old')) {
+          throw const SessionGoneException(
+            operation: 'datachannels/new',
+            statusCode: 410,
+            errorCode: 'session_error',
+          );
+        }
+        return h.broker.defaultNewDataChannels('session-1', request);
+      };
+      await expectLater(
+        session.subscribeDataChannel('old', 'cursor'),
+        throwsA(
+          isA<SfuDataChannelException>()
+              .having((e) => e.name, 'name', 'cursor')
+              .having((e) => e.errorCode, 'errorCode', 'session_error'),
+        ),
+      );
+      expect(h.broker.callsTo('sessions/{id}').single.sessionId, 'session-1');
+      expect(session.isUsable, isTrue);
+      expect(pub.state, isNot(SfuDataChannelState.interrupted));
+      expect(session.dataChannels, [same(pub)]);
+
+      final sub = await session.subscribeDataChannel('new', 'cursor');
+      expect(session.dataChannels, [same(pub), same(sub)]);
+    });
+
+    test('a subscribe reporting our session gone fails the session', () async {
+      final session = await h.connect();
+      h.broker
+        ..goneSessions.add('session-1')
+        ..onNewDataChannels = (_, _) async => throw const SessionGoneException(
+          operation: 'datachannels/new',
+          statusCode: 410,
+          errorCode: 'session_error',
+        );
+      await expectLater(
+        session.subscribeDataChannel('p', 'cursor'),
+        throwsA(isA<SessionGoneException>()),
+      );
+      expect(session.failure, isA<SfuSessionGone>());
+    });
+
     test(
       'republish and resubscribe refuse channels still on a session',
       () async {

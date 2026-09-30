@@ -22,7 +22,8 @@ class _Aborted implements Exception {
 ///    backoff;
 /// 5. pulls every wanted remote track, and every DataChannel subscription,
 ///    from the publishers' current sessions;
-/// 6. waits for the new peer connection to connect, if it is connecting.
+/// 6. waits for the new peer connection to connect, if anything was
+///    negotiated on it (see [_whenConnected]).
 ///
 /// Only one episode runs at a time. Triggers during an episode coalesce
 /// into it: one about the attempt's own session makes that attempt count as
@@ -377,11 +378,33 @@ class _Reconnection {
 
   /// Waits while [next] is connecting (or briefly disconnected), until it
   /// connects, fails, or a trigger (such as the connect timeout) fires.
+  ///
+  /// A session that carries media or DataChannels must connect before the
+  /// room says `connected`, even if its peer connection is still `new`
+  /// (connection states arrive asynchronously, so right after the
+  /// negotiation it often is). Otherwise the room would show `connected`,
+  /// then `connecting`, then `connected` again. With nothing negotiated,
+  /// `new` is final: there is nothing to connect.
   Future<void> _whenConnected(SfuSession next) async {
+    bool negotiated() =>
+        next.publications.isNotEmpty ||
+        next.subscriptions.isNotEmpty ||
+        next.dataChannels.isNotEmpty;
     bool waiting(SfuConnectionState state) =>
         state == SfuConnectionState.connecting ||
-        state == SfuConnectionState.disconnected;
+        state == SfuConnectionState.disconnected ||
+        (state == SfuConnectionState.initial && negotiated());
     if (!waiting(next.currentConnectionState)) return;
+    if (next.currentConnectionState == SfuConnectionState.initial) {
+      // The room leaves `initial` out of the trigger (an idle session must
+      // not time out), so arm the connect timeout for this wait here.
+      _fire(
+        _trigger.peerConnectionStateChanged(
+          RTCPeerConnectionState.RTCPeerConnectionStateNew,
+          _now,
+        ),
+      );
+    }
     final done = Completer<void>();
     _wake = done;
     final listener = next.connectionState.listen((state) {

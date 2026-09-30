@@ -171,6 +171,18 @@ void main() {
         expect(oldSession.isClosed, isTrue);
         expect(oldPc.closed, isTrue);
         expect(alice.failure, isNull);
+
+        // Tracks are on the new session, but its peer connection is still
+        // `new`: the room stays reconnecting until it connects, rather than
+        // showing connected, connecting, connected.
+        expect(alice.isReconnecting, isTrue);
+        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(events.whereType<RoomReconnectedEvent>(), isEmpty);
+        h.pcOf(alice).emitConnectionState(_connecting);
+        pump();
+        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        h.pcOf(alice).emitConnectionState(_connected);
+        pump();
         expect(alice.isReconnecting, isFalse);
         expect(alice.currentConnectionState, RoomConnectionState.connected);
         final reconnected = events.whereType<RoomReconnectedEvent>().single;
@@ -287,6 +299,8 @@ void main() {
         final events = _record(alice);
         final original = h.broker.onNewTracks!;
         final goneSession = alice.session.sessionId;
+        // Our session is gone for the SFU: the confirmation says so too.
+        h.broker.goneSessions.add(goneSession);
         h.broker.onNewTracks = (sessionId, request) async {
           if (sessionId == goneSession) {
             throw SessionGoneException(
@@ -325,6 +339,96 @@ void main() {
         final daveMic = alice.participant('dave')!.microphone!;
         expect(daveMic.subscriptionState, SfuTrackState.active);
         expect(daveMic.currentTrack, isNotNull);
+        alice.leave();
+        dave.dispose();
+        pump();
+      });
+    });
+
+    test('a pull from a publisher session that is gone keeps our session: '
+        'the pull backs off, and follows the publisher to a new session', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final events = _record(alice);
+        final session = alice.session;
+        final attempts = h.connectAttempts;
+        final original = h.broker.onNewTracks!;
+        // The SFU answers a pull naming dave's expired session with a
+        // request-level session_error, which the broker client maps to the
+        // session in the path: ours.
+        h.broker.onNewTracks = (sessionId, request) async {
+          if (request.tracks.any((t) => t.sessionId == 'dave-old')) {
+            throw SessionGoneException(
+              operation: 'tracks/new',
+              sessionId: sessionId,
+              statusCode: 410,
+              errorCode: 'session_error',
+            );
+          }
+          return original(sessionId, request);
+        };
+
+        h.broker
+          ..trackKinds['dave-old/dave-mic'] = 'audio'
+          ..trackKinds['dave-new/dave-mic'] = 'audio';
+        final dave = InMemorySignaling(h.hub);
+        dave.join(
+          'room',
+          ParticipantState(
+            participantId: 'dave',
+            sessionId: 'dave-old',
+            tracks: const {'dave-mic': _mic},
+          ),
+        );
+        pump();
+
+        // Our session was confirmed alive, so only the pull failed.
+        expect(
+          h.broker.callsTo('sessions/{id}').single.sessionId,
+          session.sessionId,
+        );
+        expect(alice.failure, isNull);
+        expect(alice.session, same(session));
+        expect(events.whereType<RoomSessionFailedEvent>(), isEmpty);
+        expect(events.whereType<RoomReconnectingEvent>(), isEmpty);
+        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        final daveMic = alice.participant('dave')!.microphone!;
+        expect(daveMic.error, isA<SfuTrackException>());
+        final failure = events.whereType<TrackSubscriptionFailedEvent>().single;
+        expect(failure.willRetry, isTrue);
+        expect(
+          failure.error,
+          isA<SfuTrackException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            'session_error',
+          ),
+        );
+
+        // The retries fail the same way, and never re-session.
+        async.elapse(const Duration(seconds: 30));
+        pump();
+        expect(
+          events.whereType<TrackSubscriptionFailedEvent>().length,
+          greaterThan(1),
+        );
+        expect(alice.session, same(session));
+        expect(h.connectAttempts, attempts);
+        expect(events.whereType<RoomReconnectingEvent>(), isEmpty);
+
+        // Dave comes back on a new session: pulled from there at once.
+        dave.update(
+          ParticipantState(
+            participantId: 'dave',
+            sessionId: 'dave-new',
+            tracks: const {'dave-mic': _mic},
+          ),
+        );
+        pump();
+        expect(daveMic.subscriptionState, SfuTrackState.active);
+        expect(daveMic.currentTrack, isNotNull);
+        expect(h.pullsOf(alice).last, 'dave-new/dave-mic');
+        expect(alice.session, same(session));
         alice.leave();
         dave.dispose();
         pump();
@@ -541,6 +645,8 @@ void main() {
         final events = _record(alice);
         final mic = wait(pump, alice.localParticipant.publishMicrophone());
         final first = alice.session;
+        // New sessions connect once their tracks are on them.
+        h.autoConnect = true;
 
         h.pcOf(alice).emitConnectionState(_failed);
         pump();
@@ -585,6 +691,7 @@ void main() {
           }
           return original(sessionId, request);
         };
+        h.autoConnect = true;
 
         h.pcOf(alice).emitConnectionState(_failed);
         async.elapse(const Duration(seconds: 1));
@@ -603,6 +710,69 @@ void main() {
         expect(mic.publication.session, same(alice.session));
         expect(mic.publication.state, SfuTrackState.active);
         expect(h.announced('alice')!.tracks.keys, [mic.trackName]);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('a new session with tracks whose peer connection never leaves new '
+        'fails the attempt after the connect timeout', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final events = _record(alice);
+        final mic = wait(pump, alice.localParticipant.publishMicrophone());
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        final stuck = h.pcOf(alice);
+        expect(mic.publication.session, same(alice.session));
+        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+
+        async.elapse(const Duration(seconds: 14));
+        pump();
+        expect(alice.isReconnecting, isTrue);
+        expect(events.whereType<RoomErrorEvent>(), isEmpty);
+
+        // 15 s: ReconnectTriggerConfig.connectTimeout.
+        h.autoConnect = true;
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(stuck.closed, isTrue);
+        expect(
+          events.whereType<RoomErrorEvent>().single.error,
+          isA<SfuSessionException>(),
+        );
+
+        async.elapse(const Duration(seconds: 2));
+        pump();
+        final reconnected = events.whereType<RoomReconnectedEvent>().single;
+        expect(reconnected.attempts, 2);
+        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(mic.publication.state, SfuTrackState.active);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('a new session with nothing on it is connected at once', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final events = _record(alice);
+        final states = <RoomConnectionState>[];
+        alice.connectionState.listen(states.add);
+        pump();
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(h.pcOf(alice).connectionState, isNot(_connected));
+        expect(events.whereType<RoomReconnectedEvent>(), hasLength(1));
+        expect(states, [
+          RoomConnectionState.connected,
+          RoomConnectionState.reconnecting,
+          RoomConnectionState.connected,
+        ]);
         alice.leave();
         pump();
       });

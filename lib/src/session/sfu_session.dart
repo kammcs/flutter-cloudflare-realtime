@@ -658,6 +658,56 @@ class SfuSession {
     }
   }
 
+  /// Runs a broker call whose request names **other** sessions: a pull
+  /// (`tracks/new` with remote tracks) or a DataChannel subscribe
+  /// (`datachannels/new` with remote channels).
+  ///
+  /// A [SessionGoneException] from such a call may be about a publisher's
+  /// expired session rather than this one: the broker maps a 410 or
+  /// `session_error` to the session in the path, whatever the SFU meant. So
+  /// this session is confirmed first ([_confirmAlive], `GET sessions/{id}`):
+  ///
+  /// - gone (or no longer ours): the session fails as with [_call], and the
+  ///   original exception is rethrown;
+  /// - alive, or unknown: a [RemoteSessionGoneException] is thrown, and the
+  ///   caller fails only the batch's items, as per-item errors.
+  Future<T> _callNamingRemotes<T>(Future<T> Function() call) async {
+    try {
+      return await call();
+    } on SessionGoneException catch (gone, stackTrace) {
+      if (!await _confirmAlive()) {
+        _fail(SfuSessionGone(gone));
+        Error.throwWithStackTrace(gone, stackTrace);
+      }
+      _throwIfUnusable();
+      throw RemoteSessionGoneException(gone);
+    }
+  }
+
+  /// Asks the broker whether this session still exists, after a request
+  /// that names other sessions was answered with "session gone".
+  ///
+  /// `false` when the session is closed or failed meanwhile, when the SFU
+  /// reports it gone, or when the broker no longer lets us use it (403).
+  /// Any other failure (network, timeout, 5xx) proves nothing either way:
+  /// the session is kept, the batch's items fail on their own and are
+  /// retried, and a real outage still shows on the peer connection.
+  Future<bool> _confirmAlive() async {
+    if (!isUsable) return false;
+    try {
+      final state = await _broker.getSessionState(sessionId);
+      return state.errorCode != _sessionErrorCode;
+    } on SessionGoneException {
+      return false;
+    } on BrokerForbiddenException {
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static const _sessionErrorCode = 'session_error';
+
   // ---------------------------------------------------------------------------
   // Push
   // ---------------------------------------------------------------------------
@@ -785,21 +835,39 @@ class SfuSession {
     }
     if (requested.isEmpty) return;
 
-    final response = await _call(
-      () => _broker.newTracks(
-        sessionId,
-        TracksRequest(
-          tracks: [
-            for (final item in requested)
-              TrackObject.remote(
-                sessionId: item.subscription.remoteSessionId,
-                trackName: item.subscription.trackName,
-                simulcast: item.subscription.simulcast,
-              ),
-          ],
+    final TracksResponse response;
+    try {
+      response = await _callNamingRemotes(
+        () => _broker.newTracks(
+          sessionId,
+          TracksRequest(
+            tracks: [
+              for (final item in requested)
+                TrackObject.remote(
+                  sessionId: item.subscription.remoteSessionId,
+                  trackName: item.subscription.trackName,
+                  simulcast: item.subscription.simulcast,
+                ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } on RemoteSessionGoneException catch (e) {
+      // A publisher's session is gone, not ours: fail just these pulls, as
+      // per-track errors, so the Room's pull retries handle them.
+      for (final item in requested) {
+        item.fail(
+          this,
+          SfuTrackException(
+            operation: 'tracks/new',
+            trackName: item.subscription.trackName,
+            errorCode: e.errorCode,
+            errorDescription: e.errorDescription,
+          ),
+        );
+      }
+      return;
+    }
     _throwIfUnusable();
     _throwIfRequestError('tracks/new', response);
 
@@ -1146,6 +1214,31 @@ class SfuSession {
       '${_failure == null ? '' : ', $_failure'})';
 }
 
+/// A request that names other sessions (a pull, or a DataChannel
+/// subscribe) was answered with "session gone", but this session is still
+/// alive: the gone session is one of the publishers'.
+///
+/// Internal: not exported from the package barrel. The session catches it
+/// and fails the request's items with per-item errors ([SfuTrackException],
+/// `SfuDataChannelException`) carrying [errorCode].
+class RemoteSessionGoneException implements Exception {
+  /// Wraps the broker's [cause].
+  const RemoteSessionGoneException(this.cause);
+
+  /// The broker's exception, about the session in the request's path.
+  final SessionGoneException cause;
+
+  /// The per-item error code: the SFU's, or `session_error` (a bare 410).
+  String get errorCode => cause.errorCode ?? SfuSession._sessionErrorCode;
+
+  /// The per-item error description.
+  String get errorDescription =>
+      cause.errorDescription ?? 'a session named in the request is gone';
+
+  @override
+  String toString() => 'RemoteSessionGoneException($cause)';
+}
+
 /// The internal hooks that layers built on an [SfuSession] (DataChannels)
 /// use to share its op queue, broker and peer connection.
 ///
@@ -1171,6 +1264,14 @@ class SfuSessionPort {
 
   /// Runs a broker call, failing the session on a [SessionGoneException].
   Future<T> callBroker<T>(Future<T> Function() call) => session._call(call);
+
+  /// Runs a broker call whose request names other sessions (remote
+  /// DataChannels). On a [SessionGoneException], the session is confirmed
+  /// first: it fails only if it is gone itself; otherwise a
+  /// [RemoteSessionGoneException] is thrown, for the caller to fail the
+  /// batch's items one by one.
+  Future<T> callBrokerNamingRemotes<T>(Future<T> Function() call) =>
+      session._callNamingRemotes(call);
 
   /// Applies an SFU [offer], answers it, and sends the answer with
   /// `renegotiate`.

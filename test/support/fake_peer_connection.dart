@@ -70,6 +70,10 @@ class FakePeerConnectionFactory {
   /// Every connection created, in order.
   final List<FakePeerConnection> created = [];
 
+  /// Sets [FakePeerConnection.autoConnect] on connections created from now
+  /// on.
+  bool autoConnect = false;
+
   /// The last connection created.
   FakePeerConnection get last => created.last;
 
@@ -78,7 +82,7 @@ class FakePeerConnectionFactory {
     final pc = FakePeerConnection(
       configuration: configuration,
       remoteMedia: remoteMedia,
-    );
+    )..autoConnect = autoConnect;
     created.add(pc);
     return pc;
   }
@@ -131,6 +135,11 @@ class FakePeerConnection implements PeerConnection {
   int _answers = 0;
   int _mids = 0;
   bool closed = false;
+
+  /// When true, the first remote description moves a `new` connection to
+  /// `connecting` and then `connected`, in a microtask, as a real one would
+  /// soon after negotiating. Off by default: tests drive the states.
+  bool autoConnect = false;
 
   /// Makes the next call to [method] (such as `createOffer`) throw [error].
   void failNext(String method, Object error) => _failures[method] = error;
@@ -303,6 +312,22 @@ class FakePeerConnection implements PeerConnection {
       _signalingState = _stable;
     }
     remoteDescription = description;
+    if (autoConnect &&
+        _connectionState == RTCPeerConnectionState.RTCPeerConnectionStateNew) {
+      scheduleMicrotask(() {
+        if (closed ||
+            _connectionState !=
+                RTCPeerConnectionState.RTCPeerConnectionStateNew) {
+          return;
+        }
+        emitConnectionState(
+          RTCPeerConnectionState.RTCPeerConnectionStateConnecting,
+        );
+        emitConnectionState(
+          RTCPeerConnectionState.RTCPeerConnectionStateConnected,
+        );
+      });
+    }
   }
 
   @override

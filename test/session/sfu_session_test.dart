@@ -991,11 +991,14 @@ void main() {
         errorCode: 'session_error',
       );
       h.broker.onNewTracks = (_, _) async => throw gone;
+      // A pull names another session, so ours is confirmed gone first.
+      h.broker.goneSessions.add(session.sessionId);
       await expectLater(
         session.subscribe(remoteSessionId: 'p', trackName: 't'),
         throwsA(same(gone)),
       );
       await pumpEventQueue();
+      expect(h.broker.callsTo('sessions/{id}').single.sessionId, 'session-1');
 
       expect(failures, [
         isA<SfuSessionGone>().having((f) => f.exception, 'exception', gone),
@@ -1017,6 +1020,143 @@ void main() {
 
       // A late listener still sees the failure.
       expect(await session.failures.toList(), [same(session.failure)]);
+    });
+
+    group('a gone session reported by a pull', () {
+      const gone = SessionGoneException(
+        operation: 'tracks/new',
+        sessionId: 'session-1',
+        statusCode: 410,
+        errorCode: 'session_error',
+        errorDescription: 'Session is not ready or does not exist',
+      );
+
+      test('fails only the pulls when our session is alive', () async {
+        final session = await h.connect();
+        final pub = await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+        final alive = await session.subscribe(
+          remoteSessionId: 'p1',
+          trackName: 'alive',
+        );
+        h.broker.onNewTracks = (_, _) async => throw gone;
+
+        final first = session.subscribe(remoteSessionId: 'old', trackName: 'a');
+        final second = session.subscribe(remoteSessionId: 'p1', trackName: 'b');
+        await Future.wait([
+          expectLater(
+            first,
+            throwsA(
+              isA<SfuTrackException>()
+                  .having((e) => e.operation, 'operation', 'tracks/new')
+                  .having((e) => e.trackName, 'trackName', 'a')
+                  .having((e) => e.errorCode, 'errorCode', 'session_error')
+                  .having(
+                    (e) => e.errorDescription,
+                    'errorDescription',
+                    gone.errorDescription,
+                  ),
+            ),
+          ),
+          expectLater(
+            second,
+            throwsA(
+              isA<SfuTrackException>().having(
+                (e) => e.trackName,
+                'trackName',
+                'b',
+              ),
+            ),
+          ),
+        ]);
+
+        // One confirmation for the batch; the session carries on.
+        expect(h.broker.callsTo('sessions/{id}'), hasLength(1));
+        expect(session.failure, isNull);
+        expect(session.isUsable, isTrue);
+        expect(pub.state, SfuTrackState.active);
+        expect(alive.state, SfuTrackState.active);
+        expect(session.subscriptions, [same(alive)]);
+
+        // The next pull works.
+        h.broker.onNewTracks = null;
+        final later = await session.subscribe(
+          remoteSessionId: 'p2',
+          trackName: 'c',
+        );
+        expect(later.state, SfuTrackState.active);
+      });
+
+      test('a bare 410 gives the per-track error session_error', () async {
+        final session = await h.connect();
+        h.broker.onNewTracks = (_, _) async => throw const SessionGoneException(
+          operation: 'tracks/new',
+          statusCode: 410,
+        );
+        await expectLater(
+          session.subscribe(remoteSessionId: 'old', trackName: 'a'),
+          throwsA(
+            isA<SfuTrackException>().having(
+              (e) => e.errorCode,
+              'errorCode',
+              'session_error',
+            ),
+          ),
+        );
+        expect(session.isUsable, isTrue);
+      });
+
+      test('fails the session when the broker refuses it (403)', () async {
+        final session = await h.connect();
+        h.broker
+          ..onNewTracks = ((_, _) async => throw gone)
+          ..onGetSessionState = (_) async =>
+              throw const BrokerForbiddenException(operation: 'sessions/{id}');
+        await expectLater(
+          session.subscribe(remoteSessionId: 'p', trackName: 't'),
+          throwsA(same(gone)),
+        );
+        expect(session.failure, isA<SfuSessionGone>());
+      });
+
+      test('keeps the session when the confirmation itself fails', () async {
+        final session = await h.connect();
+        h.broker
+          ..onNewTracks = ((_, _) async => throw gone)
+          ..onGetSessionState = (_) async =>
+              throw const BrokerNetworkException(operation: 'sessions/{id}');
+        await expectLater(
+          session.subscribe(remoteSessionId: 'p', trackName: 't'),
+          throwsA(isA<SfuTrackException>()),
+        );
+        expect(session.isUsable, isTrue);
+      });
+
+      test('pushes, updates and closes fail the session unconfirmed', () async {
+        for (final operation in ['push', 'update', 'close']) {
+          final h = SessionHarness();
+          final session = await h.connect();
+          final pub = await session.publish(
+            FakeMediaStreamTrack(kind: 'audio'),
+          );
+          final sub = await session.subscribe(
+            remoteSessionId: 'p',
+            trackName: 't',
+            preferredRid: 'b',
+          );
+          h.broker
+            ..onNewTracks = ((_, _) async => throw gone)
+            ..onUpdateTracks = ((_, _) async => throw gone)
+            ..onCloseTracks = ((_, _) async => throw gone);
+          final Future<void> call = switch (operation) {
+            'push' => session.publish(FakeMediaStreamTrack(kind: 'audio')),
+            'update' => session.setPreferredRid(sub, 'a'),
+            _ => session.unpublish(pub),
+          };
+          await expectLater(call, throwsA(same(gone)), reason: operation);
+          expect(session.failure, isA<SfuSessionGone>(), reason: operation);
+          expect(h.broker.callsTo('sessions/{id}'), isEmpty, reason: operation);
+        }
+      });
     });
 
     test('queued operations fail once the session is gone', () async {
