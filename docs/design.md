@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release design. Nothing is implemented yet.
+- **Status:** pre-release. The `Signaling` interface and its in-memory implementation exist (§4.4); the rest is design.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -117,7 +117,9 @@ abstract interface class Signaling {
 }
 ```
 
-- **Ship an in-memory implementation** for tests and the example app.
+- `ParticipantState` is `{participantId, sessionId?, tracks: {trackName → {kind, source}}, metadata?}`. Its `toJson`/`fromJson` define the JSON that adapters put into presence payloads; the shape is documented on the class.
+- `participants` replays the current list to new listeners, emits `[]` while not in a room, and never includes the caller's own entry.
+- **Ship an in-memory implementation** for tests and the example app: `InMemorySignaling`, where participants share an `InMemorySignalingHub` (several rooms per hub).
 - **Keep backend adapters out of the core package.** For example, a Supabase Realtime presence adapter would be a separate package, such as `cloudflare_realtime_supabase`, or it lives in the app.
 - The core must not depend on any backend SDK.
 
@@ -271,11 +273,11 @@ room.data.subscribe(remoteParticipant, 'input').listen((msg) { /* msg.fromSessio
 await room.leave();
 ```
 
-- **Style.** partytracks uses Observables deliberately: repair logic (a replaced device or connection) stays inside the library, and consumers just see the new track. **Mirror that with Dart `Stream`s.** Decide early whether to take a dependency on `rxdart`.
+- **Style.** partytracks uses Observables deliberately: repair logic (a replaced device or connection) stays inside the library, and consumers just see the new track. **Mirror that with Dart `Stream`s.** No `rxdart` (§12, question 1): where partytracks needs `BehaviorSubject`-style replay of the latest value, the package uses its internal `StateStream<T>` helper (`lib/src/util/`).
 
 ## 12. Open questions
 
-1. `rxdart`, or plain `Stream`/`StreamController`?
+1. ~~`rxdart`, or plain `Stream`/`StreamController`?~~ **Resolved:** plain `Stream`s, plus an internal `StateStream<T>` helper for replay-latest state. This means fewer dependencies for pub.dev consumers, and the replay-latest semantics we need are small.
 2. Screen share: simulcast or a single layer?
 3. Package split: a core package plus separate adapter packages (Supabase, in-memory), or adapters as examples only?
 4. Minimum Dart/Flutter SDK for pub.dev. The scaffold pins `^3.13.0`; widen it before publishing if `flutter_webrtc` allows.
