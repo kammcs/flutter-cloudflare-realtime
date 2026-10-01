@@ -78,6 +78,8 @@ Then start it so that the other devices can reach it:
 npm start -- --host 0.0.0.0
 ```
 
+If your credentials live in a `.env` at the repository root instead (also gitignored), point the server at it: `npm start -- --host 0.0.0.0 --env-file ../../.env`. Real environment variables, such as `REALTIME_DEV_SERVER=1` set in the shell, take precedence over the file.
+
 It prints a DEV ONLY banner, which settings are set (never their values), the dev token if it generated one, and a **`Server URL`** for each LAN address, such as `http://192.168.1.10:8787`. Pick the one on the Wi-Fi or LAN the other devices use (not a VPN, WSL or VirtualBox adapter). Below, `<SERVER>` means that URL and `<TOKEN>` the dev token.
 
 **Check reachability from every device** before building anything: open `<SERVER>/healthz` in a browser on each device (including the phone). It must show `{"ok":true}`. If it doesn't, see [Firewall](#firewall-and-reachability).
