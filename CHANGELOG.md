@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fixes from the first runs against the real SFU (Windows):
+  - Offers and answers no longer carry stray receive-only audio and video m-lines: native `flutter_webrtc` adds them unless `createOffer`/`createAnswer` get explicit empty constraints.
+  - Negotiated DataChannels open on Windows: the plugin never reports their `open` state, so the package reads it from `getStats()`. Closing a session no longer logs `dataChannelClose() peerConnection is null`.
+  - Unsubscribing or unpublishing the last track of a session no longer fails (`max-bundle configured but session description has no BUNDLE group`): those m-lines are closed with `force` and kept idle.
+  - `setPreferredRid` right after a pull retries while the SFU isn't forwarding the track yet (`SfuSessionOptions.layerUpdateRetryTimeout`, 10 s).
+  - On Windows and Linux, at most 8 ICE server URLs reach `flutter_webrtc` (its desktop plugin overflows a fixed array beyond that).
+
 - Video defaults to VP8 on every platform (was Windows only): the SFU forwards each publisher's codec, so a Windows subscriber must never receive H.264 (flutter-webrtc #982). Opt out with `SfuSessionDefaults.videoCodecPreferences: const []`.
 
 - Repository scaffold and design docs.

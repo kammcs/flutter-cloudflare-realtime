@@ -117,8 +117,11 @@ class FakePeerConnection implements PeerConnection {
   /// Every transceiver, in creation order (including stopped ones).
   final List<FakeTransceiver> transceivers = [];
 
-  /// The last local and remote descriptions set.
-  SessionDescription? localDescription;
+  /// The last local description set, which [localDescription] returns.
+  /// Tests can replace it with real-looking SDP (the fake's own is opaque).
+  SessionDescription? currentLocalDescription;
+
+  /// The last remote description set.
   SessionDescription? remoteDescription;
 
   final Map<String, Object> _failures = {};
@@ -280,7 +283,7 @@ class FakePeerConnection implements PeerConnection {
       _pendingRemote.clear();
       _signalingState = _stable;
     }
-    localDescription = description;
+    currentLocalDescription = description;
   }
 
   @override
@@ -329,6 +332,10 @@ class FakePeerConnection implements PeerConnection {
       });
     }
   }
+
+  @override
+  Future<SessionDescription?> localDescription() async =>
+      currentLocalDescription;
 
   @override
   Future<PeerTransceiver?> transceiverForMid(

@@ -13,9 +13,68 @@ import 'publish_options.dart';
 /// Internal: not exported from the package barrel.
 Future<PeerConnection> createFlutterWebrtcPeerConnection(
   Map<String, dynamic> configuration,
-) async => FlutterWebrtcPeerConnection(
-  await webrtc.createPeerConnection(configuration),
-);
+) async {
+  final iceServers = configuration['iceServers'];
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.windows ||
+          defaultTargetPlatform == TargetPlatform.linux) &&
+      iceServers is List<Map<String, dynamic>>) {
+    configuration = {
+      ...configuration,
+      'iceServers': limitIceServers(iceServers, maxDesktopIceServers),
+    };
+  }
+  return FlutterWebrtcPeerConnection(
+    await webrtc.createPeerConnection(configuration),
+  );
+}
+
+/// The most `iceServers` entries the `flutter_webrtc` desktop plugin
+/// (Windows, Linux) accepts.
+///
+/// Its C++ layer copies the entries into a fixed array of 8
+/// (`kMaxIceServerSize`) without a bounds check, so a ninth entry corrupts
+/// memory. Each entry holds one URL (see `IceServer.toRtcIceServers`), and
+/// Cloudflare's TURN service returns up to 9 URLs.
+const maxDesktopIceServers = 8;
+
+/// At most [max] of [servers], in their order.
+///
+/// Drops entries on port 53 first (browsers block that port, and
+/// Cloudflare's docs say those URLs time out there), then duplicate URLs,
+/// then entries from the end.
+///
+/// Internal: not exported from the package barrel.
+List<Map<String, dynamic>> limitIceServers(
+  List<Map<String, dynamic>> servers,
+  int max,
+) {
+  if (servers.length <= max) return servers;
+  final seen = <String>{};
+  final kept = <Map<String, dynamic>>[];
+  for (final server in servers) {
+    final urls = server['urls'];
+    final key = '$urls|${server['username']}';
+    if (urls is String && _port53.hasMatch(urls)) continue;
+    if (!seen.add(key)) continue;
+    kept.add(server);
+  }
+  return kept.length <= max ? kept : kept.sublist(0, max);
+}
+
+final _port53 = RegExp(r'^(?:stuns?|turns?):[^?]*:53(?:\?|$)');
+
+/// Explicit, empty offer/answer constraints.
+///
+/// Without an argument, native `flutter_webrtc` (Android, Darwin, Windows,
+/// Linux) sends `{mandatory: {OfferToReceiveAudio: true,
+/// OfferToReceiveVideo: true}}`. Under Unified Plan, libwebrtc then adds a
+/// `recvonly` audio and a `recvonly` video transceiver to the first offer
+/// that lacks them. The SFU answers those undeclared m-lines, which leaves
+/// stray transceivers on every session and m-lines that no track request
+/// names. Browsers add nothing for `createOffer()`, so an empty map matches
+/// the web (and partytracks). See `docs/design.md` §4.2.
+const Map<String, dynamic> _noReceiveConstraints = <String, dynamic>{};
 
 /// [PeerConnection] over a `flutter_webrtc` [webrtc.RTCPeerConnection].
 ///
@@ -26,6 +85,8 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
     _pc
       ..onConnectionState = _connectionStates.add
       ..onIceConnectionState = _iceStates.add
+      // The SFU opens `server-events` in-band; keep it to close on [close].
+      ..onDataChannel = _dataChannels.add
       ..onTrack = (_) => _trackEvents.add(null);
   }
 
@@ -34,6 +95,7 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
       StreamController<webrtc.RTCPeerConnectionState>.broadcast();
   final _iceStates = StreamController<webrtc.RTCIceConnectionState>.broadcast();
   final _trackEvents = StreamController<void>.broadcast();
+  final List<webrtc.RTCDataChannel> _dataChannels = [];
   bool _closed = false;
 
   @override
@@ -98,11 +160,11 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
 
   @override
   Future<SessionDescription> createOffer() async =>
-      _fromRtc(await _pc.createOffer());
+      _fromRtc(await _pc.createOffer(_noReceiveConstraints));
 
   @override
   Future<SessionDescription> createAnswer() async =>
-      _fromRtc(await _pc.createAnswer());
+      _fromRtc(await _pc.createAnswer(_noReceiveConstraints));
 
   @override
   Future<void> setLocalDescription(SessionDescription description) =>
@@ -111,6 +173,14 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   @override
   Future<void> setRemoteDescription(SessionDescription description) =>
       _pc.setRemoteDescription(_toRtc(description));
+
+  @override
+  Future<SessionDescription?> localDescription() async {
+    final description = await _pc.getLocalDescription();
+    final sdp = description?.sdp;
+    if (description == null || sdp == null || sdp.isEmpty) return null;
+    return _fromRtc(description);
+  }
 
   @override
   Future<PeerTransceiver?> transceiverForMid(
@@ -161,7 +231,40 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
       ..binaryType = 'binary';
     if (maxRetransmits != null) init.maxRetransmits = maxRetransmits;
     final channel = await _pc.createDataChannel(label, init);
-    return _FlutterWebrtcDataChannel(channel, id: id, label: label);
+    _dataChannels
+      ..removeWhere(
+        (c) => c.state == webrtc.RTCDataChannelState.RTCDataChannelClosed,
+      )
+      ..add(channel);
+    return FlutterWebrtcDataChannel(
+      channel,
+      id: id,
+      label: label,
+      // The browser fires `open` reliably; native platforms can miss it.
+      isOpenInStats: kIsWeb ? null : () => _isDataChannelOpenInStats(id),
+    );
+  }
+
+  /// Whether the connection's stats report the DataChannel with SCTP stream
+  /// [id] as open.
+  ///
+  /// On Windows, `flutter_webrtc` never delivers the `open` state of a
+  /// negotiated channel, so the Dart channel's state stays null although the
+  /// channel works. (Its plugin registers the observer only after libwebrtc
+  /// has created the channel, which likely misses an open during creation.)
+  /// `getStats()` still reports the channel's real state as a
+  /// `data-channel` report. See `docs/design.md` §9.
+  Future<bool> _isDataChannelOpenInStats(int id) async {
+    if (_closed) return false;
+    for (final report in await _pc.getStats()) {
+      if (report.type != 'data-channel') continue;
+      final values = report.values;
+      if ('${values['dataChannelIdentifier']}' == '$id' &&
+          values['state'] == 'open') {
+        return true;
+      }
+    }
+    return false;
   }
 
   @override
@@ -169,6 +272,18 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
     if (_closed) return;
     _closed = true;
     try {
+      // Close the DataChannels while the platform still knows the
+      // connection: after `close()`, the Windows plugin forgets it, and
+      // `dispose()` then fails to close them (`dataChannelClose()
+      // peerConnection is null`), leaking their native observers.
+      for (final channel in _dataChannels) {
+        try {
+          await channel.close();
+        } catch (_) {
+          // Already closed, or unknown to the platform.
+        }
+      }
+      _dataChannels.clear();
       await _pc.close();
     } finally {
       await _pc.dispose();
@@ -313,15 +428,40 @@ class _NegotiatedDataChannelInit extends webrtc.RTCDataChannelInit {
   };
 }
 
-class _FlutterWebrtcDataChannel implements PeerDataChannel {
-  _FlutterWebrtcDataChannel(this._dc, {required this.id, required this.label}) {
+/// [PeerDataChannel] over a `flutter_webrtc` [webrtc.RTCDataChannel].
+///
+/// With `isOpenInStats` (native platforms), it works around a missed `open`
+/// event: while the channel's state is unknown or `connecting`, it asks
+/// `isOpenInStats` with a growing delay (from [probeInterval] to
+/// [maxProbeInterval]) and reports `open` once the stats say so. A state
+/// event from the platform always wins, and stops the probing.
+///
+/// Internal: not exported from the package barrel.
+class FlutterWebrtcDataChannel implements PeerDataChannel {
+  /// Wraps [_dc], the channel with SCTP stream [id] and [label].
+  FlutterWebrtcDataChannel(
+    this._dc, {
+    required this.id,
+    required this.label,
+    Future<bool> Function()? isOpenInStats,
+    this.probeInterval = const Duration(milliseconds: 20),
+    this.maxProbeInterval = const Duration(seconds: 1),
+  }) : _state = _dc.state {
     _dc
       ..onBufferedAmountChange = _onBufferedAmountChange
       ..onBufferedAmountLow = _onBufferedAmountLow;
+    _platformStates = _dc.stateChangeStream.listen(_setState);
+    if (isOpenInStats != null && _isUnsettled) {
+      unawaited(_probe(isOpenInStats));
+    }
   }
 
   final webrtc.RTCDataChannel _dc;
+  final _states = StreamController<webrtc.RTCDataChannelState>.broadcast();
+  late final StreamSubscription<webrtc.RTCDataChannelState> _platformStates;
   final _low = StreamController<int>.broadcast();
+  webrtc.RTCDataChannelState? _state;
+  bool _closed = false;
   int _threshold = 0;
   int _lastAmount = 0;
 
@@ -331,14 +471,51 @@ class _FlutterWebrtcDataChannel implements PeerDataChannel {
   @override
   final String label;
 
-  @override
-  webrtc.RTCDataChannelState? get state => _dc.state;
+  /// The first delay between two stats probes.
+  final Duration probeInterval;
+
+  /// The longest delay between two stats probes.
+  final Duration maxProbeInterval;
 
   @override
-  Stream<webrtc.RTCDataChannelState> get onStateChange => _dc.stateChangeStream;
+  webrtc.RTCDataChannelState? get state => _state;
+
+  @override
+  Stream<webrtc.RTCDataChannelState> get onStateChange => _states.stream;
 
   @override
   Stream<webrtc.RTCDataChannelMessage> get onMessage => _dc.messageStream;
+
+  bool get _isUnsettled =>
+      _state == null ||
+      _state == webrtc.RTCDataChannelState.RTCDataChannelConnecting;
+
+  void _setState(webrtc.RTCDataChannelState state) {
+    if (_state == state) return;
+    _state = state;
+    if (!_states.isClosed) _states.add(state);
+  }
+
+  Future<void> _probe(Future<bool> Function() isOpenInStats) async {
+    var delay = probeInterval;
+    while (true) {
+      await Future<void>.delayed(delay);
+      if (_closed || !_isUnsettled) return;
+      final bool open;
+      try {
+        open = await isOpenInStats();
+      } catch (_) {
+        return; // The connection is gone.
+      }
+      if (_closed || !_isUnsettled) return;
+      if (open) {
+        _setState(webrtc.RTCDataChannelState.RTCDataChannelOpen);
+        return;
+      }
+      final next = delay * 2;
+      delay = next > maxProbeInterval ? maxProbeInterval : next;
+    }
+  }
 
   @override
   int get bufferedAmount => _dc.bufferedAmount ?? 0;
@@ -372,8 +549,11 @@ class _FlutterWebrtcDataChannel implements PeerDataChannel {
 
   @override
   Future<void> close() async {
-    if (_low.isClosed) return;
+    if (_closed) return;
+    _closed = true;
+    await _platformStates.cancel();
     await _low.close();
+    await _states.close();
     await _dc.close();
   }
 }
