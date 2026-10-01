@@ -63,27 +63,26 @@ class VideoPreset {
   String toString() => 'VideoPreset(${width}x$height@$frameRate)';
 }
 
-/// Which way a mobile camera faces.
-enum CameraFacing {
-  /// The front ("selfie") camera.
-  user,
-
-  /// The back camera.
-  environment,
-}
-
 /// Camera capture settings.
 @immutable
 class CameraOptions {
   /// Creates camera settings.
-  const CameraOptions({this.preset = VideoPreset.h720, this.facing});
+  const CameraOptions({
+    this.preset = VideoPreset.h720,
+    this.facing = CameraFacing.user,
+  });
 
   /// The requested resolution and frame rate. Cameras pick the closest mode
   /// they support, so the captured track may differ.
   final VideoPreset preset;
 
-  /// Front or back camera, for mobile. Ignored once a specific device is
-  /// selected.
+  /// Which way the camera should face: the front camera by default, as
+  /// calls want, on every platform.
+  ///
+  /// Cameras facing this way are tried first ([CameraSource.devicePriority]),
+  /// unless a preferred device is set. Desktop cameras don't report which
+  /// way they face, so it changes nothing there. `null` keeps the
+  /// platform's order (on Android, the back camera comes first).
   final CameraFacing? facing;
 
   /// Returns a copy with the given fields replaced.

@@ -163,7 +163,7 @@ Each device publishes its microphone and camera as soon as the call screen opens
 What you'll use, from [`example/lib/call_page.dart`](../example/lib/call_page.dart):
 
 - **App bar** (left to right): the room ID; a **status chip** `media: <state> · signaling: <state>` (green cloud when both are `connected`); the **layout toggle** (tooltip *Stage layout* / *Gallery layout*); **Simulate network drop (debug)** (Wi-Fi-off icon); **Leave**.
-- **Bottom bar:** microphone, camera, **Share screen** / **Stop sharing**, and the red **Leave call**.
+- **Bottom bar:** microphone, camera, **Switch camera** (while the camera is on: front ↔ back on a phone, the next camera on a desktop), **Share screen** / **Stop sharing**, and the red **Leave call**.
 - **Tiles:** yours (labelled *(you)*), then each remote camera and screen share. A green outline means speaking; a star marks the dominant speaker.
 - **Layer overlay** (top right of every remote video tile): `rid <rid> (<mode>) · <width>×<height> <fps>fps`, for example `rid b (auto) · 640×360 30fps`.
   - `rid` is the simulcast layer this device asks the SFU for: `a` = full (1280×720 for the default camera), `b` = half (640×360), `c` = quarter (320×180).
@@ -184,7 +184,7 @@ What you'll use, from [`example/lib/call_page.dart`](../example/lib/call_page.da
 2. Within about 5 s, each device shows *\<other\> joined.* and a tile with the other's camera. The status chip reads `media: connected · signaling: connected` on both.
 3. **Video:** wave at each camera; the other side sees it with less than about a second of delay.
 4. **Audio:** speak on one device; the other hears it, and the speaker's tile gets a green outline. Use headphones on at least one side, or keep the devices in separate rooms, to avoid echo.
-5. **Mute:** mute the microphone on one side; the other side's tile shows the crossed-out microphone and hears nothing. Unmute. Turn the camera off and on; the other side sees the placeholder, then the video again.
+5. **Mute:** mute the microphone on one side; the other side's tile shows the crossed-out microphone and hears nothing. Unmute. Turn the camera off and on; the other side sees the placeholder, then the video again. Press **Switch camera** on the phone; the other side sees the back camera within a second, and the phone's self-view stops being mirrored. Press it again to go back.
 6. **Screen share** (Windows and macOS only; mobile screen share isn't part of the checkpoint): press **Share screen**, pick a screen, keep *Text* selected. The other side's stage layout puts the share on the stage, fitted inside the tile (`contain`), with text readable at full size. Press **Stop sharing**; the share disappears on the other side. On macOS, see [Screen Recording](#macos-permissions) if the share is empty.
 7. Press **Leave call** on one device; the other shows *\<name\> left.* and the tile disappears.
 
@@ -277,11 +277,12 @@ The checkpoint passes when every applicable cell passes.
 
 ## 7. Integration tests against the dev server
 
-The example has three integration tests in [`example/integration_test/`](../example/integration_test/), which run against a real broker:
+The example has these integration tests in [`example/integration_test/`](../example/integration_test/), which run against a real broker:
 
 - `sfu_loopback_test.dart`: publishes a camera (or microphone) track on one SFU session and pulls it on another, switching the pulled layer.
 - `datachannel_echo_test.dart`: a DataChannel echoed both ways.
 - `reconnect_test.dart`: two rooms in one process; the publisher's session is dropped and replaced, then the subscriber's, and the track must arrive again each time (criterion 3, automated).
+- `camera_switch_test.dart`: two rooms in one process; the publisher switches its camera twice during the call (`switchCamera()`), and the subscriber must keep decoding frames each time. It also checks that a phone opens its front camera and that the capture is near the requested preset. With one camera, it only checks the call.
 - `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 
 They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](../example/integration_test/broker_settings.dart)), as `--dart-define`s or, on desktop, environment variables:

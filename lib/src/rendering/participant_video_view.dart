@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaStream;
 
 import '../media/local_media_source.dart';
+import '../media/media_types.dart' show CameraFacing;
 import '../quality/layer_selection_controller.dart';
 import '../quality/simulcast_layer_reporter.dart';
 import '../room/room.dart';
@@ -85,7 +86,8 @@ class ParticipantVideoView extends StatefulWidget {
   final VideoViewFit fit;
 
   /// Whether to mirror the video horizontally. Defaults to `true` for a
-  /// local camera (a self-view reads like a mirror) and `false` otherwise.
+  /// local camera (a self-view reads like a mirror), except a back camera
+  /// ([CameraFacing.environment]), and `false` otherwise.
   final bool? mirror;
 
   /// Shown while there is no video: not subscribed yet, muted, or not
@@ -272,8 +274,16 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     }
   }
 
-  bool get _mirror =>
-      widget.mirror ?? widget.localSource?.source == TrackSource.camera;
+  // A self-view reads like a mirror, except from a back camera, where text
+  // in front of it would show reversed.
+  bool get _mirror {
+    final explicit = widget.mirror;
+    if (explicit != null) return explicit;
+    final local = widget.localSource;
+    if (local == null || local.source != TrackSource.camera) return false;
+    final device = local.currentTrack?.device;
+    return device?.facing != CameraFacing.environment;
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -158,6 +158,30 @@ class LocalParticipant {
     );
   }
 
+  /// Switches the published [camera] to another camera, with one call on
+  /// every platform: front/back on phones, the next camera elsewhere
+  /// ([CameraSource.switchCamera]). The track keeps its name and the
+  /// publication keeps sending, so other participants see the new camera
+  /// without pulling again.
+  ///
+  /// Completes with the camera now in use. Throws a [StateError] when no
+  /// camera is published, or when it was published from an app-owned
+  /// source that isn't a [CameraSource] (switch that source yourself).
+  Future<MediaDevice?> switchCamera() {
+    _room._checkNotLeft();
+    final source = camera?.mediaSource;
+    if (source == null) {
+      throw StateError('No camera is published.');
+    }
+    if (source is! CameraSource) {
+      throw StateError(
+        'The camera was published from a ${source.runtimeType}, not a '
+        'CameraSource.',
+      );
+    }
+    return source.switchCamera();
+  }
+
   /// Publishes a microphone, captured with [options] (from [device] if
   /// given).
   ///

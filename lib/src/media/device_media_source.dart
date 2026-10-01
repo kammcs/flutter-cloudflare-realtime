@@ -93,7 +93,13 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     currentDevices,
     preferred: _preferred.value,
     deprioritized: _deprioritized,
+    facing: preferredFacing,
   );
+
+  /// Which way a camera should face, for [devicePriority]; `null` for
+  /// sources that aren't cameras.
+  @protected
+  CameraFacing? get preferredFacing => null;
 
   /// The user's preferred device, or `null` for "no preference". Replays the
   /// current value.
@@ -374,7 +380,12 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
 /// camera.track.listen((t) => renderer.srcObject = t?.stream);
 /// await camera.enable(); // preview
 /// await camera.startBroadcasting(); // send (roadmap M2)
+/// await camera.switchCamera(); // front/back on phones, next camera elsewhere
 /// ```
+///
+/// It behaves the same on every platform: it opens the front camera by
+/// default ([CameraOptions.facing]), at the preset's resolution, and
+/// [switchCamera] moves to another camera.
 ///
 /// Defaults to [MutePolicy.releaseCapture]: muting turns the camera light
 /// off.
@@ -402,6 +413,53 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
     MediaDevice? device,
     MediaPlatform platform,
   ) => cameraConstraints(options, platform: platform, device: device);
+
+  @override
+  CameraFacing? get preferredFacing => options.facing;
+
+  /// Which way the camera in use faces ([currentActiveDevice]), when known.
+  /// `null` on desktops, whose cameras don't say.
+  CameraFacing? get currentFacing => currentActiveDevice?.facing;
+
+  /// Switches to another camera, with one call on every platform.
+  ///
+  /// - On phones and tablets, it flips between the front and back cameras.
+  /// - Elsewhere (desktops, or a camera that doesn't say which way it
+  ///   faces), it moves to the next camera in [currentDevices], wrapping
+  ///   around.
+  ///
+  /// The choice becomes the [currentPreferredDevice]. If the source is
+  /// capturing, it captures from the new camera before releasing the old
+  /// one, so [track] emits the new track with no gap, and a publication
+  /// keeps sending. With a single camera it does nothing.
+  ///
+  /// In browsers before the user grants camera access, devices have no IDs
+  /// yet; it then flips [CameraOptions.facing] instead.
+  ///
+  /// Completes with the camera now in use (or the one capture will use),
+  /// or `null` when there is none.
+  Future<MediaDevice?> switchCamera() async {
+    _checkNotDisposed();
+    await deviceList.ready;
+    final next = nextCamera(
+      currentDevices,
+      current: currentActiveDevice,
+      deprioritized: _deprioritized,
+    );
+    if (next != null) {
+      await setPreferredDevice(next);
+    } else if (currentDevices.isNotEmpty &&
+        DeviceMediaSource._usable(currentDevices).isEmpty) {
+      await setOptions(
+        options.copyWith(
+          facing: options.facing == CameraFacing.environment
+              ? CameraFacing.user
+              : CameraFacing.environment,
+        ),
+      );
+    }
+    return currentActiveDevice;
+  }
 }
 
 /// A microphone, with echo cancellation, noise suppression and automatic

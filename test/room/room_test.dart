@@ -609,6 +609,34 @@ void main() {
       },
     );
 
+    test(
+      'switchCamera moves the published camera, keeping the track',
+      () async {
+        h.media.setDevices([cam1, cam2, mic1]);
+        final cam = await alice.localParticipant.publishCamera();
+        final transceiver = h.pcOf(alice).transceivers.single;
+        expect(cam.mediaSource.currentTrack!.device, cam1);
+
+        expect(await alice.localParticipant.switchCamera(), cam2);
+        await _settle();
+        expect(cam.mediaSource.currentTrack!.device, cam2);
+        expect(
+          transceiver.sentTrack,
+          same(cam.mediaSource.currentTrack!.track),
+        );
+        expect(alice.localParticipant.camera, cam);
+        expect(
+          h.callsOf(alice, 'tracks/new'),
+          hasLength(1),
+          reason: 'switching never renegotiates',
+        );
+      },
+    );
+
+    test('switchCamera without a published camera throws', () {
+      expect(alice.localParticipant.switchCamera, throwsStateError);
+    });
+
     test('publishes muted without capturing', () async {
       final mic = await alice.localParticipant.publishMicrophone(muted: true);
       expect(h.media.userMediaCalls, isEmpty);

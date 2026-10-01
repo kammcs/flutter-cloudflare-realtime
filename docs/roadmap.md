@@ -28,6 +28,23 @@ If any fails, that app switches to LiveKit behind its own `VideoProvider` interf
 
 **So prioritize M1–M4 plus a basic M5 and a desktop-only M6 path over polish.** The example app should be able to demonstrate all three criteria. **[checkpoint.md](checkpoint.md) is the runbook** for demonstrating them with the example app and the dev server.
 
+## Same behaviour on every platform
+
+A goal for the whole package ([design.md §2](design.md#2-goals-and-non-goals)): the basic camera and audio calls do the same thing on every OS, so apps don't branch on the platform.
+
+- **Camera (done, verified on Android and macOS):**
+  - the front camera opens by default (`CameraOptions.facing`);
+  - the preset's resolution is honoured (it wasn't on Darwin or Android);
+  - `switchCamera()` flips front ↔ back on phones and cycles through cameras elsewhere, without renegotiating;
+  - the self-view is mirrored except for a back camera.
+  
+  `example/integration_test/camera_switch_test.dart` checks this on each device.
+- **Audio (to check on devices):** the API is already one call per operation; what's left is making sure each platform does the same thing with it.
+  - **Speaker routing on phones.** Android's `flutter_webrtc` prefers Bluetooth, then wired, then the speakerphone, then the earpiece. iOS uses the speaker in video-chat mode but the earpiece in voice-chat mode (no video). A call should start on the speaker (or a headset) on both.
+  - **Choosing the speaker.** `Room.setAudioOutputDevice` lists earpiece/speaker/Bluetooth/wired on Android, but on iOS it can only switch between the speaker and the current route. Decide on one model, for example a `speakerphone` switch plus the device list.
+  - **Choosing the microphone on phones.** `MicrophoneSource` selects a device through `getUserMedia`'s `sourceId`; on Android and iOS the input follows the audio route (`Helper.selectAudioInput`) instead. Check that choosing a headset microphone works.
+- **Still to do for the camera:** iOS (the same plugin code as macOS, not yet run) and the web (labels decide which way a camera faces there).
+
 ## Testing
 
 - **Unit tests:**

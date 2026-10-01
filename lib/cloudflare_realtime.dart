@@ -32,12 +32,7 @@ export 'src/data/data.dart';
 
 // Media: capture, devices and screen share (design.md §4.5, §10).
 export 'src/media/constraints.dart'
-    show
-        CameraFacing,
-        CameraOptions,
-        MicrophoneOptions,
-        ScreenShareOptions,
-        VideoPreset;
+    show CameraOptions, MicrophoneOptions, ScreenShareOptions, VideoPreset;
 export 'src/media/device_media_source.dart'
     show CameraSource, DeviceMediaSource, MicrophoneSource;
 export 'src/media/flutter_webrtc_media_backend.dart'
@@ -56,6 +51,7 @@ export 'src/media/media_errors.dart'
         ScreenSourcesException;
 export 'src/media/media_types.dart'
     show
+        CameraFacing,
         CapturedTrack,
         MediaDevice,
         MediaDeviceKind,

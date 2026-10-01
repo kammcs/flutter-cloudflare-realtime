@@ -383,6 +383,139 @@ void main() {
     });
   });
 
+  group('camera facing and switchCamera', () {
+    const back = MediaDevice(
+      deviceId: '0',
+      kind: MediaDeviceKind.videoInput,
+      label: 'Camera 0, Facing back',
+      facing: CameraFacing.environment,
+    );
+    const front = MediaDevice(
+      deviceId: '1',
+      kind: MediaDeviceKind.videoInput,
+      label: 'Camera 1, Facing front',
+      facing: CameraFacing.user,
+    );
+
+    setUp(() {
+      // Android lists the back camera first.
+      backend = FakeMediaBackend(
+        platform: MediaPlatform.android,
+        devices: [back, front, mic1],
+      );
+    });
+
+    test('opens the front camera by default', () async {
+      final camera = CameraSource(backend: backend);
+      await camera.enable();
+      expect(camera.currentTrack!.device, front);
+      expect(camera.currentFacing, CameraFacing.user);
+      await camera.dispose();
+    });
+
+    test('CameraOptions.facing picks the back camera; null keeps the '
+        'platform order', () async {
+      final camera = CameraSource(
+        backend: backend,
+        options: const CameraOptions(facing: CameraFacing.environment),
+      );
+      await camera.enable();
+      expect(camera.currentTrack!.device, back);
+      await camera.dispose();
+
+      final unordered = CameraSource(
+        backend: backend,
+        options: const CameraOptions(facing: null),
+      );
+      await unordered.enable();
+      expect(unordered.currentTrack!.device, back);
+      await unordered.dispose();
+    });
+
+    test('changing the facing switches a running capture', () async {
+      final camera = CameraSource(backend: backend);
+      await camera.enable();
+      await camera.setOptions(
+        camera.options.copyWith(facing: CameraFacing.environment),
+      );
+      expect(camera.currentTrack!.device, back);
+      await camera.dispose();
+    });
+
+    test('switchCamera flips front and back while capturing', () async {
+      final camera = CameraSource(backend: backend);
+      await camera.startBroadcasting();
+      final first = camera.currentTrack!;
+
+      expect(await camera.switchCamera(), back);
+      expect(camera.currentTrack!.device, back);
+      expect(camera.currentBroadcastTrack, camera.currentTrack);
+      expect(camera.currentPreferredDevice, back);
+      expect((first.track as FakeTrack).stopped, isTrue);
+
+      expect(await camera.switchCamera(), front);
+      expect(camera.currentTrack!.device, front);
+      await camera.dispose();
+    });
+
+    test('switchCamera while disabled only changes the choice', () async {
+      final camera = CameraSource(backend: backend);
+      expect(await camera.switchCamera(), back);
+      expect(backend.userMediaCalls, isEmpty);
+      await camera.enable();
+      expect(camera.currentTrack!.device, back);
+      await camera.dispose();
+    });
+
+    test('switchCamera cycles through desktop cameras', () async {
+      backend = FakeMediaBackend(devices: [cam1, cam2, mic1]);
+      final camera = CameraSource(backend: backend);
+      await camera.enable();
+      expect(camera.currentFacing, isNull);
+      expect(await camera.switchCamera(), cam2);
+      expect(camera.currentTrack!.device, cam2);
+      expect(await camera.switchCamera(), cam1);
+      expect(camera.currentTrack!.device, cam1);
+      await camera.dispose();
+    });
+
+    test('switchCamera does nothing with one camera', () async {
+      backend = FakeMediaBackend(devices: [cam1]);
+      final camera = CameraSource(backend: backend);
+      await camera.enable();
+      expect(await camera.switchCamera(), cam1);
+      expect(backend.userMediaCalls, hasLength(1));
+      expect(camera.currentPreferredDevice, isNull);
+      await camera.dispose();
+    });
+
+    test(
+      'switchCamera before permission (web) flips the facing mode',
+      () async {
+        backend = FakeMediaBackend(
+          platform: MediaPlatform.web,
+          devices: const [
+            MediaDevice(deviceId: '', kind: MediaDeviceKind.videoInput),
+          ],
+        );
+        final camera = CameraSource(backend: backend);
+        await camera.enable();
+        expect(
+          (backend.userMediaCalls.last['video'] as Map)['facingMode'],
+          'user',
+        );
+
+        await camera.switchCamera();
+        expect(camera.options.facing, CameraFacing.environment);
+        expect(
+          (backend.userMediaCalls.last['video'] as Map)['facingMode'],
+          'environment',
+        );
+        await camera.dispose();
+      },
+    );
+  });
+
   group('dispose', () {
     test('stops the track and completes every stream', () async {
       final camera = CameraSource(backend: backend);

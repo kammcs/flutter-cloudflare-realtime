@@ -5,6 +5,15 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+/// Which way a camera faces.
+enum CameraFacing {
+  /// Toward the user: a phone's front ("selfie") camera.
+  user,
+
+  /// Away from the user: a phone's back camera.
+  environment,
+}
+
 /// The platform the media layer runs on.
 ///
 /// Capture works differently per platform: device selection constraints,
@@ -76,6 +85,7 @@ class MediaDevice {
     required this.kind,
     this.label = '',
     this.groupId,
+    this.facing,
   });
 
   /// The platform's identifier for this device.
@@ -94,6 +104,12 @@ class MediaDevice {
   /// Devices with the same group ID belong to the same physical device.
   final String? groupId;
 
+  /// Which way this camera faces, when known: from the platform on Android
+  /// and iOS, and from the label in browsers ("Front Camera", "camera2 0,
+  /// facing back"). `null` for desktop cameras, which don't say, and for
+  /// microphones and speakers.
+  final CameraFacing? facing;
+
   /// Whether this device is the same physical device as [other].
   ///
   /// Matches on [deviceId], or on a non-empty [label] of the same [kind].
@@ -110,13 +126,16 @@ class MediaDevice {
       other.deviceId == deviceId &&
       other.kind == kind &&
       other.label == label &&
-      other.groupId == groupId;
+      other.groupId == groupId &&
+      other.facing == facing;
 
   @override
-  int get hashCode => Object.hash(deviceId, kind, label, groupId);
+  int get hashCode => Object.hash(deviceId, kind, label, groupId, facing);
 
   @override
-  String toString() => 'MediaDevice(${kind.wireName}, "$label", $deviceId)';
+  String toString() =>
+      'MediaDevice(${kind.wireName}, "$label", $deviceId'
+      '${facing == null ? '' : ', ${facing!.name}'})';
 }
 
 /// A local track captured by a [LocalMediaSource], with the stream it

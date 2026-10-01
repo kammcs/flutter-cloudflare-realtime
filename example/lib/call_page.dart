@@ -206,6 +206,10 @@ class _CallPageState extends State<CallPage> {
     }
   });
 
+  Future<void> _switchCamera() => _run(() async {
+    await _local.switchCamera();
+  });
+
   Future<void> _toggleScreen() => _run(() async {
     final screen = _local.screen;
     if (screen != null) {
@@ -524,6 +528,12 @@ class _CallPageState extends State<CallPage> {
               icon: Icon(cameraOn ? Icons.videocam : Icons.videocam_off),
               onPressed: _busy ? null : _toggleCamera,
             ),
+            if (cameraOn)
+              IconButton.filledTonal(
+                tooltip: 'Switch camera',
+                icon: const Icon(Icons.cameraswitch),
+                onPressed: _busy ? null : _switchCamera,
+              ),
             IconButton.filledTonal(
               tooltip: sharing ? 'Stop sharing' : 'Share screen',
               icon: Icon(

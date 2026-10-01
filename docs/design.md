@@ -27,6 +27,7 @@ The Cloudflare SFU is plain WebRTC media forwarding, controlled by an HTTPS sess
 - **Automatic reconnection**, including network changes and mobile background/foreground.
 - Screen share on every platform `flutter_webrtc` supports.
 - DataChannels (reliable and unreliable) for app messages, such as reactions or remote-control input.
+- **The same call behaves the same on every platform.** The basic camera and audio operations are one API with one behaviour: which camera opens (the front one), at what resolution, switching cameras, mirroring the self-view, muting, and choosing the microphone and speaker. The package absorbs `flutter_webrtc`'s per-platform differences (§4.5) so apps don't branch on the OS. Where a platform can't do something, the API says so (for example `canSelectAudioOutput`) instead of behaving differently.
 - The Cloudflare **App Secret never reaches the client.** Every SFU API call goes through a server-side broker (§5).
 
 **Non-goals** (the app's job, or later work):
@@ -190,7 +191,7 @@ await session.close();
   - **Disposing the wrapper is safe for the remote track** (checked in the `flutter_webrtc` 1.6.2+hotfix.3 sources, M4). `streamDispose` never stops or disposes a track: Android removes the tracks from the Java stream and drops their IDs from `localTracks` and the capturer map (a pulled track is in neither); Darwin drops the stream from `localStreams`; Windows removes the tracks from the stream and erases their IDs from `local_tracks_`. The receiver keeps the track alive, so a later re-pull or re-render works. On the web, `dispose()` does nothing.
   - **Don't remove the track first.** `mediaStreamRemoveTrack` looks the track up among local tracks only on Android and Darwin, so it fails for a pulled track (Darwin even answers the call twice). Unwrapping therefore only calls `dispose()`; a unit test pins that.
   - **One Darwin side effect.** `streamDispose` also detaches the first renderer showing each of the stream's video track IDs. A new pull has a new receiver and so a new track ID, but if a pulled track ever reappears under a new Dart object with the same ID, the room keeps the existing wrapper instead of disposing it, so the renderer isn't blanked.
-- **`ParticipantVideoView`**: `.remote(publication, subscribe: true)` or `.local(mediaSource)`, with `fit` (`VideoViewFit.cover`/`contain`), `mirror` (default: local cameras), a `placeholder` (shown while not pulled, muted or not capturing), and `filterQuality`. Native calls sit behind `VideoRenderer` (`FlutterWebrtcVideoRenderer` by default; `rendererFactory` or the static `defaultRendererFactory` swap in a fake for widget tests), and the renderer is created only once there is video. **Layer selection** (M4): a remote video view wraps itself in `SimulcastLayerReporter` keyed by `RemoteTrackPublication.id` (`participantId/trackName`, stable across the publisher's sessions) and reports to `Room.layerReporter` by default (§6.1), with `visible`. `automaticLayers: false` opts out; `layerReporter` reports elsewhere.
+- **`ParticipantVideoView`**: `.remote(publication, subscribe: true)` or `.local(mediaSource)`, with `fit` (`VideoViewFit.cover`/`contain`), `mirror` (default: local cameras, except a back camera, where text in front of it would read reversed), a `placeholder` (shown while not pulled, muted or not capturing), and `filterQuality`. Native calls sit behind `VideoRenderer` (`FlutterWebrtcVideoRenderer` by default; `rendererFactory` or the static `defaultRendererFactory` swap in a fake for widget tests), and the renderer is created only once there is video. **Layer selection** (M4): a remote video view wraps itself in `SimulcastLayerReporter` keyed by `RemoteTrackPublication.id` (`participantId/trackName`, stable across the publisher's sessions) and reports to `Room.layerReporter` by default (§6.1), with `visible`. `automaticLayers: false` opts out; `layerReporter` reports elsewhere.
 - **Connection state** (`RoomConnectionState`), from the session: `initial` (nothing negotiated yet) and `connected` → `connected`; `connecting` → `connecting`; `disconnected` → `reconnecting`. A failure emits `RoomSessionFailedEvent` (`Room.failure`) and starts a re-session (§8): `reconnecting` until the new peer connection is connected (or nothing is negotiated on it; §8.1 step 6), then `connected`, or, when it gives up, `disconnected`. With `ReconnectOptions.enabled: false` a failure goes straight to `disconnected`. The room stays in signaling either way, so `Room.reconnect()` can recover in place.
 - **`leave()`**: stops listening, leaves signaling (so others stop pulling), unpublishes every local track in one `tracks/close`, closes the session, disposes the sources and device list the Room created, releases remote wrappers, disposes the broker client, ends `disconnected` and completes its streams. Idempotent; failures along the way are ignored.
 - **Events** (`Room.events`, sealed `RoomEvent`): participant joined/left/updated, track published/unpublished/muted/subscribed/subscription-failed, local track published/unpublished (with a screen share's `endReason`), local screen share stalled (M6), connection-state changed, session failed, reconnecting/reconnected/reconnect-failed (§8), and non-fatal `RoomErrorEvent`s.
@@ -236,9 +237,10 @@ abstract interface class Signaling {
 - **`MediaDeviceList`** holds cameras, microphones and audio outputs.
   - It enumerates once, then again on every `devicechange`, and emits only real changes. This is partytracks' `devices$`.
   - Camera and microphone sources can share one list.
-  - Choosing the audio output device isn't wrapped yet. Apps can call `Helper.selectAudioOutput`.
+  - Each camera carries **`MediaDevice.facing`** (`CameraFacing.user`/`environment`) where the platform says: the native plugins report it (`front`/`back`; a Mac's built-in camera is `unspecified`), and in browsers the label decides ("Front Camera", "camera2 1, facing front"). Desktop cameras have none.
+  - The speaker is chosen with `Room.setAudioOutputDevice` (§4.3).
 - **`CameraSource` and `MicrophoneSource`** (both `DeviceMediaSource`) handle device selection:
-  - A **preferred device** sorts first. The priority order is: preferred, then the rest, then virtual devices and the "iPhone Microphone", then devices that recently failed.
+  - A **preferred device** sorts first. The priority order is: preferred, then the rest, then virtual devices and the "iPhone Microphone", then devices that recently failed. Within each group, cameras facing `CameraOptions.facing` come first, then cameras that don't say, then the others, so a phone opens its front camera whatever order the platform lists it in (Android lists the back camera first).
   - **Capture tries devices in that order** until one yields a track. A permission error stops the search at once (`MediaPermissionDeniedException`). If every device fails, the source reports `DevicesExhaustedException` and turns off.
   - **Fallback:** when the active device is unplugged (a device-list change, or the track's `onEnded` on web), the source captures from the next device.
   - **Return:** when the preferred device comes back, the source switches back to it.
@@ -248,9 +250,10 @@ abstract interface class Signaling {
     - the options changed, or
     - the track ended.
   - **Deviation from partytracks:** it persists the preference and the failed-device list in `localStorage`. Here the app persists the preference (`currentPreferredDevice` / the `preferredDevice:` argument). A failed device is tried last only until it is unplugged or chosen again.
-  - Consumers never re-subscribe. `track` emits the replacement track. When switching to a different device, the new track is captured before the old one is stopped, so there's no `null` gap.
+  - Consumers never re-subscribe. `track` emits the replacement track. When switching to a different device, the new track is captured before the old one is stopped, so there's no `null` gap. Phones allow this too: on a Pixel 10, front ↔ back took 0.4–0.6 s with both open briefly.
+  - **`CameraSource.switchCamera()`** (and `LocalParticipant.switchCamera()` for the published camera) is one call on every platform: it flips front ↔ back where the cameras say which way they face, and otherwise moves to the next camera in priority order (so virtual cameras come last), wrapping around. The choice becomes the preferred device, so an app can persist it. With one camera it does nothing. In a browser before permission, devices have no IDs, so it flips `CameraOptions.facing` (the `facingMode` constraint) instead. A publication keeps its track name and sender: the subscriber sees the new camera without pulling again, and nothing is renegotiated.
   - **Options:**
-    - Camera: `VideoPreset` (`h1080`, `h720`, `h540`, `h360`, `h180`; target width, height and frame rate, which cameras match as closely as they can) and facing mode. `h720` scaled by ½ and ¼ gives `h360` and `h180`, which are the simulcast layers in §6.
+    - Camera: `VideoPreset` (`h1080`, `h720`, `h540`, `h360`, `h180`; target width, height and frame rate, which cameras match as closely as they can) and `facing`, **`CameraFacing.user` by default** (`null` keeps the platform's order). `h720` scaled by ½ and ¼ gives `h360` and `h180`, which are the simulcast layers in §6.
     - Microphone: echo cancellation, noise suppression and AGC, all on by default.
     - `setOptions` recaptures.
 - **The mute model.** `LocalMediaSource` has two switches, as in partytracks:
@@ -269,6 +272,7 @@ abstract interface class Signaling {
     - Android and Darwin read `deviceId` as a plain string.
     - So native platforms get `optional.sourceId`, and the web gets `deviceId.exact`.
   - **Native `getUserMedia` doesn't reliably read `{ideal: n}` either.** Darwin reads `ideal` only as a string: with a number, it picks the camera's smallest format and a frame rate of 0 (a MacBook's FaceTime HD camera captured 640×480 instead of 1280×720, so it sent two simulcast layers instead of three). Android never finds `ideal` and falls back to 1280×720 at 30 fps whatever the preset. Windows and Linux read it. Every native platform reads a bare number (as a target, not a requirement), so native platforms get `width: 1280`, and the web keeps `{ideal: 1280}`.
+  - **Native `enumerateDevices` drops the camera's `facing`**, which the Android and Darwin plugins report in the underlying `getSources` list. The backend reads `getSources` on native platforms (deprecated in `flutter_webrtc`, so it falls back to `enumerateDevices` and labels if it fails). Labels alone won't do on iOS, where they are localized.
   - **Windows silently opens the first camera** when the requested one is missing. The source trusts the track's `deviceId` setting over what it asked for.
   - **Native tracks never fire `onEnded`.** Device loss on native platforms is detected from the device list, and a desktop share ending from the capturer's source list (§10).
   - `ondevicechange` is a single callback slot. The backend multiplexes it and chains any previous handler.
@@ -628,6 +632,7 @@ final cam = await local.publishCamera(encodings: SimulcastPresets.h720);   // th
 final share = await local.publishScreen(source: pickedSource);  // a ScreenSource from ScreenSourcePicker; none on web
                                        // one 15 fps layer (ScreenSharePresets.detail); .motion / .simulcast
 await mic.mute(); await mic.unmute();  // announced as TrackInfo.muted
+await local.switchCamera();            // front <-> back on phones, next camera elsewhere; same track
 await cam.unpublish();
 
 room.participants;                     // Stream<List<RemoteParticipant>> (+ currentParticipants)
@@ -652,7 +657,7 @@ remote.isSpeaking; remote.speakingChanges; remote.audioLevel;
 local.isSpeaking; local.speakingChanges;
 
 ParticipantVideoView.remote(remote.camera!, visible: onScreen);  // subscribes while mounted, picks its layer
-ParticipantVideoView.local(cam.mediaSource);                           // mirrored self-view
+ParticipantVideoView.local(cam.mediaSource);                           // self-view, mirrored unless a back camera
 
 final input = await room.data.publish('input', profile: DataChannelProfile.unreliable);
 await input.whenOpen();

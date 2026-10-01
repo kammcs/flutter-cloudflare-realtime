@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The same camera behaviour on every platform:
+  - **The front camera opens by default.** `CameraOptions.facing` now defaults to `CameraFacing.user`, and cameras facing that way are tried first (Android lists its back camera first, so the back camera used to open). Pass `facing: null` for the platform's order.
+  - **`CameraSource.switchCamera()` and `LocalParticipant.switchCamera()`:** one call that flips front ↔ back on phones and moves to the next camera elsewhere (virtual cameras last). A published camera keeps its track and sender, so subscribers see the new camera without pulling again.
+  - `MediaDevice.facing` says which way a camera faces, from the platform (Android, iOS) or the label (browsers); `CameraSource.currentFacing` for the camera in use. `CameraFacing` moved to `media_types.dart` (still exported from the package).
+  - `ParticipantVideoView` no longer mirrors a back camera's self-view by default.
+  - Example: a **Switch camera** button on the call screen, and `integration_test/camera_switch_test.dart`.
 - Fixes from the first runs against the real SFU (Windows):
   - Offers and answers no longer carry stray receive-only audio and video m-lines: native `flutter_webrtc` adds them unless `createOffer`/`createAnswer` get explicit empty constraints.
   - Negotiated DataChannels open on Windows: the plugin never reports their `open` state, so the package reads it from `getStats()`. Closing a session no longer logs `dataChannelClose() peerConnection is null`.

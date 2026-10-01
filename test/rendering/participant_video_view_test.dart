@@ -137,6 +137,46 @@ void main() {
       await _drive(tester, camera.dispose());
     });
 
+    testWidgets('a back camera is not mirrored; switching follows', (
+      tester,
+    ) async {
+      const back = MediaDevice(
+        deviceId: '0',
+        kind: MediaDeviceKind.videoInput,
+        label: 'Camera 0, Facing back',
+        facing: CameraFacing.environment,
+      );
+      const front = MediaDevice(
+        deviceId: '1',
+        kind: MediaDeviceKind.videoInput,
+        label: 'Camera 1, Facing front',
+        facing: CameraFacing.user,
+      );
+      final camera = CameraSource(
+        backend: FakeMediaBackend(
+          platform: MediaPlatform.android,
+          devices: [back, front],
+        ),
+      );
+      await tester.pumpWidget(
+        _frame(ParticipantVideoView.local(camera, rendererFactory: factory)),
+      );
+      await _drive(tester, camera.enable());
+      await _settle(tester);
+      var stream = camera.currentTrack!.stream;
+      expect(find.text('video ${stream.id} cover mirrored'), findsOneWidget);
+
+      await _drive(tester, camera.switchCamera());
+      await _settle(tester);
+      stream = camera.currentTrack!.stream;
+      expect(camera.currentTrack!.device, back);
+      expect(find.text('video ${stream.id} cover'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await _settle(tester);
+      await _drive(tester, camera.dispose());
+    });
+
     testWidgets('mirror and fit can be set; defaultRendererFactory is used', (
       tester,
     ) async {

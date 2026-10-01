@@ -87,7 +87,11 @@ class _LocalMediaPageState extends State<LocalMediaPage> {
             child: _DeviceSourceControls(
               source: _camera,
               icon: Icons.videocam,
-              preview: (track) => _TrackPreview(track: track, mirror: true),
+              // Mirrored like a mirror, except from a back camera.
+              preview: (track) => _TrackPreview(
+                track: track,
+                mirror: track?.device?.facing != CameraFacing.environment,
+              ),
             ),
           ),
           _Section(
