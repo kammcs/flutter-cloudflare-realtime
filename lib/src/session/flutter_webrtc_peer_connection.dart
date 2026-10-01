@@ -14,19 +14,38 @@ import 'publish_options.dart';
 Future<PeerConnection> createFlutterWebrtcPeerConnection(
   Map<String, dynamic> configuration,
 ) async {
-  final iceServers = configuration['iceServers'];
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.linux) &&
-      iceServers is List<Map<String, dynamic>>) {
-    configuration = {
-      ...configuration,
-      'iceServers': limitIceServers(iceServers, maxDesktopIceServers),
-    };
-  }
   return FlutterWebrtcPeerConnection(
-    await webrtc.createPeerConnection(configuration),
+    await webrtc.createPeerConnection(
+      platformConfiguration(
+        configuration,
+        platform: defaultTargetPlatform,
+        isWeb: kIsWeb,
+      ),
+    ),
   );
+}
+
+/// [configuration], adjusted for the `flutter_webrtc` plugin on [platform]:
+/// on Windows and Linux (not the web), at most [maxDesktopIceServers]
+/// `iceServers` entries. Every other platform gets [configuration] itself.
+///
+/// Internal: not exported from the package barrel.
+Map<String, dynamic> platformConfiguration(
+  Map<String, dynamic> configuration, {
+  required TargetPlatform platform,
+  required bool isWeb,
+}) {
+  final iceServers = configuration['iceServers'];
+  if (isWeb ||
+      (platform != TargetPlatform.windows &&
+          platform != TargetPlatform.linux) ||
+      iceServers is! List<Map<String, dynamic>>) {
+    return configuration;
+  }
+  return {
+    ...configuration,
+    'iceServers': limitIceServers(iceServers, maxDesktopIceServers),
+  };
 }
 
 /// The most `iceServers` entries the `flutter_webrtc` desktop plugin
@@ -248,10 +267,12 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   /// Whether the connection's stats report the DataChannel with SCTP stream
   /// [id] as open.
   ///
-  /// On Windows, `flutter_webrtc` never delivers the `open` state of a
-  /// negotiated channel, so the Dart channel's state stays null although the
-  /// channel works. (Its plugin registers the observer only after libwebrtc
-  /// has created the channel, which likely misses an open during creation.)
+  /// On Windows and Android, `flutter_webrtc` never delivers the `open`
+  /// state of a negotiated channel, so the Dart channel's state stays null
+  /// although the channel works. (Both plugins register the observer only
+  /// after libwebrtc has created the channel, and the Dart side listens to
+  /// the channel's events later still, which misses an open during
+  /// creation.)
   /// `getStats()` still reports the channel's real state as a
   /// `data-channel` report. See `docs/design.md` §9.
   Future<bool> _isDataChannelOpenInStats(int id) async {
@@ -323,6 +344,45 @@ String? _safeMid(webrtc.RTCRtpTransceiver t) {
   }
 }
 
+/// The entry of [current] (a fresh `getTransceivers()` list) that is the
+/// same native transceiver as [original], or null.
+///
+/// Matches on the sender's ID, which every native plugin reports stably.
+/// The `transceiverId` isn't stable: Android reports a random ID until the
+/// transceiver has a mid and the mid afterwards, and Darwin always reports
+/// the mid (empty before negotiation). Only the C++ desktop plugin keeps
+/// one ID. So the transceiver ID is only a fallback, for a sender without
+/// an ID. See `docs/design.md` §9.
+///
+/// Internal: not exported from the package barrel.
+webrtc.RTCRtpTransceiver? findSameTransceiver(
+  webrtc.RTCRtpTransceiver original,
+  List<webrtc.RTCRtpTransceiver> current,
+) {
+  final senderId = _safeSenderId(original);
+  if (senderId != null) {
+    for (final t in current) {
+      if (_safeSenderId(t) == senderId) return t;
+    }
+    return null;
+  }
+  final id = original.transceiverId;
+  if (id.isEmpty) return null;
+  for (final t in current) {
+    if (t.transceiverId == id) return t;
+  }
+  return null;
+}
+
+String? _safeSenderId(webrtc.RTCRtpTransceiver t) {
+  try {
+    final id = t.sender.senderId;
+    return id.isEmpty ? null : id;
+  } catch (_) {
+    return null;
+  }
+}
+
 class _FlutterWebrtcTransceiver implements PeerTransceiver {
   _FlutterWebrtcTransceiver(this._pc, this._t);
 
@@ -340,11 +400,8 @@ class _FlutterWebrtcTransceiver implements PeerTransceiver {
     // On web the wrapper reads the live JS transceiver.
     if (kIsWeb) return _safeMid(_t);
     // Native wrappers cache the mid from creation: re-read it.
-    final id = _t.transceiverId;
-    for (final t in await _pc.getTransceivers()) {
-      if (t.transceiverId == id) return _safeMid(t);
-    }
-    return null;
+    final current = findSameTransceiver(_t, await _pc.getTransceivers());
+    return current == null ? null : _safeMid(current);
   }
 
   @override
@@ -408,7 +465,14 @@ class _FlutterWebrtcTransceiver implements PeerTransceiver {
   }
 
   @override
-  Future<void> stop() => _t.stop();
+  Future<void> stop() async {
+    if (kIsWeb) return _t.stop();
+    // The native plugins look the transceiver up by the ID cached at
+    // creation, which Darwin no longer knows once the transceiver has a
+    // mid: stop the current entry instead (see [findSameTransceiver]).
+    final current = findSameTransceiver(_t, await _pc.getTransceivers());
+    await (current ?? _t).stop();
+  }
 }
 
 /// `RTCDataChannelInit` that keeps `maxRetransmits: 0`.
