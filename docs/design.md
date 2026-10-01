@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented and unit-tested: the broker client and reference brokers (§4.1, §5), the SFU session with DataChannels (§4.2, §9), rooms (§4.3), signaling (§4.4), media and desktop screen capture (§4.5, §10), simulcast layer selection (§6), active speaker (§7) and reconnection (§8). Verified against the real SFU on Windows (loopback push/pull, DataChannel echo and reconnect integration tests); macOS, Android and multi-device calls are not yet verified. Mobile screen share (M6) and pub.dev release (M8) remain.
+- **Status:** pre-release. Implemented and unit-tested: the broker client and reference brokers (§4.1, §5), the SFU session with DataChannels (§4.2, §9), rooms (§4.3), signaling (§4.4), media and desktop screen capture (§4.5, §10), simulcast layer selection (§6), active speaker (§7) and reconnection (§8). Verified against the real SFU on Windows and Android (loopback push/pull, DataChannel echo and reconnect integration tests), plus a Windows ↔ Android cross-device call with layer switching; macOS, iOS and 4-person calls are not yet verified. Mobile screen share (M6) and pub.dev release (M8) remain.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
