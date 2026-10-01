@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloudflare_realtime/src/session/flutter_webrtc_peer_connection.dart';
 import 'package:cloudflare_realtime/src/session/peer_connection.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
@@ -58,11 +59,54 @@ class _FakeRtcPeerConnection extends Fake implements webrtc.RTCPeerConnection {
     return stats;
   }
 
+  /// What `getTransceivers()` returns next.
+  List<webrtc.RTCRtpTransceiver> current = [];
+
+  /// What `addTransceiver()` returns next.
+  webrtc.RTCRtpTransceiver? nextTransceiver;
+
+  @override
+  Future<webrtc.RTCRtpTransceiver> addTransceiver({
+    webrtc.MediaStreamTrack? track,
+    webrtc.RTCRtpMediaType? kind,
+    webrtc.RTCRtpTransceiverInit? init,
+  }) async => nextTransceiver!;
+
+  @override
+  Future<List<webrtc.RTCRtpTransceiver>> getTransceivers() async => current;
+
   @override
   Future<void> close() async => log.add('pc.close');
 
   @override
   Future<void> dispose() async => log.add('pc.dispose');
+}
+
+/// A native transceiver as one `flutter_webrtc` call reported it.
+class _FakeTransceiver extends Fake implements webrtc.RTCRtpTransceiver {
+  _FakeTransceiver(this.transceiverId, this.mid, String senderId, this._log)
+    : sender = _FakeSender(senderId);
+
+  @override
+  final String transceiverId;
+
+  @override
+  final String mid;
+
+  @override
+  final webrtc.RTCRtpSender sender;
+
+  final List<String> _log;
+
+  @override
+  Future<void> stop() async => _log.add('stop($transceiverId)');
+}
+
+class _FakeSender extends Fake implements webrtc.RTCRtpSender {
+  _FakeSender(this.senderId);
+
+  @override
+  final String senderId;
 }
 
 class _FakeRtcDataChannel extends webrtc.RTCDataChannel {
@@ -222,6 +266,95 @@ void main() {
         expect(rtc.statsCalls, calls);
         expect(view.states, isEmpty);
       });
+    });
+  });
+
+  group('a send transceiver', () {
+    test('finds its mid after negotiation when Android replaces its '
+        'transceiverId with the mid', () async {
+      rtc.nextTransceiver = _FakeTransceiver('uuid-1', '', 'sender-a', rtc.log);
+      final t = await pc.addSendTransceiver(kind: 'video');
+      rtc.current = [
+        _FakeTransceiver('0', '0', 'sender-z', rtc.log),
+        _FakeTransceiver('1', '1', 'sender-a', rtc.log),
+      ];
+      expect(await t.mid(), '1');
+
+      await t.stop();
+      expect(rtc.log, ['stop(1)'], reason: 'stops the current entry');
+    });
+
+    test('finds its mid on Darwin, where the transceiverId is the mid '
+        '(empty before negotiation)', () async {
+      rtc.nextTransceiver = _FakeTransceiver('', '', 'sender-a', rtc.log);
+      final t = await pc.addSendTransceiver(kind: 'audio');
+      rtc.current = [
+        _FakeTransceiver('', '', 'sender-b', rtc.log),
+        _FakeTransceiver('2', '2', 'sender-a', rtc.log),
+      ];
+      expect(await t.mid(), '2');
+    });
+
+    test('has no mid before negotiation, or once it is gone', () async {
+      rtc.nextTransceiver = _FakeTransceiver('t1', '', 'sender-a', rtc.log);
+      final t = await pc.addSendTransceiver(kind: 'video');
+      rtc.current = [_FakeTransceiver('t1', '', 'sender-a', rtc.log)];
+      expect(await t.mid(), isNull);
+      rtc.current = [_FakeTransceiver('t2', '0', 'sender-b', rtc.log)];
+      expect(await t.mid(), isNull);
+    });
+
+    test('falls back to the transceiverId without a sender ID', () async {
+      rtc.nextTransceiver = _FakeTransceiver('t1', '', '', rtc.log);
+      final t = await pc.addSendTransceiver(kind: 'video');
+      rtc.current = [
+        _FakeTransceiver('t0', '0', '', rtc.log),
+        _FakeTransceiver('t1', '1', '', rtc.log),
+      ];
+      expect(await t.mid(), '1');
+    });
+  });
+
+  group('platformConfiguration', () {
+    final servers = [
+      for (var i = 0; i < 9; i++) <String, dynamic>{'urls': 'turn:t:$i'},
+    ];
+    final config = <String, dynamic>{
+      'iceServers': servers,
+      'bundlePolicy': 'max-bundle',
+    };
+
+    test('limits ICE servers on Windows and Linux', () {
+      for (final platform in [TargetPlatform.windows, TargetPlatform.linux]) {
+        final adjusted = platformConfiguration(
+          config,
+          platform: platform,
+          isWeb: false,
+        );
+        expect(adjusted['iceServers'], hasLength(maxDesktopIceServers));
+        expect(adjusted['bundlePolicy'], 'max-bundle');
+      }
+    });
+
+    test('leaves Android, iOS, macOS and the web alone', () {
+      for (final platform in [
+        TargetPlatform.android,
+        TargetPlatform.iOS,
+        TargetPlatform.macOS,
+      ]) {
+        expect(
+          platformConfiguration(config, platform: platform, isWeb: false),
+          same(config),
+        );
+      }
+      expect(
+        platformConfiguration(
+          config,
+          platform: TargetPlatform.windows,
+          isWeb: true,
+        ),
+        same(config),
+      );
     });
   });
 

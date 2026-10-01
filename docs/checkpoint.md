@@ -37,7 +37,7 @@ Any of the laptops below will do. The dev server must stay online during the who
 
 ### Every device
 
-All devices must be on **the same LAN or Wi-Fi**, with internet access. Media flows between each device and Cloudflare, but broker calls and presence go to the dev server on your LAN.
+All devices must be on **the same LAN or Wi-Fi**, with internet access. Media flows between each device and Cloudflare, but broker calls and presence go to the dev server on your LAN. (An Android phone plugged into the server machine by USB can reach the dev server through `adb reverse` instead; see [step 3](#3-build-and-run-the-example-on-each-device).)
 
 | Device | Needs |
 |---|---|
@@ -125,6 +125,15 @@ flutter run -d <android-id> --dart-define=DEV_SERVER_URL=<SERVER> --dart-define=
 
 Use the default debug mode (no `--release` or `--profile`): only debug builds allow the cleartext `http://` and `ws://` connections to the dev server (see [Android cleartext](#android-cleartext-http)).
 
+**Android over USB, without the LAN.** If the phone is connected by USB to the machine that runs the dev server, `adb reverse` forwards the phone's port 8787 to that machine, so the phone needs no LAN route, firewall rule or `--host 0.0.0.0`:
+
+```sh
+adb -s <android-id> reverse tcp:8787 tcp:8787
+flutter run -d <android-id> --dart-define=DEV_SERVER_URL=http://127.0.0.1:8787 --dart-define=DEV_TOKEN=<TOKEN> --dart-define=DEV_USER=android
+```
+
+The forward lasts until the phone is unplugged or `adb reverse --remove tcp:8787`. Only the dev server's traffic goes over USB; media still goes from the phone to Cloudflare over its own network. For the [real network drop](#criterion-3-recovery-from-a-network-drop), the dev server stays reachable over USB while Wi-Fi is off, so presence stays up: the other devices see no *left* / *joined* messages for the phone. The media recovery is the same; to see the whole table there, use the LAN address instead.
+
 **Chrome** (optional fourth participant):
 
 ```sh
@@ -191,17 +200,17 @@ What you'll use, from [`example/lib/call_page.dart`](../example/lib/call_page.da
 
 Use the 4-person call (or any call with at least two devices). Do this on each receiving platform (Windows, macOS, Android), watching one remote camera tile:
 
-1. **Gallery.** In the gallery layout, the overlay shows `(auto)` with `rid b` or `rid c`, depending on the tile's size in physical pixels (display scaling counts): a tile up to 270 physical pixels high gets `c`, up to 540 gets `b`, anything bigger `a`. The received resolution matches within about 3 s: 640×360 for `b`, 320×180 for `c`.
-2. **Stage.** Press the layout toggle (*Stage layout*). The stage tile goes to `rid a` and receives 1280×720 within about 3 s. The thumbnails go to `rid c` (320×180). On small screens (phones) the stage may stay at `b`: that's the tile size rule, not a failure.
+1. **Gallery.** In the gallery layout, the overlay shows `(auto)` with `rid b` or `rid c`, depending on the tile's size in physical pixels (display scaling counts): a tile up to 270 physical pixels high gets `c`, up to 540 gets `b`, anything bigger `a`. The received resolution matches within about 15 s (see the notes below): 640×360 for `b`, 320×180 for `c`.
+2. **Stage.** Press the layout toggle (*Stage layout*). The stage tile goes to `rid a` and receives 1280×720 within about 15 s. The thumbnails go to `rid c` (320×180). On small screens (phones) the stage may stay at `b`: that's the tile size rule, not a failure.
 3. **Resize** (desktop): shrink the window. The stage tile steps down to `b` or `c` about 0.3 s after its size settles (it drops from `a` only below 459 physical lines, to avoid flapping), and back up when you enlarge it.
-4. **Manual override.** On the stage tile (or a gallery tile), open the layer menu and pick *Low (c)*. The overlay shows `rid c (low)` at once, and 320×180 within about 3 s. Pick *High (a)*: `rid a (high)`, then 1280×720. Pick *Medium (b)*: 640×360. Pick *Auto (from tile size)* to go back.
+4. **Manual override.** On the stage tile (or a gallery tile), open the layer menu and pick *Low (c)*. The overlay shows `rid c (low)` at once, and 320×180 within about 15 s. Pick *High (a)*: `rid a (high)`, then 1280×720. Pick *Medium (b)*: 640×360. Pick *Auto (from tile size)* to go back.
 5. **Pin:** tap a thumbnail to pin it to the stage; the pinned participant's overlay goes to `a` and the one that left the stage to `c`.
 
 **Pass:** on each receiving platform, the received resolution follows both the automatic choice and the manual picks, for publishers on each platform.
 
 Notes:
 
-- The SFU switches layers at the next keyframe, so a switch takes 1–3 s to show in the resolution; the `rid` changes at once.
+- The SFU switches layers at a keyframe of the new layer, so the resolution follows the `rid` (which changes at once) after a delay. Against the real SFU (October 2026, Windows ↔ Android, `cross_device_test.dart`), a switch usually took **8–13 s**, sometimes 1–4 s. The delay was strikingly regular (about 8.3 s for the first two switches and 12.4 s for the third, in both directions and with either device publishing), and the `tracks/update` call itself answers at once, which points at the SFU rather than either client. Wait about 15 s before failing a switch.
 - A publisher only sends `a` when its uplink allows about 1.2 Mbps more than `b` and `c`. On a weak uplink the receiver can ask for `a` and get `b` (the SFU falls back to the next layer: `ridNotAvailable: asciibetical`). Check the publisher's network before failing this.
 - A camera that captures below 960×540 (some Windows webcams give 640×480) sends only two layers, `a` and `b`; asking for `c` then gets the nearest layer that exists.
 
@@ -273,6 +282,7 @@ The example has three integration tests in [`example/integration_test/`](../exam
 - `sfu_loopback_test.dart`: publishes a camera (or microphone) track on one SFU session and pulls it on another, switching the pulled layer.
 - `datachannel_echo_test.dart`: a DataChannel echoed both ways.
 - `reconnect_test.dart`: two rooms in one process; the publisher's session is dropped and replaced, then the subscriber's, and the track must arrive again each time (criterion 3, automated).
+- `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 
 They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](../example/integration_test/broker_settings.dart)), as `--dart-define`s or, on desktop, environment variables:
 
@@ -282,6 +292,7 @@ They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](
 | `CF_REALTIME_BROKER_TOKEN` | `<TOKEN>` (sent as `Authorization: Bearer`) |
 | `CF_REALTIME_BROKER_USER` | a user name, such as `it-windows` (sent as `X-Dev-User`; the dev server rejects requests without it) |
 | `CF_REALTIME_ROOM` | optional; default `integration-test` |
+| `CF_REALTIME_CROSS_DEVICE` | `1` to run `cross_device_test.dart` (skipped otherwise) |
 
 Run them on each platform, from `example/`:
 
@@ -292,6 +303,28 @@ flutter test integration_test -d <android-id> --dart-define=CF_REALTIME_BROKER_U
 ```
 
 One file at a time: `flutter test integration_test/reconnect_test.dart -d windows ...`. Expect `All tests passed!` with no test reported as skipped; skipped tests mean `CF_REALTIME_BROKER_URL` didn't arrive. Accept the camera and microphone prompts on macOS and Android. The tests never print the settings; keep them out of shared shell history.
+
+**Android over USB.** With `adb reverse tcp:8787 tcp:8787` ([step 3](#3-build-and-run-the-example-on-each-device)), use `CF_REALTIME_BROKER_URL=http://127.0.0.1:8787` on the phone. `flutter test` installs the app afresh for every file and removes it afterwards, so the camera and microphone prompts come back each time; a test that waits on a prompt nobody answers times out after 2 minutes. To skip the prompts, grant both as soon as the app is installed (the grant is lost with the app, so repeat it for every run):
+
+```sh
+adb -s <android-id> shell pm grant dev.kammcs.cloudflare_realtime_example android.permission.CAMERA
+adb -s <android-id> shell pm grant dev.kammcs.cloudflare_realtime_example android.permission.RECORD_AUDIO
+```
+
+### Cross-device test
+
+`cross_device_test.dart` runs on two devices **at the same time**, in the same room, against the dev server (it uses its WebSocket signaling). Each side joins as a `Room`, publishes its camera (its microphone if it has no camera) and pulls the other's. It checks that the inbound bytes and decoded frames rise in `getStats()`, then, as the other side's camera is simulcast, asks for the low, high and low layers and checks that the received frame height follows (the other side announces the height of each layer it sends). Both sides then wait for each other before leaving.
+
+Pick a fresh room name for each run, give each device its own user, and start both within 5 minutes of each other (each waits that long for the other). From `example/`, in two shells:
+
+```sh
+# Shell 1: the phone (with adb reverse as above)
+flutter test integration_test/cross_device_test.dart -d <android-id> --dart-define=CF_REALTIME_CROSS_DEVICE=1 --dart-define=CF_REALTIME_ROOM=cross-1 --dart-define=CF_REALTIME_BROKER_URL=http://127.0.0.1:8787 --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-android
+# Shell 2: Windows
+flutter test integration_test/cross_device_test.dart -d windows --dart-define=CF_REALTIME_CROSS_DEVICE=1 --dart-define=CF_REALTIME_ROOM=cross-1 --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-windows
+```
+
+Both must print `All tests passed!`. Each side logs `[cross-device]` lines: the layer heights each side sends, the inbound bytes and frames, and how long each layer switch took. Start the second shell once the first has built and installed, so the two builds don't compete; any two devices work (macOS, a second phone), as long as both reach the dev server.
 
 ## 8. Troubleshooting
 

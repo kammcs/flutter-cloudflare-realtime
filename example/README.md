@@ -33,7 +33,7 @@ flutter test integration_test -d macos \
   --dart-define=CF_REALTIME_BROKER_TOKEN=<token>   # optional: Authorization: Bearer
 ```
 
-`CF_REALTIME_ROOM` sets the room (default `integration-test`), and `CF_REALTIME_BROKER_USER` is sent as `X-Dev-User`, which the dev server requires (`integration_test/broker_settings.dart`). On desktop the same names can come from the environment instead. Keep credentials out of the repository and out of shell history you share. `integration_test/reconnect_test.dart` and `datachannel_echo_test.dart` take the same settings.
+`CF_REALTIME_ROOM` sets the room (default `integration-test`), and `CF_REALTIME_BROKER_USER` is sent as `X-Dev-User`, which the dev server requires (`integration_test/broker_settings.dart`). On desktop the same names can come from the environment instead. Keep credentials out of the repository and out of shell history you share. `integration_test/reconnect_test.dart` and `datachannel_echo_test.dart` take the same settings. `cross_device_test.dart` runs on two devices at once against the dev server, with `CF_REALTIME_CROSS_DEVICE=1`; see [the checkpoint runbook](../docs/checkpoint.md#cross-device-test).
 
 ## Video codec
 
