@@ -2,7 +2,7 @@
 
 This package is a Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/). It is built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc) and targets **Android, iOS, macOS, Windows and Web**.
 
-- **Status:** pre-release. Implemented and unit-tested: the broker client and reference brokers (§4.1, §5), the SFU session with DataChannels (§4.2, §9), rooms (§4.3), signaling (§4.4), media and desktop screen capture (§4.5, §10), simulcast layer selection (§6), active speaker (§7) and reconnection (§8). Verified against the real SFU on Windows and Android (loopback push/pull, DataChannel echo and reconnect integration tests), plus a Windows ↔ Android cross-device call with layer switching; macOS, iOS and 4-person calls are not yet verified. Mobile screen share (M6) and pub.dev release (M8) remain.
+- **Status:** pre-release. Implemented and unit-tested: the broker client and reference brokers (§4.1, §5), the SFU session with DataChannels (§4.2, §9), rooms (§4.3), signaling (§4.4), media and desktop screen capture (§4.5, §10), simulcast layer selection (§6), active speaker (§7) and reconnection (§8). Verified against the real SFU on Windows, Android and macOS (loopback push/pull, DataChannel echo and reconnect integration tests), plus Windows ↔ Android and Windows ↔ macOS cross-device calls with layer switching; iOS and 4-person calls are not yet verified. Mobile screen share (M6) and pub.dev release (M8) remain.
 - **Companion docs:**
   - [cloudflare-sfu.md](cloudflare-sfu.md): what the SFU API provides.
   - [roadmap.md](roadmap.md): build order and milestones.
@@ -250,7 +250,7 @@ abstract interface class Signaling {
   - **Deviation from partytracks:** it persists the preference and the failed-device list in `localStorage`. Here the app persists the preference (`currentPreferredDevice` / the `preferredDevice:` argument). A failed device is tried last only until it is unplugged or chosen again.
   - Consumers never re-subscribe. `track` emits the replacement track. When switching to a different device, the new track is captured before the old one is stopped, so there's no `null` gap.
   - **Options:**
-    - Camera: `VideoPreset` (`h1080`, `h720`, `h540`, `h360`, `h180`; ideal width, height and frame rate) and facing mode. `h720` scaled by ½ and ¼ gives `h360` and `h180`, which are the simulcast layers in §6.
+    - Camera: `VideoPreset` (`h1080`, `h720`, `h540`, `h360`, `h180`; target width, height and frame rate, which cameras match as closely as they can) and facing mode. `h720` scaled by ½ and ¼ gives `h360` and `h180`, which are the simulcast layers in §6.
     - Microphone: echo cancellation, noise suppression and AGC, all on by default.
     - `setOptions` recaptures.
 - **The mute model.** `LocalMediaSource` has two switches, as in partytracks:
@@ -268,6 +268,7 @@ abstract interface class Signaling {
     - Windows and Linux read only `optional: [{sourceId: id}]`, and treat a string `deviceId` on audio as the *output* device.
     - Android and Darwin read `deviceId` as a plain string.
     - So native platforms get `optional.sourceId`, and the web gets `deviceId.exact`.
+  - **Native `getUserMedia` doesn't reliably read `{ideal: n}` either.** Darwin reads `ideal` only as a string: with a number, it picks the camera's smallest format and a frame rate of 0 (a MacBook's FaceTime HD camera captured 640×480 instead of 1280×720, so it sent two simulcast layers instead of three). Android never finds `ideal` and falls back to 1280×720 at 30 fps whatever the preset. Windows and Linux read it. Every native platform reads a bare number (as a target, not a requirement), so native platforms get `width: 1280`, and the web keeps `{ideal: 1280}`.
   - **Windows silently opens the first camera** when the requested one is missing. The source trusts the track's `deviceId` setting over what it asked for.
   - **Native tracks never fire `onEnded`.** Device loss on native platforms is detected from the device list, and a desktop share ending from the capturer's source list (§10).
   - `ondevicechange` is a single callback slot. The backend multiplexes it and chains any previous handler.

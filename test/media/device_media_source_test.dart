@@ -61,9 +61,9 @@ void main() {
       );
       await camera.enable();
       final video = backend.userMediaCalls.single['video'] as Map;
-      expect(video['width'], {'ideal': 640});
-      expect(video['height'], {'ideal': 360});
-      expect(video['frameRate'], {'ideal': 30});
+      expect(video['width'], 640);
+      expect(video['height'], 360);
+      expect(video['frameRate'], 30);
       expect(video['optional'], [
         {'sourceId': 'cam-1'},
       ]);
@@ -341,7 +341,7 @@ void main() {
 
       await camera.setOptions(const CameraOptions(preset: VideoPreset.h1080));
       final video = backend.userMediaCalls.last['video'] as Map;
-      expect(video['width'], {'ideal': 1920});
+      expect(video['width'], 1920);
       expect(camera.currentTrack, isNot(first));
       expect(camera.currentTrack!.device, cam1);
       expect((first.track as FakeTrack).stopped, isTrue);

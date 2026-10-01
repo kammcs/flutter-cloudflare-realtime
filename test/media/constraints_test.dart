@@ -51,22 +51,51 @@ void main() {
     });
   });
 
-  test('camera constraints use ideals and facing mode without a device', () {
+  test('camera constraints use bare targets and facing mode natively', () {
+    // Darwin reads `ideal` only as a string and Android not at all; every
+    // native platform reads a bare number.
+    for (final platform in [
+      MediaPlatform.windows,
+      MediaPlatform.macos,
+      MediaPlatform.linux,
+      MediaPlatform.android,
+      MediaPlatform.ios,
+    ]) {
+      expect(
+        cameraConstraints(
+          const CameraOptions(
+            preset: VideoPreset.h540,
+            facing: CameraFacing.environment,
+          ),
+          platform: platform,
+        ),
+        {
+          'audio': false,
+          'video': {
+            'width': 960,
+            'height': 540,
+            'frameRate': 30,
+            'facingMode': 'environment',
+          },
+        },
+        reason: platform.name,
+      );
+    }
+  });
+
+  test('camera constraints use ideals in browsers', () {
     expect(
       cameraConstraints(
-        const CameraOptions(
-          preset: VideoPreset.h540,
-          facing: CameraFacing.environment,
-        ),
-        platform: MediaPlatform.android,
+        const CameraOptions(facing: CameraFacing.user),
+        platform: MediaPlatform.web,
       ),
       {
         'audio': false,
         'video': {
-          'width': {'ideal': 960},
-          'height': {'ideal': 540},
+          'width': {'ideal': 1280},
+          'height': {'ideal': 720},
           'frameRate': {'ideal': 30},
-          'facingMode': 'environment',
+          'facingMode': 'user',
         },
       },
     );

@@ -225,6 +225,17 @@ Map<String, dynamic> deviceSelector(String deviceId, MediaPlatform platform) =>
         ],
       };
 
+/// A camera's target [value] in the form [platform] reads.
+///
+/// Browsers take the W3C `{ideal: value}`. The native `flutter_webrtc`
+/// implementations don't all read it: Darwin reads `ideal` only as a
+/// string (with a number it picks the camera's smallest format and a
+/// frame rate of 0), and Android never finds it (it falls back to
+/// 1280×720 at 30 fps). A bare number is the one form every native
+/// platform reads, and it is still only a target there.
+Object idealValue(int value, MediaPlatform platform) =>
+    platform == MediaPlatform.web ? {'ideal': value} : value;
+
 /// `getUserMedia` constraints for a camera.
 Map<String, dynamic> cameraConstraints(
   CameraOptions options, {
@@ -233,9 +244,9 @@ Map<String, dynamic> cameraConstraints(
 }) => {
   'audio': false,
   'video': {
-    'width': {'ideal': options.preset.width},
-    'height': {'ideal': options.preset.height},
-    'frameRate': {'ideal': options.preset.frameRate},
+    'width': idealValue(options.preset.width, platform),
+    'height': idealValue(options.preset.height, platform),
+    'frameRate': idealValue(options.preset.frameRate, platform),
     if (device != null && device.deviceId.isNotEmpty)
       ...deviceSelector(device.deviceId, platform)
     else if (options.facing != null)
