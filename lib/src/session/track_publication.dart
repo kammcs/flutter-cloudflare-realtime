@@ -264,6 +264,10 @@ class RemoteTrackSubscription {
   PeerTransceiver? _transceiver;
   String? _mid;
 
+  /// Counts [SfuSession.setPreferredRid] calls, so a retry can tell it was
+  /// superseded.
+  int _layerRequests = 0;
+
   /// The publisher's session ID.
   String get remoteSessionId => _remoteSessionId;
 

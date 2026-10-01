@@ -634,9 +634,232 @@ void main() {
       await sub.setPreferredRid('b');
       expect(h.broker.operations.last, 'renegotiate');
     });
+    group('while the SFU is not forwarding the track yet', () {
+      TracksResponse notForwarding(UpdateTracksRequest request) =>
+          TracksResponse(
+            tracks: [
+              TrackResult(
+                mid: request.tracks.single.mid,
+                errorCode: 'update_track_error',
+                errorDescription:
+                    'The track is not configured for simulcast, no updates '
+                    'applicable.',
+              ),
+            ],
+          );
+
+      test('retries until the SFU accepts the update', () {
+        fakeAsync((async) {
+          late RemoteTrackSubscription sub;
+          h.connect().then(
+            (s) => s
+                .subscribe(remoteSessionId: 'p', trackName: 't')
+                .then((r) => sub = r),
+          );
+          async.flushMicrotasks();
+          async.elapse(Duration.zero);
+
+          var rejections = 2;
+          h.broker.onUpdateTracks = (sessionId, request) async =>
+              rejections-- > 0
+              ? notForwarding(request)
+              : h.broker.defaultUpdateTracks(sessionId, request);
+          var done = false;
+          sub.setPreferredRid('c').then((_) => done = true);
+          async.elapse(const Duration(milliseconds: 50));
+          expect(h.broker.callsTo('tracks/update'), hasLength(1));
+          expect(done, isFalse);
+
+          async.elapse(const Duration(milliseconds: 100)); // 1st retry.
+          expect(h.broker.callsTo('tracks/update'), hasLength(2));
+          async.elapse(const Duration(milliseconds: 200)); // 2nd retry.
+          expect(h.broker.callsTo('tracks/update'), hasLength(3));
+          expect(done, isTrue);
+          expect(sub.preferredRid, 'c');
+        });
+      });
+
+      test('gives up after layerUpdateRetryTimeout', () {
+        fakeAsync((async) {
+          late RemoteTrackSubscription sub;
+          h
+              .connect(
+                options: const SfuSessionOptions(
+                  layerUpdateRetryTimeout: Duration(milliseconds: 250),
+                ),
+              )
+              .then(
+                (s) => s
+                    .subscribe(remoteSessionId: 'p', trackName: 't')
+                    .then((r) => sub = r),
+              );
+          async.flushMicrotasks();
+          async.elapse(Duration.zero);
+
+          h.broker.onUpdateTracks = (_, request) async =>
+              notForwarding(request);
+          Object? error;
+          sub.setPreferredRid('c').catchError((Object e) => error = e);
+          async.elapse(const Duration(seconds: 5));
+          // 100 + 200 ms of retries reach the 250 ms budget.
+          expect(h.broker.callsTo('tracks/update'), hasLength(3));
+          expect(error, isA<SfuTrackException>());
+          expect(sub.preferredRid, isNull);
+        });
+      });
+
+      test('does not retry other errors', () async {
+        final session = await h.connect();
+        final sub = await session.subscribe(
+          remoteSessionId: 'p',
+          trackName: 't',
+        );
+        h.broker.onUpdateTracks = (_, request) async => TracksResponse(
+          tracks: [
+            TrackResult(
+              mid: request.tracks.single.mid,
+              errorCode: 'update_track_error',
+              errorDescription: 'something else',
+            ),
+          ],
+        );
+        await expectLater(
+          sub.setPreferredRid('c'),
+          throwsA(isA<SfuTrackException>()),
+        );
+        expect(h.broker.callsTo('tracks/update'), hasLength(1));
+      });
+
+      test('a newer rid supersedes a pending retry', () {
+        fakeAsync((async) {
+          late RemoteTrackSubscription sub;
+          h.connect().then(
+            (s) => s
+                .subscribe(remoteSessionId: 'p', trackName: 't')
+                .then((r) => sub = r),
+          );
+          async.flushMicrotasks();
+          async.elapse(Duration.zero);
+
+          var rejections = 1;
+          h.broker.onUpdateTracks = (sessionId, request) async =>
+              rejections-- > 0
+              ? notForwarding(request)
+              : h.broker.defaultUpdateTracks(sessionId, request);
+          var first = false;
+          sub.setPreferredRid('c').then((_) => first = true);
+          async.elapse(const Duration(milliseconds: 50));
+          sub.setPreferredRid('a');
+          async.elapse(const Duration(seconds: 1));
+
+          final rids = [
+            for (final call in h.broker.callsTo('tracks/update'))
+              (call.request! as UpdateTracksRequest)
+                  .tracks
+                  .single
+                  .simulcast!
+                  .preferredRid,
+          ];
+          expect(rids, ['c', 'a'], reason: 'c is not sent again');
+          expect(first, isTrue);
+          expect(sub.preferredRid, 'a');
+        });
+      });
+    });
   });
 
   group('close', () {
+    group("the session's last live m-lines", () {
+      // What libwebrtc reports as the local description: SDP with m-lines.
+      SessionDescription sdp(List<(String, String)> mLines) =>
+          SessionDescription.answer(
+            [
+              'v=0',
+              for (final (mid, port) in mLines) ...[
+                'm=video $port UDP/TLS/RTP/SAVPF 96',
+                'a=mid:$mid',
+              ],
+              '',
+            ].join('\r\n'),
+          );
+
+      test('close with force, parking the transceivers', () async {
+        final session = await h.connect();
+        final pub = await session.publish(FakeMediaStreamTrack(kind: 'video'));
+        final sub = await session.subscribe(
+          remoteSessionId: 'p',
+          trackName: 't',
+        );
+        h.pc.currentLocalDescription = sdp([('0', '9'), ('r1', '9')]);
+        h.pc.log.clear();
+
+        await Future.wait([pub.unpublish(), sub.unsubscribe()]);
+
+        // No stop and no offer: rejecting every m-line fails with
+        // max-bundle, or drops the transport.
+        expect(h.pc.log, ['replaceTrack(null)']);
+        expect(h.pc.transceivers.where((t) => t.stopped), isEmpty);
+        final close =
+            h.broker.callsTo('tracks/close').single.request!
+                as CloseTracksRequest;
+        expect(close.toJson(), {
+          'tracks': [
+            {'mid': '0'},
+            {'mid': 'r1'},
+          ],
+          'force': true,
+        });
+        expect(pub.state, SfuTrackState.closed);
+        expect(sub.state, SfuTrackState.closed);
+        expect(session.publications, isEmpty);
+        expect(session.subscriptions, isEmpty);
+      });
+
+      test('negotiate when another m-line stays live', () async {
+        final session = await h.connect();
+        final pub = await session.publish(FakeMediaStreamTrack(kind: 'video'));
+        await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+        // mid 1 stays; a rejected m-line (port 0) doesn't count.
+        h.pc.currentLocalDescription = sdp([
+          ('0', '9'),
+          ('1', '9'),
+          ('2', '0'),
+        ]);
+        h.pc.log.clear();
+
+        await pub.unpublish();
+
+        expect(h.pc.log, [
+          'stop(0)',
+          'createOffer',
+          'setLocalDescription(offer)',
+          'setRemoteDescription(answer)',
+        ]);
+        final close =
+            h.broker.callsTo('tracks/close').single.request!
+                as CloseTracksRequest;
+        expect(close.force, isFalse);
+      });
+
+      test('a DataChannel m-line keeps the negotiated close', () async {
+        final session = await h.connect();
+        final pub = await session.publish(FakeMediaStreamTrack(kind: 'video'));
+        h.pc.currentLocalDescription = SessionDescription.answer(
+          'v=0\r\n'
+          'm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n'
+          'm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=mid:1\r\n',
+        );
+
+        await pub.unpublish();
+
+        final close =
+            h.broker.callsTo('tracks/close').single.request!
+                as CloseTracksRequest;
+        expect(close.force, isFalse);
+        expect(h.pc.byMid('0')!.stopped, isTrue);
+      });
+    });
+
     test(
       'unpublish stops the transceiver and negotiates tracks/close',
       () async {

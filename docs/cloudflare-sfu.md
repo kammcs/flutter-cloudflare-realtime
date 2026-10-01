@@ -89,6 +89,9 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
 - **Expired sessions** return HTTP `410` with `session_error`. An unconnected session can expire before its first track or DataChannel operation.
 - **Reconnection:** replace the connection. Create a new session and re-subscribe. ICE restart is not documented.
 - `sessions/new` accepts an optional `correlationId` **query parameter** for diagnostics. It is not an idempotency key.
+- **Observed against the real SFU** (not in the docs; see [design.md §4.2](design.md#42-sfusession)):
+  - `tracks/update` with a `simulcast` change answers `update_track_error` "The track is not configured for simulcast, no updates applicable." until the SFU forwards the pulled track to the subscriber, and for good on a track published without simulcast.
+  - A negotiated close that rejects every m-line of a session either fails locally (`max-bundle`: no BUNDLE group) or closes the transport, after which the SFU expires the session. Close a session's last m-lines with `force: true` and keep the m-lines.
 
 ## Simulcast
 

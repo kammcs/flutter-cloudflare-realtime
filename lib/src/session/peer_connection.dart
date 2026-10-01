@@ -70,6 +70,9 @@ abstract interface class PeerConnection {
   /// Sets the remote description.
   Future<void> setRemoteDescription(SessionDescription description);
 
+  /// The current local description, or null before the first one.
+  Future<SessionDescription?> localDescription();
+
   /// The transceiver negotiated with [mid], waiting up to [timeout] for it
   /// to appear (a `track` event). Returns null if it doesn't.
   Future<PeerTransceiver?> transceiverForMid(

@@ -3,6 +3,7 @@
 // Sunil Pai. See THIRD_PARTY_NOTICES.md.
 
 import 'dart:async';
+import 'dart:convert' show LineSplitter;
 import 'dart:math' as math;
 
 import 'package:flutter_webrtc/flutter_webrtc.dart'
@@ -38,6 +39,7 @@ class SfuSessionOptions {
     this.defaults = const SfuSessionDefaults(),
     this.iceDisconnectedTimeout = const Duration(seconds: 7),
     this.remoteTrackTimeout = const Duration(seconds: 5),
+    this.layerUpdateRetryTimeout = const Duration(seconds: 10),
   });
 
   /// ICE servers to use instead of fetching them from the broker's
@@ -58,6 +60,18 @@ class SfuSessionOptions {
   /// How long a pull waits for its transceiver to appear after
   /// renegotiation (partytracks: 5 seconds).
   final Duration remoteTrackTimeout;
+
+  /// How long [SfuSession.setPreferredRid] keeps retrying while the SFU
+  /// rejects the update because the track "is not configured for
+  /// simulcast".
+  ///
+  /// The SFU answers so until it forwards the pulled track to this session,
+  /// so a layer change right after a pull fails until media reaches the
+  /// subscriber (a few hundred milliseconds in tests against the real SFU;
+  /// `docs/design.md` §4.2). For a track published without simulcast the
+  /// error is final, and it is thrown after this timeout. [Duration.zero]
+  /// fails on the first rejection.
+  final Duration layerUpdateRetryTimeout;
 }
 
 /// One peer connection to the Cloudflare SFU, bound to one SFU session.
@@ -395,6 +409,10 @@ class SfuSession {
   /// subscription updated more than once, the last [rid] wins. Throws an
   /// [SfuTrackException] if the SFU rejected the update, and leaves
   /// [RemoteTrackSubscription.preferredRid] unchanged.
+  ///
+  /// Right after a pull, the SFU rejects layer changes until it forwards the
+  /// track; such an update is retried for up to
+  /// [SfuSessionOptions.layerUpdateRetryTimeout].
   Future<void> setPreferredRid(
     RemoteTrackSubscription subscription,
     String rid,
@@ -404,10 +422,60 @@ class SfuSession {
       throw StateError('The subscription is not on this session.');
     }
     _throwIfUnusable();
-    final item = _UpdateItem(subscription, subscription._withRid(rid));
-    _updates.add(item);
-    return item.done.future;
+    return _updateLayer(subscription, subscription._withRid(rid));
   }
+
+  /// Sends [config] for [subscription] through the update queue, retrying
+  /// while the SFU isn't forwarding the track yet (see
+  /// [SfuSessionOptions.layerUpdateRetryTimeout]).
+  ///
+  /// A newer [setPreferredRid] for the same subscription supersedes a retry:
+  /// this one then completes without sending again, as an earlier update in
+  /// the same batch does.
+  Future<void> _updateLayer(
+    RemoteTrackSubscription subscription,
+    SimulcastConfig config,
+  ) async {
+    final request = ++subscription._layerRequests;
+    var waited = Duration.zero;
+    var delay = _layerRetryFirstDelay;
+    while (true) {
+      final item = _UpdateItem(subscription, config);
+      _updates.add(item);
+      final SfuTrackException rejection;
+      try {
+        return await item.done.future;
+      } on SfuTrackException catch (e) {
+        if (!_isNotForwardingYet(e) ||
+            waited >= options.layerUpdateRetryTimeout) {
+          rethrow;
+        }
+        rejection = e;
+      }
+      await Future<void>.delayed(delay);
+      waited += delay;
+      delay = delay * 2 > _layerRetryMaxDelay ? _layerRetryMaxDelay : delay * 2;
+      if (request != subscription._layerRequests) return; // Superseded.
+      if (!isUsable ||
+          !identical(subscription._session, this) ||
+          subscription.state != SfuTrackState.active) {
+        // Unsubscribed or moved meanwhile: this update no longer applies.
+        throw rejection;
+      }
+    }
+  }
+
+  static const _layerRetryFirstDelay = Duration(milliseconds: 100);
+  static const _layerRetryMaxDelay = Duration(seconds: 1);
+
+  /// Whether [e] is the SFU's `tracks/update` answer for a pulled track it
+  /// isn't forwarding yet: "The track is not configured for simulcast, no
+  /// updates applicable." It gives the same answer for a track published
+  /// without simulcast.
+  static bool _isNotForwardingYet(SfuTrackException e) =>
+      e.operation == 'tracks/update' &&
+      e.errorCode == 'update_track_error' &&
+      (e.errorDescription ?? '').contains('not configured for simulcast');
 
   /// Unpublishes [publication] (`tracks/close`): stops its transceiver,
   /// sends a new offer with the close request, and applies the answer.
@@ -1028,7 +1096,7 @@ class SfuSession {
   // ---------------------------------------------------------------------------
 
   Future<void> _runCloseBatch(List<_CloseItem> batch) async {
-    final closing = <_CloseItem>[];
+    final closing = <(_CloseItem, PeerTransceiver)>[];
     for (final item in batch) {
       final transceiver = item.transceiverOn(this);
       final mid = item.midOn(this);
@@ -1038,48 +1106,71 @@ class SfuSession {
         item.succeed(); // Never pushed or pulled here: nothing to close.
         continue;
       }
-      try {
-        await transceiver.stop();
-      } catch (_) {
-        // Already stopped.
-      }
       item.mid = mid;
-      closing.add(item);
+      closing.add((item, transceiver));
     }
     if (closing.isEmpty) return;
     if (!isUsable) {
       // As in partytracks, don't negotiate on a dead connection.
-      for (final item in closing) {
+      for (final (item, transceiver) in closing) {
+        await _stop(transceiver);
         item.succeed();
       }
       return;
     }
 
-    final offer = await _pc.createOffer();
-    await _pc.setLocalDescription(offer);
-    final response = await _call(
-      () => _broker.closeTracks(
-        sessionId,
-        CloseTracksRequest(
-          mids: [for (final item in closing) item.mid!],
-          sessionDescription: offer,
+    // Rejecting every m-line of the session doesn't work: with
+    // `max-bundle`, libwebrtc refuses the offer ("max-bundle configured but
+    // session description has no BUNDLE group"), and with other policies
+    // the transport closes and the SFU drops the session. So when these are
+    // the session's last live m-lines, close them without negotiation
+    // (`force`) and park their transceivers instead of stopping them: the
+    // SFU stops forwarding, a parked sender sends nothing, and the m-lines
+    // keep the transport up. See `docs/design.md` §4.2.
+    final mids = {for (final (item, _) in closing) item.mid!};
+    final live = _liveMids((await _pc.localDescription())?.sdp ?? '');
+    final force = live.isNotEmpty && live.every(mids.contains);
+
+    final TracksResponse response;
+    if (force) {
+      for (final (item, transceiver) in closing) {
+        if (item.publication != null) await transceiver.replaceTrack(null);
+      }
+      response = await _call(
+        () => _broker.closeTracks(
+          sessionId,
+          CloseTracksRequest(mids: mids.toList(), force: true),
         ),
-      ),
-    );
-    _throwIfUnusable();
-    _throwIfRequestError('tracks/close', response);
-    final description = response.sessionDescription;
-    if (description != null && description.type == SdpType.answer) {
-      await _pc.setRemoteDescription(description);
-    } else if (response.requiresImmediateRenegotiation) {
-      // The SFU answered our offer with an offer of its own: withdraw ours
-      // (we are in `have-local-offer`) and answer theirs.
-      await _pc.rollback();
-      await _renegotiate('tracks/close', description);
+      );
+      _throwIfUnusable();
+      _throwIfRequestError('tracks/close', response);
+    } else {
+      for (final (_, transceiver) in closing) {
+        await _stop(transceiver);
+      }
+      final offer = await _pc.createOffer();
+      await _pc.setLocalDescription(offer);
+      response = await _call(
+        () => _broker.closeTracks(
+          sessionId,
+          CloseTracksRequest(mids: mids.toList(), sessionDescription: offer),
+        ),
+      );
+      _throwIfUnusable();
+      _throwIfRequestError('tracks/close', response);
+      final description = response.sessionDescription;
+      if (description != null && description.type == SdpType.answer) {
+        await _pc.setRemoteDescription(description);
+      } else if (response.requiresImmediateRenegotiation) {
+        // The SFU answered our offer with an offer of its own: withdraw ours
+        // (we are in `have-local-offer`) and answer theirs.
+        await _pc.rollback();
+        await _renegotiate('tracks/close', description);
+      }
     }
 
     final results = _TrackResults(response.tracks);
-    for (final item in closing) {
+    for (final (item, _) in closing) {
       final result = results.take((r) => r.mid == item.mid);
       // `close_track_error` means already closed: the goal is reached.
       if (result != null &&
@@ -1098,6 +1189,29 @@ class SfuSession {
         item.succeed();
       }
     }
+  }
+
+  static Future<void> _stop(PeerTransceiver transceiver) async {
+    try {
+      await transceiver.stop();
+    } catch (_) {
+      // Already stopped.
+    }
+  }
+
+  /// The `mid`s of the m-lines [sdp] doesn't reject (port other than 0).
+  static Set<String> _liveMids(String sdp) {
+    final live = <String>{};
+    var rejected = true;
+    for (final line in const LineSplitter().convert(sdp)) {
+      if (line.startsWith('m=')) {
+        final fields = line.split(' ');
+        rejected = fields.length > 1 && fields[1] == '0';
+      } else if (line.startsWith('a=mid:') && !rejected) {
+        live.add(line.substring('a=mid:'.length).trim());
+      }
+    }
+    return live;
   }
 
   void _throwIfRequestError(String operation, TracksResponse response) {
