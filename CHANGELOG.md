@@ -8,6 +8,10 @@
   - Unsubscribing or unpublishing the last track of a session no longer fails (`max-bundle configured but session description has no BUNDLE group`): those m-lines are closed with `force` and kept idle.
   - `setPreferredRid` right after a pull retries while the SFU isn't forwarding the track yet (`SfuSessionOptions.layerUpdateRetryTimeout`, 10 s).
   - On Windows and Linux, at most 8 ICE server URLs reach `flutter_webrtc` (its desktop plugin overflows a fixed array beyond that).
+- Fixes from the first runs against the real SFU on Android (a Pixel 10, Android 16):
+  - Publishing works on Android: every push failed with "the transceiver has no mid", because the Android plugin replaces a transceiver's ID with its mid after negotiation. The package now finds its transceiver by the sender's ID, and stops a negotiated transceiver through its current entry, which the iOS and macOS plugin (whose transceiver ID is the mid) needs too (not yet run on Darwin).
+  - Android doesn't report negotiated DataChannels as open either; the `getStats()` fallback from the Windows fix covers it (no change needed). The 8-ICE-server limit stays desktop-only.
+- Example: `integration_test/cross_device_test.dart`, a call between two devices (such as Windows and Android) through the same SFU: media both ways and simulcast layer switching, checked in `getStats()`. `docs/checkpoint.md` explains how to run it, and how to reach the dev server from a USB-connected phone with `adb reverse`.
 
 - Video defaults to VP8 on every platform (was Windows only): the SFU forwards each publisher's codec, so a Windows subscriber must never receive H.264 (flutter-webrtc #982). Opt out with `SfuSessionDefaults.videoCodecPreferences: const []`.
 
