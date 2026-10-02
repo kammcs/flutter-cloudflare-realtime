@@ -39,6 +39,11 @@ class AudioRouteUnavailableException implements Exception {
 ///
 /// The current route is always read back from the platform.
 ///
+/// While a **system call** exists (CallKit or Core-Telecom,
+/// `docs/design.md` §4.8), the system owns the audio session and, on
+/// Android, the routing: `SystemCalls` hands call audio a backend for it
+/// ([useSystemCall]), and the same policy runs on the system's routes.
+///
 /// It also follows **interruptions** (a phone call, another app's audio)
 /// and drives the **proximity sensor** (`docs/design.md` §4.7):
 ///
@@ -51,7 +56,7 @@ class AudioRouteUnavailableException implements Exception {
 ///
 /// Internal: the Room exposes it.
 class CallAudio {
-  CallAudio._(this._backend);
+  CallAudio._(this._platform);
 
   static CallAudio? _instance;
 
@@ -67,7 +72,10 @@ class CallAudio {
     _instance = null;
   }
 
-  final CallAudioBackend _backend;
+  final CallAudioBackend _platform;
+  // A system call's backend (§4.8), while one exists.
+  CallAudioBackend? _system;
+  CallAudioBackend get _backend => _system ?? _platform;
   late final CoalescingRunner _runner = CoalescingRunner(_reconcile);
 
   /// The routes, as listed to apps (see [visibleAudioRoutes]).
@@ -95,6 +103,9 @@ class CallAudio {
   bool _proximityAsked = false;
   bool? _forcedSpeaker;
   AudioRoute? _userChoice;
+  // A user's choice from before the backend changed, matched by kind (and
+  // name) on the new backend's first listing: the route IDs differ.
+  AudioRoute? _carriedChoice;
   Set<String> _known = {};
   final Map<String, int> _connectedAt = {};
   int _sequence = 0;
@@ -104,7 +115,13 @@ class CallAudio {
   StreamSubscription<AppLifecycleState>? _lifecycle;
 
   /// Whether this platform routes call audio (phones).
-  bool get supported => _backend.supported;
+  bool get supported => _platform.supported;
+
+  /// Whether a system call's backend routes call audio now (§4.8).
+  bool get usesSystemCall => _system != null;
+
+  /// The platform's backend, which a system call's backend builds on.
+  CallAudioBackend get platformBackend => _platform;
 
   /// Whether the speaker is wanted when nothing is connected.
   bool get wantsSpeaker => _forcedSpeaker ?? _videoRooms.isNotEmpty;
@@ -130,11 +147,7 @@ class CallAudio {
       _userChoice = null;
     }
     if (first) {
-      _changes = _backend.changes.listen((_) => _runner.run());
-      _interruptions = _backend.interruptions.listen(
-        _onInterruption,
-        onError: (Object _) {},
-      );
+      _listenToBackend();
       _lifecycle = callLifecycleSource().states.listen(
         _onLifecycle,
         onError: (Object _) {},
@@ -142,6 +155,60 @@ class CallAudio {
       await _backend.activate();
     }
     await _runner.run();
+  }
+
+  void _listenToBackend() {
+    _changes = _backend.changes.listen((_) => _runner.run());
+    _interruptions = _backend.interruptions.listen(
+      _onInterruption,
+      onError: (Object _) {},
+    );
+  }
+
+  Future<void> _stopListeningToBackend() async {
+    await _changes?.cancel();
+    _changes = null;
+    await _interruptions?.cancel();
+    _interruptions = null;
+  }
+
+  /// Hands call audio to a system call's [backend] (CallKit or Telecom,
+  /// `docs/design.md` §4.8), or back to the platform's with `null`.
+  ///
+  /// With rooms joined, the old backend leaves call mode first (Telecom and
+  /// CallKit own the mode, the focus and the session), the new one is
+  /// followed, and the route is chosen again on the new backend's routes; a
+  /// route the user picked carries over by kind. An interruption is taken
+  /// back on the new backend: whoever owns the audio now decides.
+  Future<void> useSystemCall(CallAudioBackend? backend) async {
+    if (!supported || identical(backend, _system)) return;
+    final joined = _rooms.isNotEmpty;
+    if (joined) {
+      await _stopListeningToBackend();
+      try {
+        await _backend.deactivate();
+      } catch (error) {
+        debugPrint('cloudflare_realtime: leaving call mode failed: $error');
+      }
+    }
+    _carriedChoice = _userChoice ?? _carriedChoice;
+    _userChoice = null;
+    _system = backend;
+    _known = {};
+    _connectedAt.clear();
+    _defaultToSpeaker = null;
+    if (!joined) return;
+    _listenToBackend();
+    try {
+      await _backend.activate();
+    } catch (error) {
+      debugPrint('cloudflare_realtime: entering call mode failed: $error');
+    }
+    if (interruption.value != null) {
+      await _resume();
+    } else {
+      await _runner.run();
+    }
   }
 
   /// Unregisters [room]. The last one out leaves call mode and resets the
@@ -154,16 +221,14 @@ class CallAudio {
       await _runner.run();
       return;
     }
-    await _changes?.cancel();
-    _changes = null;
-    await _interruptions?.cancel();
-    _interruptions = null;
+    await _stopListeningToBackend();
     await _lifecycle?.cancel();
     _lifecycle = null;
     interruption.set(null);
     await _updateProximity();
     _forcedSpeaker = null;
     _userChoice = null;
+    _carriedChoice = null;
     _known = {};
     _connectedAt.clear();
     _defaultToSpeaker = null;
@@ -276,6 +341,10 @@ class CallAudio {
     if (_rooms.isEmpty) return;
     try {
       final visible = visibleAudioRoutes(await _backend.routes());
+      if (_carriedChoice case final carried? when visible.isNotEmpty) {
+        _carriedChoice = null;
+        _userChoice ??= sameAudioRoute(visible, carried);
+      }
       final ids = {for (final r in visible) r.id};
       final arrived = [
         for (final r in visible)
@@ -357,6 +426,18 @@ List<AudioRoute> visibleAudioRoutes(List<AudioRoute> routes) {
       if (!(bluetooth && r.kind == AudioRouteKind.earpiece) && seen.add(r.id))
         r,
   ]);
+}
+
+/// The route among [routes] that is the same place as [route], from another
+/// backend (whose IDs differ): the same kind, and the same name when both
+/// have one; `null` when there is none.
+@visibleForTesting
+AudioRoute? sameAudioRoute(List<AudioRoute> routes, AudioRoute route) {
+  final kind = routes.where((r) => r.kind == route.kind).toList();
+  return kind.firstWhereOrNull(
+        (r) => r.name.isNotEmpty && r.name == route.name,
+      ) ??
+      kind.firstOrNull;
 }
 
 /// The route the policy wants among [routes] (see [CallAudio]), or `null`

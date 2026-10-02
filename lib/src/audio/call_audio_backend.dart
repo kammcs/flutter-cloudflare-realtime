@@ -251,8 +251,7 @@ class MethodChannelCallAudioBackend implements CallAudioBackend {
 }
 
 /// An [AudioRoute] from the native code's map, or `null` for a kind this
-/// package doesn't know.
-@visibleForTesting
+/// package doesn't know. Also reads the system calls' endpoints (§4.8).
 AudioRoute? audioRouteFromMap(Map<Object?, Object?> map) {
   final id = map['id'];
   final kind = AudioRouteKind.values.asNameMap()[map['kind']];

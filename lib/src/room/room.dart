@@ -6,7 +6,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show debugPrint, immutable;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
@@ -18,6 +18,7 @@ import '../audio/remote_audio_sink.dart';
 import '../background/call_background.dart';
 import '../background/camera_pause.dart';
 import '../broker/broker_client.dart';
+import '../calls/system_calls.dart';
 import '../data/data_channel_manager.dart';
 import '../media/constraints.dart';
 import '../media/device_media_source.dart';
@@ -60,6 +61,7 @@ part 'room_data.dart';
 part 'room_events.dart';
 part 'room_reconnection.dart';
 part 'room_speakers.dart';
+part 'room_system_call.dart';
 part 'screen_share_watchdog.dart';
 
 /// Connects a new [SfuSession] through a broker: the room's session
@@ -163,6 +165,8 @@ class Room {
   late final _RoomAudio _audio = _RoomAudio();
   // Background service, interruptions, camera pauses: room_background.dart.
   late final _RoomBackground _background = _RoomBackground(this);
+  // The attached system call (CallKit, Telecom): room_system_call.dart.
+  late final _RoomSystemCall _systemCall = _RoomSystemCall(this);
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -436,9 +440,45 @@ class Room {
   Stream<CameraPauseReason?> get cameraPauseChanges =>
       CallBackground.instance.cameraPause.stream;
 
+  /// The system call (CallKit, Telecom; `docs/design.md` §4.8) this room
+  /// follows, from [attachSystemCall], or `null`.
+  SystemCall? get systemCall => _systemCall.call;
+
+  /// Ties this room to [call], a call in the phone's own call UI
+  /// ([SystemCalls], `docs/design.md` §4.8):
+  ///
+  /// - the system's mute button and the room's microphone publication stay
+  ///   in step, both ways (when they disagree at attach time, or a
+  ///   microphone is published later, both end up muted);
+  /// - with [leaveWhenEnded] (default `true`), the room leaves when the
+  ///   call ends, for example from the lock screen or a headset button;
+  /// - with [endWhenLeft] (default `true`), [leave] ends the call.
+  ///
+  /// While the call is on hold, the room's audio is interrupted
+  /// ([CallInterruptionReason.held]). Attaching another call replaces this
+  /// one. Throws a [StateError] after [leave].
+  void attachSystemCall(
+    SystemCall call, {
+    bool leaveWhenEnded = true,
+    bool endWhenLeft = true,
+  }) {
+    _checkNotLeft();
+    if (call.isEnded) throw StateError('The call ${call.id} has ended.');
+    _systemCall.attach(
+      call,
+      leaveWhenEnded: leaveWhenEnded,
+      endWhenLeft: endWhenLeft,
+    );
+  }
+
+  /// Stops following the system call: it no longer ends with the room, nor
+  /// the room with it.
+  void detachSystemCall() => _systemCall.detach();
+
   /// Leaves the room and releases everything it holds.
   ///
-  /// In order: stops listening to signaling and leaves it (so others stop
+  /// In order: ends an attached system call ([attachSystemCall]'s
+  /// `endWhenLeft`), stops listening to signaling and leaves it (so others stop
   /// pulling), unpublishes the local tracks, closes the SFU session,
   /// disposes the media sources the room created (camera, microphone and
   /// screen share; sources passed to [LocalParticipant.publishMediaSource]
@@ -753,6 +793,8 @@ class Room {
 
   Future<void> _leave() async {
     _left = true;
+    // The system's call UI goes away first (attachSystemCall's endWhenLeft).
+    _systemCall.dispose();
     // Stop the stats polls and the layer timers before anything else.
     _speakers.stop();
     _layers.dispose();

@@ -19,6 +19,31 @@ export 'src/audio/call_audio.dart' show AudioRouteUnavailableException;
 export 'src/audio/call_interruption.dart' show CallInterruptionReason;
 export 'src/background/camera_pause.dart' show CameraPauseReason;
 
+// System calls: CallKit, PushKit and Android Telecom (design.md §4.8).
+export 'src/calls/system_call_types.dart'
+    show
+        CallHandle,
+        CallHandleType,
+        SystemCallEndReason,
+        SystemCallErrorCode,
+        SystemCallException,
+        SystemCallState,
+        SystemCallsConfig;
+export 'src/calls/system_calls.dart'
+    show
+        SystemCall,
+        SystemCallAddedEvent,
+        SystemCallAnsweredEvent,
+        SystemCallAudioActivatedEvent,
+        SystemCallAudioDeactivatedEvent,
+        SystemCallDtmfEvent,
+        SystemCallEndedEvent,
+        SystemCallEvent,
+        SystemCallHeldEvent,
+        SystemCallMutedEvent,
+        SystemCalls,
+        VoipPush;
+
 // Rendering (design.md §4.3).
 export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
 export 'src/rendering/renderable_track.dart'

@@ -18,4 +18,9 @@ enum CallInterruptionReason {
   /// way: a phone call, Siri, an alarm or another app's audio look the same
   /// to the app.
   unknown,
+
+  /// The call's system call is on hold (`docs/design.md` §4.8): the user or
+  /// the system (another call, answered with "hold and accept") held it in
+  /// CallKit or Telecom. It resumes when the call is taken off hold.
+  held,
 }
