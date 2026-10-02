@@ -4,8 +4,9 @@ import UIKit
 
 /// The package's iOS plugin: call audio routing (docs/design.md §4.6),
 /// interruptions and the proximity sensor (§4.7), here; the camera paused
-/// by the system (`CallBackground`, §4.7); and the screen share's Broadcast
-/// Upload Extension support (`ScreenBroadcast`, §10).
+/// by the system (`CallBackground`, §4.7); system calls with CallKit and
+/// PushKit (`SystemCalls`, §4.8); and the screen share's Broadcast Upload
+/// Extension support (`ScreenBroadcast`, §10).
 ///
 /// Call audio routing:
 ///
@@ -51,6 +52,17 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       name: "dev.kammcs.cloudflare_realtime/call_background_events",
       binaryMessenger: registrar.messenger()
     ).setStreamHandler(background)
+    // One for the process: every engine shares the calls and their events.
+    let systemCalls = SystemCalls.shared
+    systemCalls.restore()
+    FlutterMethodChannel(
+      name: "dev.kammcs.cloudflare_realtime/system_calls",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { call, result in systemCalls.handle(call, result: result) }
+    FlutterEventChannel(
+      name: "dev.kammcs.cloudflare_realtime/system_calls_events",
+      binaryMessenger: registrar.messenger()
+    ).setStreamHandler(SystemCallEventStream(systemCalls.events))
     let methods = FlutterMethodChannel(
       name: "dev.kammcs.cloudflare_realtime/call_audio",
       binaryMessenger: registrar.messenger())
@@ -179,7 +191,12 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
 
   /// Activates the audio session again after an interruption. Fails while
   /// something with priority (a phone call) still holds the audio.
+  ///
+  /// Never while a CallKit call exists (§4.8): CallKit owns the session's
+  /// activation then, and Dart takes the call off hold instead.
   private func resume() -> Bool {
+    let systemCalls = SystemCalls.shared
+    if systemCalls.ownsAudioSession { return systemCalls.audioActivated }
     do {
       try session.setActive(true)
       return true

@@ -50,7 +50,49 @@ Add the `audio` background mode to your app's `Info.plist`; with it, iOS keeps t
 </array>
 ```
 
-iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `LocalCameraPausedEvent` / `LocalCameraResumedEvent` report it (on Android the service keeps the camera running). The `voip` mode belongs with incoming-call push, which is planned (roadmap M11).
+iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `LocalCameraPausedEvent` / `LocalCameraResumedEvent` report it (on Android the service keeps the camera running). The `voip` mode belongs with system calls and VoIP pushes (below).
+
+### System calls on iOS (CallKit and VoIP pushes)
+
+`SystemCalls.instance.configure()` sets up CallKit, and the app's calls then show in the system's call UI: the lock screen, Recents, a headset, a car or a watch (see [design.md §4.8](docs/design.md#48-system-calls-callkit-and-android-telecom-native)).
+
+- **`Info.plist`:** add `voip` next to `audio` in `UIBackgroundModes`:
+
+  ```xml
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>audio</string>
+    <string>voip</string>
+  </array>
+  ```
+
+- **Call audio:** CallKit activates the audio session when a call starts or is answered. Once `configure` has run, the package switches WebRTC to manual audio, so a call's audio starts only after CallKit activated the session. Don't activate the session yourself during a system call.
+- **Optional:** `SystemCallsConfig.iconTemplateImageName` (a 40×40 pt template image in your asset catalog) and `ringtoneSound` (a sound file in your bundle).
+- **China mainland:** apps on the China mainland App Store must not use CallKit. There, don't call `configure`.
+
+**VoIP pushes** wake the app for an incoming call (`SystemCalls.instance.voipPush`). They need the following:
+
+- **The Push Notifications capability** (Xcode: Signing & Capabilities, + Capability; this adds the `aps-environment` entitlement). Your provisioning profile must include it. Without it, no VoIP token arrives.
+- **An APNs key or certificate for your server:** a token-based key (`.p8`, from Certificates, Identifiers & Profiles, Keys, with APNs enabled), or a VoIP Services certificate.
+- **The token:** `await SystemCalls.instance.voipPush.register()` (remembered across launches) and `tokenChanges`. Send the token to your server. iOS only.
+- **The push:** HTTP/2 to `api.push.apple.com` (`api.sandbox.push.apple.com` for development builds), `/3/device/<token>`, with the headers `apns-push-type: voip`, `apns-topic: <bundle id>.voip`, `apns-priority: 10` and `apns-expiration: 0`. The package reads these keys at the top level of the JSON payload:
+
+  ```json
+  {
+    "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "handle": "ada@example.com",
+    "handleType": "emailAddress",
+    "displayName": "Ada",
+    "video": true,
+    "room": "your-room-id"
+  }
+  ```
+
+  - **Required:** `id`, a UUID that the call keeps (share it with your signaling), and `handle`.
+  - **Optional:** `handleType` (`generic`, the default, `phoneNumber` or `emailAddress`), `displayName` and `video`.
+  - **Everything else** except `aps` becomes `SystemCall.payload`, for finding the room.
+  - **What the package does:** it reports the call to CallKit itself, before Dart runs, as iOS requires. The call then arrives as a `SystemCallAddedEvent`, or in `SystemCalls.instance.calls` after `configure`.
+- **Push only for calls.** iOS terminates an app that receives a VoIP push and doesn't report a call. After repeated failures, iOS stops delivering VoIP pushes to it. A push without `id` or `handle` still rings for an instant and is ended as failed. A push for a call your signaling already reported is ignored.
 
 ### Interruptions and the proximity sensor (phones)
 
