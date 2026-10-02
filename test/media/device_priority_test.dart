@@ -45,6 +45,60 @@ void main() {
     expect(prioritizeDevices([iphoneMic, mic1]), [mic1, iphoneMic]);
   });
 
+  test('pushes known virtual camera apps down, cameras only', () {
+    const broadcastCam = MediaDevice(
+      deviceId: 'cam-nv',
+      kind: MediaDeviceKind.videoInput,
+      label: 'Camera (NVIDIA Broadcast)',
+    );
+    const obsbot = MediaDevice(
+      deviceId: 'cam-obsbot',
+      kind: MediaDeviceKind.videoInput,
+      label: 'OBSBOT Tiny 2',
+    );
+    const obsbotVirtual = MediaDevice(
+      deviceId: 'cam-obsbot-v',
+      kind: MediaDeviceKind.videoInput,
+      label: 'OBSBOT Virtual Camera',
+    );
+    // OBSBOT is a real webcam: "obs" alone mustn't sink it.
+    expect(prioritizeDevices([broadcastCam, obsbot, obsbotVirtual]), [
+      obsbot,
+      broadcastCam,
+      obsbotVirtual,
+    ]);
+    for (final label in [
+      'Snap Camera',
+      'XSplit VCam',
+      'ManyCam Video Source',
+      'mmhmm Camera',
+    ]) {
+      final app = MediaDevice(
+        deviceId: 'cam-app',
+        kind: MediaDeviceKind.videoInput,
+        label: label,
+      );
+      expect(prioritizeDevices([app, cam1]), [cam1, app], reason: label);
+    }
+    // People choose NVIDIA Broadcast's noise-removal microphone on purpose.
+    const broadcastMic = MediaDevice(
+      deviceId: 'mic-nv',
+      kind: MediaDeviceKind.audioInput,
+      label: 'Microphone (NVIDIA Broadcast)',
+    );
+    expect(prioritizeDevices([broadcastMic, mic1]), [broadcastMic, mic1]);
+  });
+
+  test('switchCamera cycles past known virtual camera apps last', () {
+    const broadcastCam = MediaDevice(
+      deviceId: 'cam-nv',
+      kind: MediaDeviceKind.videoInput,
+      label: 'Camera (NVIDIA Broadcast)',
+    );
+    expect(nextCamera([broadcastCam, cam1, cam2], current: cam1), cam2);
+    expect(nextCamera([broadcastCam, cam1, cam2], current: cam2), broadcastCam);
+  });
+
   test('a preferred virtual device still wins', () {
     expect(prioritizeDevices([cam1, virtualCam], preferred: virtualCam), [
       virtualCam,
