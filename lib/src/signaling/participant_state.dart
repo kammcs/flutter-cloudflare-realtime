@@ -38,10 +38,11 @@ enum TrackSource {
 /// subscribers choosing a layer (`docs/design.md` §6).
 ///
 /// [rids] lists the encodings highest first (`a`, `b`, `c` by default).
-/// [width] and [height] are the requested size of the highest layer, and
+/// [width] and [height] are the size of the highest layer, and
 /// [scaleDownBy] each layer's `scaleResolutionDownBy`, in the order of
-/// [rids]. Sizes are what the publisher asked for; the capture can come out
-/// smaller.
+/// [rids]. A room announces the size it captures (portrait on a phone held
+/// upright), and announces it again when it changes (M12); older clients
+/// announced the size they asked for.
 ///
 /// ## Wire shape
 ///
@@ -101,10 +102,10 @@ class SimulcastInfo {
   /// The encodings' RIDs, highest layer first.
   final List<String> rids;
 
-  /// The highest layer's requested width in pixels, if known.
+  /// The highest layer's width in pixels, if known.
   final int? width;
 
-  /// The highest layer's requested height in pixels, if known.
+  /// The highest layer's height in pixels, if known.
   final int? height;
 
   /// Each layer's `scaleResolutionDownBy`, in the order of [rids]. `null`
@@ -275,7 +276,8 @@ const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
 ///     },
 ///     "mic-1b7e": {"kind": "audio", "source": "microphone", "muted": true}
 ///   },
-///   "metadata": {"displayName": "Ada"}
+///   "metadata": {"displayName": "Ada"},
+///   "layerDemand": {"camera-77aa": "c"}
 /// }
 /// ```
 ///
@@ -288,6 +290,9 @@ const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
 ///   omitted when `false`) and `simulcast` (optional, see
 ///   [SimulcastInfo]).
 /// - `metadata` (object, optional): omitted when [metadata] is `null`.
+/// - `layerDemand` (object, optional): the simulcast layer this participant
+///   pulls of other participants' tracks, as SFU `trackName` to RID (see
+///   [layerDemand]). Omitted when [layerDemand] is `null`.
 ///
 /// Readers ignore unknown keys, so later versions can add fields.
 @immutable
@@ -300,8 +305,10 @@ class ParticipantState {
     this.sessionId,
     Map<String, TrackInfo> tracks = const {},
     Map<String, Object?>? metadata,
+    Map<String, String>? layerDemand,
   }) : tracks = Map.unmodifiable(tracks),
-       metadata = metadata == null ? null : Map.unmodifiable(metadata);
+       metadata = metadata == null ? null : Map.unmodifiable(metadata),
+       layerDemand = layerDemand == null ? null : Map.unmodifiable(layerDemand);
 
   /// Parses the wire shape written by [toJson].
   ///
@@ -344,7 +351,20 @@ class ParticipantState {
               for (final MapEntry(:key, :value) in metadata.entries)
                 _stringKey(key, json): value,
             },
+      layerDemand: _layerDemandFromJson(json['layerDemand']),
     );
+  }
+
+  // Tolerant, like [SimulcastInfo.fromJson]: a malformed value reads as
+  // "not reported", which publishers treat as wanting every layer.
+  static Map<String, String>? _layerDemandFromJson(Object? json) {
+    if (json is! Map) return null;
+    final demand = <String, String>{};
+    for (final MapEntry(:key, :value) in json.entries) {
+      if (key is! String || value is! String || value.isEmpty) return null;
+      demand[key] = value;
+    }
+    return demand;
   }
 
   static String _stringKey(Object? key, Object source) {
@@ -380,6 +400,19 @@ class ParticipantState {
   /// limit payload sizes.
   final Map<String, Object?>? metadata;
 
+  /// The simulcast layer this participant pulls of other participants'
+  /// video tracks: SFU `trackName` to the RID it asks for (the highest
+  /// layer it wants), or `null` if the participant doesn't report it.
+  ///
+  /// Publishers use it to stop encoding layers that no one pulls
+  /// (`docs/design.md` §6.2). A reported map lists every simulcast track
+  /// the participant pulls or is about to pull; a track that isn't listed
+  /// isn't pulled. `null` (an older client, or one that turned reporting
+  /// off) counts as pulling every layer of every track. The room names
+  /// tracks `<source>-<uuid>`, so the names are unique across publishers
+  /// and the map isn't keyed by publisher.
+  final Map<String, String>? layerDemand;
+
   /// The wire shape documented on [ParticipantState].
   Map<String, Object?> toJson() => {
     'participantId': participantId,
@@ -388,12 +421,14 @@ class ParticipantState {
       for (final MapEntry(:key, :value) in tracks.entries) key: value.toJson(),
     },
     if (metadata != null) 'metadata': metadata,
+    if (layerDemand != null) 'layerDemand': layerDemand,
   };
 
   /// Returns a copy with the given fields replaced.
   ///
-  /// Set [clearSessionId] or [clearMetadata] to reset those fields to `null`;
-  /// they take precedence over [sessionId] and [metadata].
+  /// Set [clearSessionId], [clearMetadata] or [clearLayerDemand] to reset
+  /// those fields to `null`; they take precedence over [sessionId],
+  /// [metadata] and [layerDemand].
   ParticipantState copyWith({
     String? participantId,
     String? sessionId,
@@ -401,11 +436,14 @@ class ParticipantState {
     Map<String, TrackInfo>? tracks,
     Map<String, Object?>? metadata,
     bool clearMetadata = false,
+    Map<String, String>? layerDemand,
+    bool clearLayerDemand = false,
   }) => ParticipantState(
     participantId: participantId ?? this.participantId,
     sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
     tracks: tracks ?? this.tracks,
     metadata: clearMetadata ? null : (metadata ?? this.metadata),
+    layerDemand: clearLayerDemand ? null : (layerDemand ?? this.layerDemand),
   );
 
   /// Value equality. [metadata] is compared deeply.
@@ -415,7 +453,8 @@ class ParticipantState {
       other.participantId == participantId &&
       other.sessionId == sessionId &&
       mapEquals(other.tracks, tracks) &&
-      _deepEquality.equals(other.metadata, metadata);
+      _deepEquality.equals(other.metadata, metadata) &&
+      mapEquals(other.layerDemand, layerDemand);
 
   @override
   int get hashCode => Object.hash(
@@ -425,10 +464,16 @@ class ParticipantState {
       tracks.entries.map((e) => Object.hash(e.key, e.value)),
     ),
     _deepEquality.hash(metadata),
+    layerDemand == null
+        ? null
+        : Object.hashAllUnordered(
+            layerDemand!.entries.map((e) => Object.hash(e.key, e.value)),
+          ),
   );
 
   @override
   String toString() =>
       'ParticipantState($participantId, session: $sessionId, '
-      'tracks: $tracks${metadata == null ? '' : ', metadata: $metadata'})';
+      'tracks: $tracks${metadata == null ? '' : ', metadata: $metadata'}'
+      '${layerDemand == null ? '' : ', layerDemand: $layerDemand'})';
 }

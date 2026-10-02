@@ -376,5 +376,54 @@ void main() {
     test('toString names the participant', () {
       expect(full.toString(), contains('alice'));
     });
+
+    group('layerDemand', () {
+      final reporting = full.copyWith(layerDemand: {'camera-1': 'c'});
+
+      test('is null (not reported) by default and omitted from JSON', () {
+        expect(full.layerDemand, isNull);
+        expect(full.toJson().containsKey('layerDemand'), isFalse);
+      });
+
+      test('round-trips, also when empty', () {
+        expect(reporting.toJson()['layerDemand'], {'camera-1': 'c'});
+        expect(ParticipantState.fromJson(reporting.toJson()), reporting);
+        final empty = full.copyWith(layerDemand: const {});
+        expect(empty.toJson()['layerDemand'], isEmpty);
+        expect(ParticipantState.fromJson(empty.toJson()), empty);
+        expect(empty, isNot(full), reason: 'empty is not "not reported"');
+      });
+
+      test('takes part in equality and copyWith', () {
+        expect(reporting, isNot(full));
+        expect(
+          reporting.copyWith(layerDemand: {'camera-1': 'c'}).hashCode,
+          reporting.hashCode,
+        );
+        expect(
+          reporting.copyWith(layerDemand: {'camera-1': 'a'}),
+          isNot(reporting),
+        );
+        expect(reporting.copyWith(clearLayerDemand: true), full);
+        expect(reporting.toString(), contains('layerDemand'));
+      });
+
+      test('a malformed value reads as not reported', () {
+        for (final bad in <Object?>[
+          'c',
+          ['camera-1'],
+          {'camera-1': 3},
+          {'camera-1': ''},
+          {1: 'c'},
+        ]) {
+          final json = reporting.toJson()..['layerDemand'] = bad;
+          expect(
+            ParticipantState.fromJson(json).layerDemand,
+            isNull,
+            reason: '$bad',
+          );
+        }
+      });
+    });
   });
 }

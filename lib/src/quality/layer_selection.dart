@@ -53,8 +53,9 @@ class LayerSelectionConfig {
   /// What the SFU does when the preferred layer stops (for example when the
   /// publisher's encoder drops a layer under CPU or bandwidth pressure).
   /// Default [SimulcastOrdering.asciibetical]: fall back to the next
-  /// available RID. The client keeps its preferred RID, and the SFU returns
-  /// to it when the layer comes back.
+  /// available RID. The client keeps its preferred RID; the SFU is meant to
+  /// return to it when the layer comes back, but against the real SFU it
+  /// sometimes stays on the lower layer (`docs/design.md` §6.2).
   final SimulcastOrdering ridNotAvailable;
 
   /// Whether the SFU may step down from the preferred layer under the

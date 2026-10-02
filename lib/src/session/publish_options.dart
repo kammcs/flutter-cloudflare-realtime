@@ -111,6 +111,44 @@ abstract final class SimulcastPresets {
 /// order, for example to use hardware H.264 in a room without Windows peers.
 List<String> defaultVideoCodecPreferences() => const ['video/VP8'];
 
+/// A video codec to publish with (`docs/design.md` §6, Codec).
+///
+/// The SFU accepts H.264, H.265, VP8, VP9 and AV1, and forwards each
+/// publisher's codec unchanged: every subscriber must decode what a
+/// publisher sends. Which encoders and decoders exist depends on the
+/// platform's WebRTC build.
+enum VideoCodec {
+  /// VP8: the default. Software, decodes on every platform, and its
+  /// simulcast is the best trodden.
+  vp8('video/VP8'),
+
+  /// H.264: hardware encoding on most phones and Macs, which saves battery.
+  ///
+  /// **Not sent from Windows**: H.264 has crashed `flutter_webrtc` there
+  /// (flutter-webrtc #982), so a Windows publisher sends VP8 instead, and a
+  /// room with Windows subscribers should stay on VP8. Simulcast runs one
+  /// hardware encoder per layer, which some devices limit.
+  h264('video/H264'),
+
+  /// VP9: experimental here. Where the platform can't encode it, VP8 is
+  /// sent.
+  vp9('video/VP9'),
+
+  /// AV1: experimental here. Where the platform can't encode it, VP8 is
+  /// sent.
+  av1('video/AV1');
+
+  const VideoCodec(this.mimeType);
+
+  /// The codec's MIME type, as in `RTCRtpCodecCapability.mimeType`.
+  final String mimeType;
+
+  /// The codec preferences to publish with: this codec, then VP8 as the
+  /// fallback for a platform without this codec's encoder.
+  List<String> get codecPreferences =>
+      this == vp8 ? const ['video/VP8'] : [mimeType, 'video/VP8'];
+}
+
 /// Options for one published track.
 ///
 /// Null fields fall back to the session's [SfuSessionDefaults].

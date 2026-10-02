@@ -1,6 +1,6 @@
 # Cloudflare Realtime SFU: what this package builds on
 
-- **Summary date:** 2026-09-30.
+- **Summary date:** 2026-09-30 (simulcast and codecs re-checked 2026-10-02).
 - **Source of truth:** Cloudflare's docs and OpenAPI schema. Re-check them when implementing; the links are in the Sources section at the end.
 
 ## Components
@@ -105,6 +105,12 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
   - `asciibetical` falls back to the next available RID.
 - **Changing layer:** `PUT tracks/update` with the subscription's `mid` and the new `preferredRid`. Check the per-track result before updating app state.
 - **Automatic layer fallback is off by default, so the client picks layers.**
+- **A publisher isn't told which layers are pulled.** Nothing in the API, the docs or the `server-events` DataChannel reports subscribers' `preferredRid`s to the publisher. Pausing unpulled layers needs the app's own signaling ([design.md §6.2](design.md#62-publisher-side-layer-pausing-m12)).
+- **Codecs** (source 4c, "Limits"): video H.264, H.265, VP8, VP9 and AV1; audio Opus and G.711 (A-law, µ-law). Support depends on the endpoints. The SFU forwards each publisher's codec unchanged.
+- **Observed against the real SFU** (M12, a Pixel 10 in loopback; [design.md §6.2](design.md#62-publisher-side-layer-pausing-m12)):
+  - A layer the publisher pauses (`active: false`) leaves its subscribers within about 1.7 s, to the next available layer (`ridNotAvailable: asciibetical`).
+  - A new pull at a given `rid` gets that layer within about 0.4–1.7 s, also for a layer that was just resumed.
+  - Switching up with `tracks/update` happens on a cadence of about 6 s (6.2–6.5 s, sometimes 10–12 s), and sometimes not at all within 20–40 s: the SFU keeps forwarding a lower layer. That happened with every layer on, and more often when the requested layer had been paused and resumed. Re-sending the same `preferredRid` didn't help. The SFU asks publishers for keyframes with FIR and PLI.
 
 ## DataChannels
 
@@ -153,6 +159,7 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
 3. Negotiation: https://developers.cloudflare.com/realtime/sfu/concepts/negotiation/
 4. HTTPS API: https://developers.cloudflare.com/realtime/sfu/https-api/
    - 4b. OpenAPI schema: https://developers.cloudflare.com/realtime/static/realtime-api-2024-05-21.yaml
+   - 4c. Limits, timeouts and quotas (supported codecs): https://developers.cloudflare.com/realtime/sfu/limits/
 5. Simulcast: https://developers.cloudflare.com/realtime/sfu/simulcast/
 6. DataChannels: https://developers.cloudflare.com/realtime/sfu/features/datachannels/
    - 6b. Examples `echo-datachannels` and `cloud-gaming`: https://github.com/cloudflare/calls-examples
