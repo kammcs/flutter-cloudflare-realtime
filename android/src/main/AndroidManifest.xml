@@ -4,16 +4,30 @@
          missing on Android 12+. -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- Screen share (docs/design.md §10): the foreground service of type
-         mediaProjection that Android 10+ requires while capturing the
-         screen, and its notification (a runtime permission on Android 13+;
-         without it the share still works, the notification just isn't in
-         the drawer). -->
+    <!-- The proximity sensor turns the screen off near the ear while call
+         audio is on the earpiece (docs/design.md §4.7). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Foreground services: the call's (types microphone and camera, while
+         a call publishes them; docs/design.md §4.7) and the screen share's
+         (type mediaProjection, which Android 10+ requires while capturing
+         the screen; §10). Their notifications need POST_NOTIFICATIONS (a
+         runtime permission on Android 13+; without it the services still
+         run, the notification just isn't in the drawer). An app that runs
+         its own call service can remove CallService and its permissions
+         with tools:node="remove" (README). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application>
+        <service
+            android:name="dev.kammcs.cloudflare_realtime.CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera"
+            android:stopWithTask="true" />
         <service
             android:name="dev.kammcs.cloudflare_realtime.ScreenCaptureService"
             android:exported="false"

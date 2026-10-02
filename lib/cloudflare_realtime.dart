@@ -14,6 +14,11 @@ export 'src/room/screen_share_presets.dart';
 export 'src/audio/audio_route.dart' show AudioRoute, AudioRouteKind;
 export 'src/audio/call_audio.dart' show AudioRouteUnavailableException;
 
+// Calls outside the foreground: interruptions, the camera paused by the
+// system, the background service and the proximity sensor (design.md §4.7).
+export 'src/audio/call_interruption.dart' show CallInterruptionReason;
+export 'src/background/camera_pause.dart' show CameraPauseReason;
+
 // Rendering (design.md §4.3).
 export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
 export 'src/rendering/renderable_track.dart'

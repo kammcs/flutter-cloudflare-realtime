@@ -8,7 +8,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         AppleAudioMode,
         Helper;
 
+import '../reconnect/app_lifecycle_source.dart';
 import 'audio_route.dart';
+import 'call_interruption.dart';
 import 'platform.dart';
 
 /// The platform side of call audio routing (`docs/design.md` §4.6): lists
@@ -43,6 +45,68 @@ abstract interface class CallAudioBackend {
 
   /// Fires when the routes or the current route may have changed.
   Stream<void> get changes;
+
+  /// Turns the proximity sensor on ([enabled]) or off: while it is on, the
+  /// screen goes dark near the ear (`docs/design.md` §4.7). Completes with
+  /// whether it is on; `false` on a device without a sensor.
+  Future<bool> setProximityMonitoring(bool enabled);
+
+  /// Takes the call's audio back after an interruption: iOS activates the
+  /// audio session again, Android requests the audio focus and the call
+  /// mode. Completes with whether the call has its audio again; `false`
+  /// while something with priority (a phone call) still holds it.
+  Future<bool> resume();
+
+  /// Interruptions of the call's audio, as the platform reports them.
+  Stream<AudioInterruptionSignal> get interruptions;
+}
+
+/// An interruption of the call's audio beginning or ending, from the
+/// platform (`docs/design.md` §4.7).
+@immutable
+class AudioInterruptionSignal {
+  /// Something took the call's audio away, for [reason].
+  const AudioInterruptionSignal.began(CallInterruptionReason this.reason)
+    : began = true;
+
+  /// The platform gave the audio back.
+  const AudioInterruptionSignal.ended() : began = false, reason = null;
+
+  /// Whether the interruption began (else it ended).
+  final bool began;
+
+  /// Why, when it began.
+  final CallInterruptionReason? reason;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AudioInterruptionSignal &&
+      other.began == began &&
+      other.reason == reason;
+
+  @override
+  int get hashCode => Object.hash(began, reason);
+
+  @override
+  String toString() => began
+      ? 'AudioInterruptionSignal.began(${reason?.name})'
+      : 'AudioInterruptionSignal.ended()';
+}
+
+/// An [AudioInterruptionSignal] from the native code's event map
+/// (`{event: interruption, type: began|ended, reason}`), or `null` for
+/// anything else.
+@visibleForTesting
+AudioInterruptionSignal? audioInterruptionFromMap(Map<Object?, Object?> map) {
+  if (map['event'] != 'interruption') return null;
+  return switch (map['type']) {
+    'began' => AudioInterruptionSignal.began(
+      CallInterruptionReason.values.asNameMap()[map['reason']] ??
+          CallInterruptionReason.unknown,
+    ),
+    'ended' => const AudioInterruptionSignal.ended(),
+    _ => null,
+  };
 }
 
 /// Creates a [CallAudioBackend]; the platform's by default.
@@ -56,6 +120,16 @@ CallAudioBackendFactory? debugCallAudioBackendFactory;
 /// Creates the backend for this platform (or [debugCallAudioBackendFactory]'s).
 CallAudioBackend createCallAudioBackend() =>
     (debugCallAudioBackendFactory ?? _platformBackend)();
+
+/// **Tests only:** replaces the app lifecycle that call audio and the
+/// background service follow (an interrupted call takes its audio back when
+/// the app returns to the foreground). Reset it to `null` afterwards.
+@visibleForTesting
+AppLifecycleSource? debugCallLifecycleSource;
+
+/// The app lifecycle call audio and the background service follow.
+AppLifecycleSource callLifecycleSource() =>
+    debugCallLifecycleSource ?? const FlutterAppLifecycleSource();
 
 CallAudioBackend _platformBackend() => isPhone
     ? MethodChannelCallAudioBackend()
@@ -90,6 +164,15 @@ class UnsupportedCallAudioBackend implements CallAudioBackend {
 
   @override
   Stream<void> get changes => const Stream.empty();
+
+  @override
+  Future<bool> setProximityMonitoring(bool enabled) async => false;
+
+  @override
+  Future<bool> resume() async => true;
+
+  @override
+  Stream<AudioInterruptionSignal> get interruptions => const Stream.empty();
 }
 
 /// The phones' backend: this package's native code on Android and iOS.
@@ -140,11 +223,31 @@ class MethodChannelCallAudioBackend implements CallAudioBackend {
   Future<bool> select(AudioRoute route) async =>
       await _methods.invokeMethod<bool>('select', {'id': route.id}) ?? false;
 
-  @override
-  late final Stream<void> changes = _events
+  // One native stream: "changed" strings for routes, maps for
+  // interruptions.
+  late final Stream<Object?> _all = _events
       .receiveBroadcastStream()
-      .map((_) {})
       .asBroadcastStream();
+
+  @override
+  late final Stream<void> changes = _all
+      .where((event) => event is! Map)
+      .map((_) {});
+
+  @override
+  Future<bool> setProximityMonitoring(bool enabled) async =>
+      await _methods.invokeMethod<bool>('proximity', {'enabled': enabled}) ??
+      false;
+
+  @override
+  Future<bool> resume() async =>
+      await _methods.invokeMethod<bool>('resume') ?? false;
+
+  @override
+  late final Stream<AudioInterruptionSignal> interruptions = _all
+      .map((event) => event is Map ? audioInterruptionFromMap(event) : null)
+      .where((signal) => signal != null)
+      .cast<AudioInterruptionSignal>();
 }
 
 /// An [AudioRoute] from the native code's map, or `null` for a kind this

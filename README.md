@@ -14,6 +14,7 @@ This project isn't affiliated with or endorsed by Cloudflare.
 - Simulcast with per-tile layer selection.
 - Active-speaker detection.
 - Automatic reconnection.
+- Calls that keep going in the background on phones, pause for a phone call and resume after it, and turn the screen off at the ear.
 - Reliable and unreliable DataChannels.
 
 ## How it fits together
@@ -27,6 +28,36 @@ See [docs/design.md](docs/design.md) for the architecture, the broker contract a
 To try a real call across devices from your laptop, use the DEV ONLY local broker and WebSocket signaling in [tools/dev-server/](tools/dev-server/README.md). It needs just your Cloudflare SFU credentials in environment variables. Reference brokers for deployment are in [broker/](broker/README.md).
 
 ## Platform setup
+
+### Calls in the background on Android
+
+While a room publishes a microphone or a camera, the package runs a foreground service so the call keeps its microphone, camera and connection when the user leaves the app. Android 11+ silences the microphone and stops the camera of a backgrounded app without one, and Android 14+ requires its types (`microphone`, plus `camera` while the camera captures) and starts it only while the app is in the foreground. The service starts with the first publish and stops when nothing is published or the room is left.
+
+- **Manifest:** nothing to add. The package's manifest declares the service (`CallService`, types `microphone|camera`) and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS` and `WAKE_LOCK` permissions; the manifest merger brings them into your app. Your app still declares and requests `RECORD_AUDIO` and `CAMERA`.
+- **Notification:** the service shows a "Call in progress" notification that opens the app. It needs `POST_NOTIFICATIONS` on Android 13+, which the package doesn't ask for; without it the call still works in the background, the notification just isn't in the drawer. Override the strings `cloudflare_realtime_call_channel`, `…_title` and `…_text`, or the drawable `cloudflare_realtime_call`, in your app's resources.
+- **Google Play:** apps that use the `microphone` and `camera` foreground service types must declare them in the Play Console.
+- **Your own service:** pass `RoomOptions(foregroundService: false)`, and drop the package's with `tools:node="remove"` on `<service android:name="dev.kammcs.cloudflare_realtime.CallService">` (and its permissions, if nothing else needs them).
+- **A start that fails** (for example a camera published while the app is in the background) is a `RoomErrorEvent` with operation `foregroundService`, retried when the app is back in the foreground.
+
+### Calls in the background on iOS
+
+Add the `audio` background mode to your app's `Info.plist`; with it, iOS keeps the app running during a call (any call with a published or received audio track keeps the audio session active):
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+</array>
+```
+
+iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `LocalCameraPausedEvent` / `LocalCameraResumedEvent` report it (on Android the service keeps the camera running). The `voip` mode belongs with incoming-call push, which is planned (roadmap M11).
+
+### Interruptions and the proximity sensor (phones)
+
+- **Interruptions:** a phone call, Siri, an alarm or another app taking the audio pauses the call: `CallInterruptedEvent` (with a `CallInterruptionReason`), `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). It resumes by itself when the system gives the audio back or the app returns to the foreground (`CallResumedEvent`); `Room.resumeAudio()` tries at once. Android tells a phone call (`phoneCall`) from other audio (`otherAudio`); iOS doesn't say (`unknown`).
+- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
+
+See [design.md §4.7](docs/design.md#47-calls-outside-the-foreground-background-interruptions-proximity-native) for the details.
 
 ### Screen share on Android
 
