@@ -41,6 +41,7 @@ class _RoomLayerPausing {
   List<ParticipantState> _others = const [];
   final Map<LocalMediaPublication, _Paused> _pausers = {};
   bool _disposed = false;
+  bool _unsupportedReported = false;
 
   LayerPausingOptions get _options => _room.options.layerPausing;
 
@@ -50,6 +51,27 @@ class _RoomLayerPausing {
         !_options.enabled ||
         publication.kind != TrackKind.video ||
         _pausers.containsKey(publication)) {
+      return;
+    }
+    // flutter_webrtc's Windows and Linux plugin (its common C++) ignores
+    // encoding changes in setParameters (it edits copies and reports
+    // success), so a paused layer would keep sending while pausedLayers
+    // said otherwise.
+    final platform = _room._mediaBackend.platform;
+    if (platform == MediaPlatform.windows || platform == MediaPlatform.linux) {
+      if (!_unsupportedReported) {
+        _unsupportedReported = true;
+        _room._emit(
+          RoomErrorEvent(
+            'layerPausing',
+            UnsupportedError(
+              'Layer pausing does not work on Windows or Linux '
+              '(flutter_webrtc ignores encoding changes there); every layer '
+              'stays on.',
+            ),
+          ),
+        );
+      }
       return;
     }
     // The encodings as published: pausing only ever turns layers off that
@@ -223,14 +245,17 @@ class _CaptureSizeWatcher {
 
   Future<(int, int)?> _capturedSize(MediaStreamTrack track) async {
     try {
-      for (final report in await _room._session.getStats()) {
+      final reports = await _room._session.getStats();
+      for (final report in reports) {
         if (report.type != 'media-source') continue;
         final values = report.values;
         if (values['kind'] != 'video' ||
             '${values['trackIdentifier']}' != track.id) {
           continue;
         }
-        final size = _size(values['width'], values['height']);
+        final size =
+            _size(values['width'], values['height']) ??
+            _fromLayers(reports, report.id);
         if (size != null) return size;
       }
     } catch (_) {
@@ -243,6 +268,37 @@ class _CaptureSizeWatcher {
       return _size(settings['width'], settings['height']);
     }
     return null;
+  }
+
+  /// The captured size from the encoded layers of the media source
+  /// [sourceId], for a `media-source` report without a size (Windows:
+  /// flutter_webrtc's capturer reports none, and its track settings are the
+  /// requested size). The sending layer with the smallest scale, scaled
+  /// back up; `null` while none sends a size, or when the CPU adaptation
+  /// shrinks the encoder's input.
+  (int, int)? _fromLayers(List<StatsReport> reports, String sourceId) {
+    final info = _publication._simulcast;
+    final scales = info?.scaleDownBy;
+    if (info == null || scales == null) return null;
+    (int, int)? best;
+    var bestScale = double.infinity;
+    for (final report in reports) {
+      final values = report.values;
+      if (report.type != 'outbound-rtp' ||
+          values['mediaSourceId'] != sourceId ||
+          values['active'] == false ||
+          values['qualityLimitationReason'] == 'cpu') {
+        continue;
+      }
+      final index = info.rids.indexOf('${values['rid']}');
+      if (index < 0) continue;
+      final scale = scales[index];
+      final size = _size(values['frameWidth'], values['frameHeight']);
+      if (size == null || scale >= bestScale) continue;
+      bestScale = scale;
+      best = ((size.$1 * scale).round(), (size.$2 * scale).round());
+    }
+    return best;
   }
 
   static (int, int)? _size(Object? width, Object? height) {

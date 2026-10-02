@@ -10,7 +10,7 @@ import 'package:flutter/foundation.dart'
     show debugPrint, immutable, kIsWeb, mapEquals;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
-    show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
+    show MediaStream, MediaStreamTrack, RTCPeerConnectionState, StatsReport;
 
 import '../audio/audio_route.dart';
 import '../audio/call_audio.dart';

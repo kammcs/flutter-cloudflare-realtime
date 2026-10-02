@@ -316,6 +316,34 @@ void main() {
         expect(h.pcOf(alice).log, isNot(contains('setEncodings')));
       });
     });
+
+    for (final platform in [MediaPlatform.windows, MediaPlatform.linux]) {
+      test('${platform.name} never pauses, says so once, and still reports '
+          'demand', () {
+        _run((async, h, alice, bob, pump) {
+          final events = <RoomEvent>[];
+          alice.events.listen(events.add);
+          final published = _publishCamera(alice, pump);
+          _publishCamera(alice, pump);
+          final cam = bob.participant('alice')!.camera!;
+          cam.setPreferredLayer(SimulcastLayer.low);
+          cam.subscribe();
+          pump();
+          expect(h.announced('bob')!.layerDemand, {published.trackName: 'c'});
+          async.elapse(const Duration(seconds: 10));
+          pump();
+          expect(published.pausedLayers, isEmpty);
+          expect(_active(h, alice), {'a', 'b', 'c'});
+          expect(h.pcOf(alice).log, isNot(contains('setEncodings')));
+          expect(
+            events.whereType<RoomErrorEvent>().where(
+              (e) => e.operation == 'layerPausing',
+            ),
+            hasLength(1),
+          );
+        }, platform: platform);
+      });
+    }
   });
 
   group('captured size', () {
@@ -372,6 +400,92 @@ void main() {
         pump();
         expect(published.pausedLayers, {'a'});
         expect(_active(h, alice), {'b', 'c'});
+      });
+    });
+
+    group('without a size in the media-source (Windows)', () {
+      StatsReport layer(
+        String rid,
+        int width,
+        int height, {
+        bool active = true,
+        String reason = 'none',
+        String source = 'ms',
+      }) => StatsReport('out-$rid', 'outbound-rtp', 0, {
+        'kind': 'video',
+        'rid': rid,
+        'mediaSourceId': source,
+        'frameWidth': width,
+        'frameHeight': height,
+        'active': active,
+        'qualityLimitationReason': reason,
+      });
+
+      List<StatsReport> stats(
+        LocalMediaPublication published,
+        List<StatsReport> layers,
+      ) => [
+        StatsReport('ms', 'media-source', 0, {
+          'kind': 'video',
+          'trackIdentifier': published.publication.track!.id,
+          'frames': 60,
+        }),
+        ...layers,
+      ];
+
+      test('is read from the largest sending layer, scaled back up', () {
+        _run((async, h, alice, bob, pump) {
+          // Asked for 960x540; the camera gives 1280x720.
+          h.media.videoSettings = {'width': 960, 'height': 540};
+          final published = _publishCamera(alice, pump);
+          expect(published.simulcast!.width, 960);
+          h.pcOf(alice).stats = stats(published, [
+            layer('c', 320, 180),
+            layer('b', 640, 360),
+            layer('a', 1280, 720),
+            // Another source's layer.
+            layer('a', 1920, 1080, source: 'other'),
+          ]);
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 1280);
+          expect(published.simulcast!.height, 720);
+          expect(bob.participant('alice')!.camera!.simulcast!.height, 720);
+        });
+      });
+
+      test('skips paused layers and layers without a size', () {
+        _run((async, h, alice, bob, pump) {
+          final published = _publishCamera(alice, pump);
+          h.pcOf(alice).stats = stats(published, [
+            layer('a', 1280, 720, active: false),
+            StatsReport('out-b', 'outbound-rtp', 0, {
+              'kind': 'video',
+              'rid': 'b',
+              'mediaSourceId': 'ms',
+              'active': true,
+            }),
+            layer('c', 160, 120),
+          ]);
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 640);
+          expect(published.simulcast!.height, 480);
+        });
+      });
+
+      test('keeps the size while the CPU adaptation scales the input', () {
+        _run((async, h, alice, bob, pump) {
+          final published = _publishCamera(alice, pump);
+          h.pcOf(alice).stats = stats(published, [
+            layer('a', 640, 360, reason: 'cpu'),
+            layer('b', 320, 180, reason: 'cpu'),
+          ]);
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 1280);
+          expect(published.simulcast!.height, 720);
+        });
       });
     });
 
