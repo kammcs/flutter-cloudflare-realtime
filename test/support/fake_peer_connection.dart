@@ -100,6 +100,10 @@ class FakePeerConnectionFactory {
 /// example a remote offer while a local offer is pending) throws, as a
 /// real peer connection does, and [rollback] withdraws a pending offer.
 ///
+/// Like libwebrtc, it rejects a remote description with an m-section whose
+/// RTX `apt` names a payload type missing from its m-line (tests can pass
+/// real-looking SDP, such as `sdp_fixtures.dart`).
+///
 /// Every call is appended to [log], so tests can check sequencing. Make the
 /// next call to a method throw with [failNext] (including `rollback`).
 class FakePeerConnection implements PeerConnection {
@@ -292,6 +296,15 @@ class FakePeerConnection implements PeerConnection {
       'setRemoteDescription(${description.type.name})',
       'setRemoteDescription',
     );
+    final rejected = _midWithDanglingRtx(description.sdp);
+    if (rejected != null) {
+      // What libwebrtc does when it can't map an RTX codec: no send codecs.
+      throw Exception(
+        'Unable to RTCPeerConnection::setRemoteDescription: Failed to set '
+        'remote ${description.type.name} sdp: Failed to set remote video '
+        'description send parameters for m-section with mid=\'$rejected\'.',
+      );
+    }
     if (description.type == SdpType.offer) {
       _requireState({_stable, _haveRemoteOffer}, 'setRemoteDescription(offer)');
       for (final media in remoteMedia?.call(description.sdp) ?? const []) {
@@ -331,6 +344,26 @@ class FakePeerConnection implements PeerConnection {
         );
       });
     }
+  }
+
+  /// The mid of the first m-section in [sdp] with an RTX `apt` naming a
+  /// payload type that isn't on its m-line, which libwebrtc rejects. Opaque
+  /// SDP (the fake's own) has none.
+  static String? _midWithDanglingRtx(String sdp) {
+    final sections = sdp.split(RegExp(r'\r?\n(?=m=)')).skip(1);
+    for (final section in sections) {
+      final lines = section.split(RegExp(r'\r?\n'));
+      final payloadTypes = lines.first.split(' ').skip(3).toSet();
+      final mid = lines
+          .where((l) => l.startsWith('a=mid:'))
+          .map((l) => l.substring(6))
+          .firstOrNull;
+      for (final line in lines) {
+        final apt = RegExp(r'^a=fmtp:\d+ .*apt=(\d+)').firstMatch(line);
+        if (apt != null && !payloadTypes.contains(apt[1])) return mid ?? '';
+      }
+    }
+    return null;
   }
 
   @override

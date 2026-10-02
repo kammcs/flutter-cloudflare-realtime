@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fixed: a video push after pulling a video failed** with "Failed to set remote video description send parameters for m-section with mid=...". Seen pushing an iPhone screen share after the microphone with a camera already pulled; reproduced on macOS. Once a session has pulled a video, the SFU renumbers the pushed codec in its answer but leaves the RTX `apt` at the offered number, which libwebrtc rejects. The session now repairs the `apt` in every SFU answer and offer before applying it (`docs/design.md` §4.2).
 - **Screen share on iOS** (`docs/design.md` §10, roadmap M9):
   - `ScreenShareSource.start()` and `LocalParticipant.publishScreen()` work on iOS, without a source: the system's broadcast picker is the picker, and the call completes once the user taps **Start Broadcast**. The capture runs in a Broadcast Upload Extension in the app, which the package ships as templates (`ios/broadcast_extension/`); the README's "iOS screen share setup" walks through adding the target, the App Group and the `Info.plist` keys.
   - The setup is checked before each share: if anything is missing, the share doesn't start and reports a `ScreenShareSetupException` with `problems` (`BroadcastSetupProblem`) and `guidance`.

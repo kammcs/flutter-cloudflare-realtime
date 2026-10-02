@@ -121,7 +121,7 @@ await session.close();
   1. Add a `sendonly` transceiver per track (with simulcast encodings for video) and apply codec preferences.
   2. `createOffer`, then `setLocalDescription`.
   3. `POST tracks/new` with the offer, and `tracks: [{location: "local", mid, trackName}]`.
-  4. `setRemoteDescription(answer)`.
+  4. `setRemoteDescription(answer)`, after the RTX repair below.
 
   Track names are UUIDs (partytracks uses `crypto.randomUUID()`) unless the caller names the track; names are unique per session.
 
@@ -133,6 +133,7 @@ await session.close();
 - **Encodings and codecs.**
   - Video defaults to `SimulcastPresets.h720`: rids `a` (full, 1.2 Mbps), `b` (`scaleResolutionDownBy: 2`, 400 kbps), `c` (4, 150 kbps). `h1080` and `h360` exist too; M4 tunes the numbers. `sendEncodings: []` publishes one default encoding. Audio has none.
   - Codec preferences are MIME types; set, they **restrict** the transceiver to those codecs plus rtx/red/ulpfec/flexfec, so the SFU can't pick another. The default is `['video/VP8']` on every platform (§6, Codec; `SfuSessionDefaults.videoCodecPreferences` overrides it). A platform that rejects `setCodecPreferences` keeps its default order.
+- **SDP from the SFU is repaired before it is applied.** Once a session has pulled a video, the SFU numbers codecs in its SDP the way that pulled m-line does (VP8 as 96), including in its answer to a later video push that offered VP8 under another number (100 on Apple platforms with libwebrtc M150). But it leaves that m-line's RTX entry as offered (`a=fmtp:101 apt=100`), naming a payload type the m-line no longer has. libwebrtc can't map the RTX codec, finds no codec to send with, and rejects the whole description: "Failed to set remote video description send parameters for m-section with mid=...". The SFU repeats the broken m-line in its later offers and close answers. So every SFU answer and offer goes through `repairRtxAssociations` (`sdp_repair.dart`) first. A dangling `apt` is pointed at the payload type the m-line now uses for the codec the local description gave that number (same format parameters preferred). If the m-line has no such codec, or that codec already has an RTX entry, the dangling RTX entry is removed. Valid SDP is passed through unchanged. Seen pushing an iPhone screen share after the microphone with a camera already pulled, and reproduced on macOS; a push before any pull, or with no pulled video, never hit it. Android's numbering didn't trigger it in the runs so far.
 - **Pull** (subscribe to remote tracks):
   1. `POST tracks/new` with `tracks: [{location: "remote", sessionId, trackName, simulcast?}]`. `simulcast` is sent only with a `preferredRid`; `ridNotAvailable` then defaults to `asciibetical`, and `priorityOrdering` is left to the SFU default (`none`) unless given (§6).
   2. If the response has `requiresImmediateRenegotiation`, then `setRemoteDescription(offer)`, `createAnswer`, `setLocalDescription`, and `PUT renegotiate` with the answer.

@@ -92,6 +92,7 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
 - **Observed against the real SFU** (not in the docs; see [design.md §4.2](design.md#42-sfusession)):
   - `tracks/update` with a `simulcast` change answers `update_track_error` "The track is not configured for simulcast, no updates applicable." until the SFU forwards the pulled track to the subscriber, and for good on a track published without simulcast.
   - A negotiated close that rejects every m-line of a session either fails locally (`max-bundle`: no BUNDLE group) or closes the transport, after which the SFU expires the session. Close a session's last m-lines with `force: true` and keep the m-lines.
+  - After a session has pulled a video, the SFU's answer to a video push renumbers the pushed codec to the pulled m-line's payload type (VP8 offered as 100 comes back as 96), but leaves the RTX line's `apt` at the offered number. libwebrtc rejects that description ("Failed to set remote video description send parameters"), and later offers and close answers repeat the m-line. The client repairs the `apt` before applying any SFU SDP.
 
 ## Simulcast
 

@@ -12,6 +12,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         RTCPeerConnectionState,
         RTCSignalingState;
 
+import '../support/sdp_fixtures.dart';
 import '../support/session_harness.dart';
 
 TracksRequest _tracksRequest(BrokerCall call) => call.request! as TracksRequest;
@@ -1780,5 +1781,93 @@ void main() {
         await session.close(); // Idempotent.
       },
     );
+  });
+
+  // The SFU renumbers a pushed codec to the BUNDLE's number once the
+  // session has pulled a video, but leaves its RTX `apt` as offered, which
+  // libwebrtc (and the fake) rejects. Seen pushing an iOS screen share after
+  // the microphone and a pulled camera.
+  group("the SFU's RTX payload types", () {
+    test(
+      'a push after a pull applies the answer with its apt repaired',
+      () async {
+        final session = await h.connect();
+        await session.subscribe(remoteSessionId: 'p', trackName: 'cam');
+        h.broker.onNewTracks = (sessionId, request) async {
+          final ok = await h.broker.defaultNewTracks(sessionId, request);
+          // What libwebrtc holds as the local description by now.
+          h.pc.currentLocalDescription = SessionDescription.offer(
+            pushAfterPullOffer,
+          );
+          return TracksResponse(
+            sessionDescription: SessionDescription.answer(pushAfterPullAnswer),
+            tracks: ok.tracks,
+          );
+        };
+
+        final pub = await session.publish(
+          FakeMediaStreamTrack(kind: 'video'),
+          options: const PublishOptions(sendEncodings: []),
+        );
+
+        expect(pub.state, SfuTrackState.active);
+        expect(session.failure, isNull);
+        final applied = h.pc.remoteDescription!;
+        expect(applied.type, SdpType.answer);
+        expect(
+          applied.sdp,
+          contains(
+            'm=video 9 UDP/TLS/RTP/SAVPF 96 101\r\na=mid:2\r\n'
+            'a=rtpmap:96 VP8/90000\r\na=rtpmap:101 rtx/90000\r\n'
+            'a=fmtp:101 apt=96\r\n',
+          ),
+        );
+      },
+    );
+
+    test('an SFU offer is repaired before it is answered', () async {
+      final session = await h.connect();
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 't');
+      h.pc.currentLocalDescription = SessionDescription.offer(
+        pushAfterPullOffer,
+      );
+      h.broker.onUpdateTracks = (sessionId, request) async {
+        final ok = await h.broker.defaultUpdateTracks(sessionId, request);
+        return TracksResponse(
+          requiresImmediateRenegotiation: true,
+          sessionDescription: SessionDescription.offer(pushAfterPullAnswer),
+          tracks: ok.tracks,
+        );
+      };
+
+      await sub.setPreferredRid('b');
+
+      expect(h.broker.operations.last, 'renegotiate');
+      expect(h.pc.remoteDescription!.type, SdpType.offer);
+      expect(h.pc.remoteDescription!.sdp, contains('a=fmtp:101 apt=96\r\n'));
+      expect(session.failure, isNull);
+    });
+
+    test('a close answer is repaired too', () async {
+      final session = await h.connect();
+      await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+      final video = await session.publish(FakeMediaStreamTrack(kind: 'video'));
+      h.broker.onCloseTracks = (sessionId, request) async {
+        final ok = await h.broker.defaultCloseTracks(sessionId, request);
+        h.pc.currentLocalDescription = SessionDescription.offer(
+          pushAfterPullOffer,
+        );
+        return TracksResponse(
+          sessionDescription: SessionDescription.answer(pushAfterPullAnswer),
+          tracks: ok.tracks,
+        );
+      };
+
+      await video.unpublish();
+
+      expect(video.state, SfuTrackState.closed);
+      expect(h.pc.remoteDescription!.sdp, contains('a=fmtp:101 apt=96\r\n'));
+      expect(session.failure, isNull);
+    });
   });
 }

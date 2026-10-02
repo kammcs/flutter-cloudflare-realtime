@@ -25,6 +25,7 @@ import 'flutter_webrtc_peer_connection.dart';
 import 'op_queue.dart';
 import 'peer_connection.dart';
 import 'publish_options.dart';
+import 'sdp_repair.dart';
 import 'sfu_session_events.dart';
 import 'track_name.dart';
 
@@ -862,7 +863,7 @@ class SfuSession {
     if (answer == null) {
       throw const SfuSessionException('tracks/new returned no answer');
     }
-    await _pc.setRemoteDescription(answer);
+    await _setRemoteDescription(answer);
     _throwIfUnusable();
 
     final results = _TrackResults(response.tracks);
@@ -992,6 +993,20 @@ class SfuSession {
     }
   }
 
+  /// Applies an SFU offer or answer, after repairing its RTX payload types
+  /// against the local description ([repairRtxAssociations]): once the
+  /// session has pulled a video, the SFU's answer to a later video push
+  /// names an RTX `apt` the answer doesn't contain, which libwebrtc rejects.
+  Future<void> _setRemoteDescription(SessionDescription description) async {
+    final local = await _pc.localDescription();
+    final sdp = repairRtxAssociations(description.sdp, localSdp: local?.sdp);
+    await _pc.setRemoteDescription(
+      identical(sdp, description.sdp)
+          ? description
+          : SessionDescription(type: description.type, sdp: sdp),
+    );
+  }
+
   /// Applies an SFU offer, answers it, and sends the answer with
   /// `renegotiate`.
   Future<void> _renegotiate(String operation, SessionDescription? offer) async {
@@ -1000,7 +1015,7 @@ class SfuSession {
         '$operation asked for renegotiation without an offer',
       );
     }
-    await _pc.setRemoteDescription(offer);
+    await _setRemoteDescription(offer);
     final answer = await _pc.createAnswer();
     await _pc.setLocalDescription(answer);
     _throwIfUnusable();
@@ -1160,7 +1175,7 @@ class SfuSession {
       _throwIfRequestError('tracks/close', response);
       final description = response.sessionDescription;
       if (description != null && description.type == SdpType.answer) {
-        await _pc.setRemoteDescription(description);
+        await _setRemoteDescription(description);
       } else if (response.requiresImmediateRenegotiation) {
         // The SFU answered our offer with an offer of its own: withdraw ours
         // (we are in `have-local-offer`) and answer theirs.
