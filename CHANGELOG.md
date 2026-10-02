@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **System calls on iOS: CallKit and PushKit** (`docs/design.md` §4.8, roadmap M11). `SystemCalls.instance.configure()` now reports `supported` on iOS, and the app's calls show in the system's call UI: incoming and outgoing calls, answer, end with a reason, hold, mute, DTMF and updates, with the system's UI and the app producing the same events.
+  - **Audio:** CallKit owns the audio session. Once configured, WebRTC runs in manual audio and starts a call's audio only after CallKit activates the session. `flutter_webrtc`'s own deactivation of the session is skipped while a CallKit call exists (it took the audio from under CallKit when a receive-only room re-sessioned).
+  - **VoIP pushes:** `voipPush.register()` (the opt-in is remembered across launches) and the token. Each push is reported to CallKit natively, before Dart runs; the README documents the payload and the host app's setup (`voip` background mode, Push Notifications, an APNs key).
+  - The last configuration persists, so a push that launches the app finds CallKit set up.
+  - Example: the `voip` background mode, and `RunnerTests` for the native side (`SystemCallsTests.swift`).
+
 - **System calls: CallKit and Android Telecom, the Dart side** (`docs/design.md` §4.8, roadmap M11). The native backends come next; until then phones report `supported == false` and behave like desktops.
   - `SystemCalls.instance`: `configure(SystemCallsConfig)` (completes with `supported`), `reportIncomingCall(...)` and `startOutgoingCall(...)` (a UUID `id`, a `CallHandle`, `displayName`, `video`, a push `payload`), `calls` / `callsChanges`, and `events`: `SystemCallAddedEvent`, `AnsweredEvent`, `EndedEvent` (with a `SystemCallEndReason`), `HeldEvent`, `MutedEvent`, `DtmfEvent`, `AudioActivatedEvent` and `AudioDeactivatedEvent`, whether the app or the system's UI (the lock screen, a headset, a car) acted.
   - `SystemCall`: `state` (`ringing`, `dialing`, `connecting`, `active`, `held`, `ended`), `muted`, `endReason`, `whenEnded`, and the requests `answer()`, `end([reason])`, `setHeld()`, `setMuted()`, `reportConnecting()`, `reportConnected()` and `update()`. Requests complete once the system accepts them; the state changes when it confirms. A refusal throws `SystemCallException` (`SystemCallErrorCode`).
