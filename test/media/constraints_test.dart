@@ -166,6 +166,17 @@ void main() {
     );
   });
 
+  test('iOS screen constraints name the broadcast extension as a string', () {
+    expect(iosBroadcastConstraints(), {
+      'audio': false,
+      'video': {'deviceId': 'broadcast'},
+    });
+    expect(iosBroadcastConstraints(pickerShown: false), {
+      'audio': false,
+      'video': {'deviceId': 'broadcast-manual'},
+    });
+  });
+
   test('options have value equality and copyWith', () {
     expect(
       const CameraOptions().copyWith(preset: VideoPreset.h360),
@@ -178,6 +189,14 @@ void main() {
     expect(
       const ScreenShareOptions().copyWith(frameRate: 15),
       const ScreenShareOptions(frameRate: 15),
+    );
+    expect(
+      const ScreenShareOptions().copyWith(broadcastScale: 1),
+      const ScreenShareOptions(broadcastScale: 1),
+    );
+    expect(
+      const ScreenShareOptions(),
+      isNot(const ScreenShareOptions(broadcastScale: 1)),
     );
   });
 }

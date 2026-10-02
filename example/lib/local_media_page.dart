@@ -286,10 +286,7 @@ class _ScreenShareControlsState extends State<_ScreenShareControls> {
   Widget build(BuildContext context) {
     final screen = widget.screen;
     if (!screen.isSupported) {
-      return const Text(
-        'Screen share on this platform needs host-app setup that the package '
-        "doesn't cover yet (roadmap M9).",
-      );
+      return const Text('Screen share is not available on this platform.');
     }
     return StreamBuilder<CapturedTrack?>(
       stream: screen.track,

@@ -34,8 +34,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 flutter:
-  # Native code for call audio routing on phones (docs/design.md §4.6).
-  # Other platforms use the Dart code only.
+  # Native code on phones: call audio routing (docs/design.md §4.6) and
+  # screen share (§10). Other platforms use the Dart code only.
   plugin:
     platforms:
       android:

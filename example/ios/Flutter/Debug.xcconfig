@@ -1,5 +1,9 @@
 #include "Generated.xcconfig"
 
+// The App Group the app and its screen share extension (BroadcastExtension)
+// share. Change it for your own team: App Group IDs are unique across teams.
+CF_REALTIME_APP_GROUP = group.dev.kammcs.cloudflareRealtimeExample
+
 // Optional, never committed: your signing team for running on an iPhone.
 // See docs/checkpoint.md ("iOS"). Contains: DEVELOPMENT_TEAM = <team ID>
 #include? "Signing.xcconfig"

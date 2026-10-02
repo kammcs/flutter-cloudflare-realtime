@@ -40,9 +40,12 @@ abstract interface class MediaBackend {
   DesktopCapturerBackend? get desktopCapturer;
 
   /// The system consent and foreground service a screen share needs on
-  /// Android, or `null` where `getDisplayMedia` needs neither (desktop,
-  /// web) or screen share isn't available (iOS, for now).
+  /// Android, or `null` elsewhere.
   ScreenCaptureServiceBackend? get screenCaptureService;
+
+  /// The host app's Broadcast Upload Extension, through which a screen
+  /// share captures on iOS, or `null` elsewhere.
+  BroadcastExtensionBackend? get broadcastExtension;
 }
 
 /// What a screen share needs around `getDisplayMedia` on Android
@@ -78,6 +81,113 @@ abstract interface class ScreenCaptureServiceBackend {
   /// (the projection's `onStop`, with the track ID [watch] was given) or
   /// from the service's notification (`null`: whichever share is running).
   Stream<String?> get stopped;
+}
+
+/// What a screen share needs around `getDisplayMedia` on iOS
+/// (`docs/design.md` §10): the host app's Broadcast Upload Extension, set
+/// up as the README's "iOS screen share setup" describes.
+///
+/// A share checks [status], calls [prepare], then `getDisplayMedia` with
+/// `deviceId: 'broadcast'` (which shows the system's broadcast picker), and
+/// waits for [BroadcastExtensionEvent.started] on [events]. A
+/// [BroadcastExtensionEvent.finished] while sharing means the user stopped
+/// the broadcast.
+abstract interface class BroadcastExtensionBackend {
+  /// Whether the app is set up for a broadcast, and whether one is running.
+  Future<BroadcastExtensionStatus> status();
+
+  /// Hands the capture settings to the extension, which reads them when
+  /// the broadcast starts: at most [frameRate] frames per second, each
+  /// scaled by [scale] (0 < scale <= 1).
+  Future<void> prepare({required int frameRate, required double scale});
+
+  /// Called after a share stopped waiting for the broadcast to start, so
+  /// that a broadcast started later can't attach to the abandoned capture.
+  Future<void> abandon();
+
+  /// The extension's broadcast starting and finishing. A broadcast stream.
+  Stream<BroadcastExtensionEvent> get events;
+}
+
+/// What the Broadcast Upload Extension reports to the app.
+enum BroadcastExtensionEvent {
+  /// The user started the broadcast; frames are about to arrive.
+  started,
+
+  /// The broadcast ended: the user stopped it, or the app's capture ended.
+  finished,
+}
+
+/// Something the iOS screen share setup is missing. The README's "iOS
+/// screen share setup" covers each one.
+enum BroadcastSetupProblem {
+  /// The app's Info.plist has no `RTCAppGroupIdentifier`.
+  noAppGroupKey(
+    "The app's Info.plist has no RTCAppGroupIdentifier (the App Group the "
+    'app and its broadcast extension share).',
+  ),
+
+  /// The app's Info.plist has no `RTCScreenSharingExtension`.
+  noExtensionKey(
+    "The app's Info.plist has no RTCScreenSharingExtension (the broadcast "
+    "extension's bundle identifier).",
+  ),
+
+  /// The App Group's container can't be opened: the app isn't signed with
+  /// that App Group.
+  appGroupUnavailable(
+    "The App Group in RTCAppGroupIdentifier isn't in the app's "
+    'entitlements, or not registered for its team.',
+  ),
+
+  /// No Broadcast Upload Extension is embedded in the app.
+  extensionMissing(
+    'The app has no Broadcast Upload Extension embedded (check the '
+    '"Embed Foundation Extensions" build phase).',
+  ),
+
+  /// No embedded extension has the bundle ID in `RTCScreenSharingExtension`.
+  extensionIdMismatch(
+    "RTCScreenSharingExtension doesn't match the embedded broadcast "
+    "extension's bundle identifier.",
+  ),
+
+  /// The extension's `RTCAppGroupIdentifier` isn't the app's.
+  extensionAppGroupMismatch(
+    "The broadcast extension's RTCAppGroupIdentifier isn't the app's.",
+  );
+
+  const BroadcastSetupProblem(this.description);
+
+  /// What's wrong, in a sentence, for developers.
+  final String description;
+
+  /// The problem a `status` call reports as [code], or `null` if unknown.
+  static BroadcastSetupProblem? fromCode(String code) {
+    for (final problem in values) {
+      if (problem.name == code) return problem;
+    }
+    return null;
+  }
+}
+
+/// The iOS screen share setup as the app finds it: what's missing, and
+/// whether a broadcast is running.
+class BroadcastExtensionStatus {
+  /// Creates a status.
+  const BroadcastExtensionStatus({
+    this.problems = const [],
+    this.broadcasting = false,
+  });
+
+  /// What's missing. Empty when the app is set up.
+  final List<BroadcastSetupProblem> problems;
+
+  /// Whether a broadcast is running (it started and hasn't finished).
+  final bool broadcasting;
+
+  /// Whether the app is set up for a broadcast.
+  bool get isReady => problems.isEmpty;
 }
 
 /// `flutter_webrtc`'s `desktopCapturer`, converted to immutable

@@ -2,9 +2,67 @@ import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/media/constraints.dart';
 import 'package:cloudflare_realtime/src/media/device_priority.dart';
 import 'package:cloudflare_realtime/src/media/flutter_webrtc_media_backend.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('IosBroadcastExtension', () {
+    const channel = MethodChannel(
+      'dev.kammcs.cloudflare_realtime/screen_broadcast',
+    );
+    final calls = <MethodCall>[];
+    Object? statusAnswer;
+
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return call.method == 'status' ? statusAnswer : null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('reads the setup problems and the running broadcast', () async {
+      statusAnswer = {
+        'problems': ['noAppGroupKey', 'extensionMissing', 'somethingNew'],
+        'broadcasting': true,
+      };
+      final status = await const IosBroadcastExtension().status();
+      expect(status.problems, [
+        BroadcastSetupProblem.noAppGroupKey,
+        BroadcastSetupProblem.extensionMissing,
+      ]);
+      expect(status.broadcasting, isTrue);
+      expect(status.isReady, isFalse);
+
+      statusAnswer = {'problems': <String>[], 'broadcasting': false};
+      final ready = await const IosBroadcastExtension().status();
+      expect(ready.isReady, isTrue);
+      expect(ready.broadcasting, isFalse);
+    });
+
+    test('passes the settings to prepare', () async {
+      await const IosBroadcastExtension().prepare(frameRate: 15, scale: 0.5);
+      await const IosBroadcastExtension().abandon();
+      expect(calls.map((c) => c.method), ['prepare', 'abandon']);
+      expect(calls.first.arguments, {'frameRate': 15, 'scale': 0.5});
+    });
+
+    test('every problem code round-trips', () {
+      for (final problem in BroadcastSetupProblem.values) {
+        expect(BroadcastSetupProblem.fromCode(problem.name), problem);
+        expect(problem.description, isNotEmpty);
+      }
+    });
+  });
+
   group('mediaDeviceFromSource', () {
     test('reads the facing the native plugins report', () {
       // The Android plugin's entries.

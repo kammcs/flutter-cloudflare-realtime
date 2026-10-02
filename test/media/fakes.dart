@@ -20,6 +20,9 @@ class FakeTrack extends MediaStreamTrack {
   bool _enabled = true;
   bool stopped = false;
 
+  /// Called when the track is stopped.
+  void Function()? onStop;
+
   @override
   String get id => _id;
 
@@ -42,7 +45,10 @@ class FakeTrack extends MediaStreamTrack {
   Map<String, dynamic> getSettings() => settings;
 
   @override
-  Future<void> stop() async => stopped = true;
+  Future<void> stop() async {
+    stopped = true;
+    onStop?.call();
+  }
 
   @override
   Future<void> dispose() => stop();
@@ -116,6 +122,7 @@ class FakeMediaBackend implements MediaBackend {
     List<MediaDevice> devices = const [],
     this.desktop,
     this.screenCapture,
+    this.broadcast,
   }) : _devices = List.of(devices);
 
   @override
@@ -151,6 +158,11 @@ class FakeMediaBackend implements MediaBackend {
 
   @override
   ScreenCaptureServiceBackend? get screenCaptureService => screenCapture;
+
+  final FakeBroadcastExtension? broadcast;
+
+  @override
+  BroadcastExtensionBackend? get broadcastExtension => broadcast;
 
   List<MediaDevice> get devices => List.unmodifiable(_devices);
 
@@ -290,6 +302,68 @@ class FakeScreenCaptureService implements ScreenCaptureServiceBackend {
 
   @override
   Stream<String?> get stopped => _stopped.stream;
+}
+
+/// A scriptable [BroadcastExtensionBackend] (iOS). Records every call in
+/// [calls]. Like the real extension, a broadcast that is running finishes
+/// when the app releases its capture ([captureReleased]).
+class FakeBroadcastExtension implements BroadcastExtensionBackend {
+  /// What [status] reports as missing.
+  List<BroadcastSetupProblem> problems = const [];
+
+  /// Whether a broadcast is running.
+  bool broadcasting = false;
+
+  /// When set, [status] throws it.
+  Object? statusError;
+
+  /// `status`, `prepare:<frameRate>@<scale>`, `abandon`, in order.
+  final List<String> calls = [];
+
+  final _events = StreamController<BroadcastExtensionEvent>.broadcast(
+    sync: true,
+  );
+
+  /// The user starts the broadcast.
+  void start() {
+    broadcasting = true;
+    _events.add(BroadcastExtensionEvent.started);
+  }
+
+  /// The broadcast finishes (the user stopped it, or the app's capture
+  /// ended).
+  void finish() {
+    broadcasting = false;
+    _events.add(BroadcastExtensionEvent.finished);
+  }
+
+  /// The app released the capture the broadcast sends to: the extension
+  /// sees its socket close and finishes.
+  void captureReleased() {
+    if (broadcasting) finish();
+  }
+
+  @override
+  Future<BroadcastExtensionStatus> status() async {
+    calls.add('status');
+    final error = statusError;
+    if (error != null) throw error;
+    return BroadcastExtensionStatus(
+      problems: problems,
+      broadcasting: broadcasting,
+    );
+  }
+
+  @override
+  Future<void> prepare({required int frameRate, required double scale}) async {
+    calls.add('prepare:$frameRate@$scale');
+  }
+
+  @override
+  Future<void> abandon() async => calls.add('abandon');
+
+  @override
+  Stream<BroadcastExtensionEvent> get events => _events.stream;
 }
 
 /// A scriptable [DesktopCapturerBackend].

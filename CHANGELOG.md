@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Screen share on iOS** (`docs/design.md` §10, roadmap M9):
+  - `ScreenShareSource.start()` and `LocalParticipant.publishScreen()` work on iOS, without a source: the system's broadcast picker is the picker, and the call completes once the user taps **Start Broadcast**. The capture runs in a Broadcast Upload Extension in the app, which the package ships as templates (`ios/broadcast_extension/`); the README's "iOS screen share setup" walks through adding the target, the App Group and the `Info.plist` keys.
+  - The setup is checked before each share: if anything is missing, the share doesn't start and reports a `ScreenShareSetupException` with `problems` (`BroadcastSetupProblem`) and `guidance`.
+  - The picker can't report a cancel, so a broadcast not started within `ScreenShareOptions.broadcastStartTimeout` (60 s) makes `start()` return `false`, as a cancelled picker does elsewhere. A broadcast stopped from the status bar or Control Center ends the share with `ScreenShareEndReason.userStopped`.
+  - `ScreenShareOptions.broadcastScale` (0.5) sets how much the extension scales the screen down; `frameRate` caps its frames. Screen audio (`captureAudio`) isn't supported on iOS and is ignored.
+  - `MediaBackend.broadcastExtension` (a new `BroadcastExtensionBackend`) is the seam for it. Custom `MediaBackend`s must implement it (return `null` where none is needed).
+  - Example: a `BroadcastExtension` target built from the templates, and **Share screen** on iOS; `screen_share_test.dart` and the screen mode of `cross_device_test.dart` run on an iPhone (with a person to tap "Start Broadcast").
 - **Screen share on Android** (`docs/design.md` §10, roadmap M9):
   - `ScreenShareSource.start()` and `LocalParticipant.publishScreen()` work on Android, without a source: the system's consent dialog is the picker. A cancelled dialog returns `false` (`publishScreen` throws a `MediaCaptureException`), like a cancelled browser picker.
   - The package's Android plugin runs the share under its own foreground service of type `mediaProjection`, started after consent and before the capture, as Android 14+ requires. Its manifest declares the service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` and `POST_NOTIFICATIONS` permissions, which merge into the app. The notification has a **Stop sharing** action; the package asks for the notification permission once per launch on Android 13+, and the share works without it.

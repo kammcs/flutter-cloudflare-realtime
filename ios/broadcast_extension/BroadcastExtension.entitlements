@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  cloudflare_realtime: Broadcast Upload Extension template (MIT License).
+  The same App Group as the app's entitlements. $(CF_REALTIME_APP_GROUP) is a
+  build setting you define, or replace it with the group itself.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(CF_REALTIME_APP_GROUP)</string>
+	</array>
+</dict>
+</plist>

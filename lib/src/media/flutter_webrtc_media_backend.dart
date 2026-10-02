@@ -78,6 +78,63 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
       platform == MediaPlatform.android
       ? const AndroidScreenCaptureService()
       : null;
+
+  @override
+  BroadcastExtensionBackend? get broadcastExtension =>
+      platform == MediaPlatform.ios ? const IosBroadcastExtension() : null;
+}
+
+/// The iOS [BroadcastExtensionBackend]: this package's plugin
+/// (`ScreenBroadcast.swift`), which checks the setup, hands the settings to
+/// the extension through the App Group, and forwards the extension's
+/// Darwin notifications.
+class IosBroadcastExtension implements BroadcastExtensionBackend {
+  /// Creates the backend.
+  const IosBroadcastExtension();
+
+  static const _methods = MethodChannel(
+    'dev.kammcs.cloudflare_realtime/screen_broadcast',
+  );
+  static const _events = EventChannel(
+    'dev.kammcs.cloudflare_realtime/screen_broadcast_events',
+  );
+
+  static final Stream<BroadcastExtensionEvent> _stream = _events
+      .receiveBroadcastStream()
+      .map((event) => event is Map ? event['event'] : null)
+      .where((name) => name == 'started' || name == 'finished')
+      .map(
+        (name) => name == 'started'
+            ? BroadcastExtensionEvent.started
+            : BroadcastExtensionEvent.finished,
+      )
+      .asBroadcastStream();
+
+  @override
+  Future<BroadcastExtensionStatus> status() async {
+    final map = await _methods.invokeMapMethod<String, Object?>('status');
+    final codes = map?['problems'];
+    return BroadcastExtensionStatus(
+      problems: [
+        if (codes is List)
+          for (final code in codes) ?BroadcastSetupProblem.fromCode('$code'),
+      ],
+      broadcasting: map?['broadcasting'] == true,
+    );
+  }
+
+  @override
+  Future<void> prepare({required int frameRate, required double scale}) =>
+      _methods.invokeMethod<void>('prepare', {
+        'frameRate': frameRate,
+        'scale': scale,
+      });
+
+  @override
+  Future<void> abandon() => _methods.invokeMethod<void>('abandon');
+
+  @override
+  Stream<BroadcastExtensionEvent> get events => _stream;
 }
 
 /// The Android [ScreenCaptureServiceBackend]: `flutter_webrtc`'s consent

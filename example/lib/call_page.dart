@@ -177,6 +177,10 @@ class _CallPageState extends State<CallPage> {
     setState(() => _busy = true);
     try {
       await action();
+    } on ScreenShareSetupException catch (e) {
+      // A developer's mistake: the console says what to fix.
+      debugPrint('Screen share setup: ${e.guidance}');
+      _show('Screen sharing is not set up in this build (see the log).');
     } on MediaException catch (e) {
       _show(e.message);
     } on UnsupportedError catch (e) {
@@ -219,8 +223,10 @@ class _CallPageState extends State<CallPage> {
     }
     final platform = widget.mediaBackend.platform;
     final web = platform == MediaPlatform.web;
-    if (platform == MediaPlatform.android) {
-      // The system's consent dialog is the picker: no dialog of ours.
+    if (platform == MediaPlatform.android || platform == MediaPlatform.ios) {
+      // The system's consent dialog (Android) or broadcast picker (iOS) is
+      // the picker: no dialog of ours. On iOS this completes once the user
+      // taps "Start Broadcast".
       await _local.publishScreen();
       return;
     }
@@ -229,7 +235,7 @@ class _CallPageState extends State<CallPage> {
       picker = ScreenSourcePicker(backend: widget.mediaBackend);
       if (!picker.isSupported) {
         await picker.dispose();
-        _show('Screen share on iOS is not implemented yet (roadmap M9).');
+        _show('Screen share is not available on this platform.');
         return;
       }
     }

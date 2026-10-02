@@ -163,10 +163,16 @@ class ScreenShareOptions {
     this.frameRate = 15,
     this.captureAudio = false,
     this.showCursor,
-  });
+    this.broadcastScale = 0.5,
+    this.broadcastStartTimeout = const Duration(seconds: 60),
+  }) : assert(
+         broadcastScale > 0 && broadcastScale <= 1,
+         'broadcastScale must be in (0, 1]',
+       );
 
   /// Frames per second. On desktop this is `flutter_webrtc`'s
-  /// `mandatory.frameRate`; in browsers it is an ideal.
+  /// `mandatory.frameRate`; in browsers it is an ideal; on iOS the
+  /// broadcast extension sends at most this many. Android ignores it.
   ///
   /// The default, 15, suits documents, slides and code: screen content
   /// needs sharp text more than motion, and fewer frames leave more bits
@@ -184,15 +190,33 @@ class ScreenShareOptions {
   /// default (`Helper.screenCaptureShowCursor` on desktop).
   final bool? showCursor;
 
+  /// iOS only: the factor the broadcast extension scales the screen by
+  /// before sending it to the app, in (0, 1]. The default, 0.5, sends a
+  /// 1179×2556 screen as 590×1278: legible text at a fraction of the work,
+  /// which matters in an extension limited to about 50 MB of memory. 1 sends
+  /// the full resolution.
+  final double broadcastScale;
+
+  /// iOS only: how long starting a share waits for the user to start the
+  /// broadcast in the system's picker before it gives up (the share then
+  /// doesn't start, and nothing is reported). The system doesn't say when
+  /// its picker is dismissed, so this is also how long a cancelled picker
+  /// keeps `ScreenShareSource.start` waiting.
+  final Duration broadcastStartTimeout;
+
   /// Returns a copy with the given fields replaced.
   ScreenShareOptions copyWith({
     int? frameRate,
     bool? captureAudio,
     bool? showCursor,
+    double? broadcastScale,
+    Duration? broadcastStartTimeout,
   }) => ScreenShareOptions(
     frameRate: frameRate ?? this.frameRate,
     captureAudio: captureAudio ?? this.captureAudio,
     showCursor: showCursor ?? this.showCursor,
+    broadcastScale: broadcastScale ?? this.broadcastScale,
+    broadcastStartTimeout: broadcastStartTimeout ?? this.broadcastStartTimeout,
   );
 
   @override
@@ -200,10 +224,18 @@ class ScreenShareOptions {
       other is ScreenShareOptions &&
       other.frameRate == frameRate &&
       other.captureAudio == captureAudio &&
-      other.showCursor == showCursor;
+      other.showCursor == showCursor &&
+      other.broadcastScale == broadcastScale &&
+      other.broadcastStartTimeout == broadcastStartTimeout;
 
   @override
-  int get hashCode => Object.hash(frameRate, captureAudio, showCursor);
+  int get hashCode => Object.hash(
+    frameRate,
+    captureAudio,
+    showCursor,
+    broadcastScale,
+    broadcastStartTimeout,
+  );
 }
 
 /// The constraint entries that pick [deviceId] on [platform].
@@ -283,6 +315,18 @@ Map<String, dynamic> desktopScreenConstraints(
     if (options.showCursor != null)
       'cursor': options.showCursor! ? 'always' : 'never',
   },
+};
+
+/// `getDisplayMedia` constraints for an iOS share through the host app's
+/// Broadcast Upload Extension.
+///
+/// `flutter_webrtc` reads `video.deviceId` as a plain string here (a map
+/// crashes it): `broadcast` taps the system's broadcast picker for the
+/// user, and the `-manual` suffix skips it, for a broadcast that is
+/// already running. The extension captures no audio.
+Map<String, dynamic> iosBroadcastConstraints({bool pickerShown = true}) => {
+  'audio': false,
+  'video': {'deviceId': pickerShown ? 'broadcast' : 'broadcast-manual'},
 };
 
 /// `getDisplayMedia` constraints for a browser, which shows its own picker.

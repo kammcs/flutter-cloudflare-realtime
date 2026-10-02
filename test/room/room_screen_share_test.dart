@@ -178,6 +178,54 @@ void main() {
       await android.close();
     });
 
+    test('stopping the broadcast unpublishes (iOS)', () async {
+      final broadcast = FakeBroadcastExtension();
+      final ios = FakeMediaBackend(
+        platform: MediaPlatform.ios,
+        devices: [cam1, mic1],
+        broadcast: broadcast,
+      );
+      h = RoomHarness(media: ios);
+      final alice = await h.join('alice');
+      final events = _record(alice);
+      final publishing = alice.localParticipant.publishScreen();
+      await _settle();
+      expect(h.announced('alice')!.tracks, isEmpty, reason: 'not started');
+      broadcast.start();
+      final share = await publishing;
+      expect(share.isPublished, isTrue);
+
+      broadcast.finish();
+      await _settle();
+      expect(share.isPublished, isFalse);
+      expect(h.announced('alice')!.tracks, isEmpty);
+      expect(
+        events.whereType<LocalTrackUnpublishedEvent>().single.endReason,
+        ScreenShareEndReason.userStopped,
+      );
+      await alice.leave();
+      await ios.close();
+    });
+
+    test('an incomplete iOS setup fails publishScreen', () async {
+      final broadcast = FakeBroadcastExtension()
+        ..problems = const [BroadcastSetupProblem.noExtensionKey];
+      final ios = FakeMediaBackend(
+        platform: MediaPlatform.ios,
+        devices: [cam1, mic1],
+        broadcast: broadcast,
+      );
+      h = RoomHarness(media: ios);
+      final alice = await h.join('alice');
+      await expectLater(
+        alice.localParticipant.publishScreen(),
+        throwsA(isA<ScreenShareSetupException>()),
+      );
+      expect(alice.localParticipant.screen, isNull);
+      await alice.leave();
+      await ios.close();
+    });
+
     test('a share that ends while it is being pushed is unpublished', () async {
       final alice = await h.join('alice');
       final push = h.broker.onNewTracks!;

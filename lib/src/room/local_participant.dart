@@ -214,11 +214,13 @@ class LocalParticipant {
   /// Publishes a screen share.
   ///
   /// On desktop, pass the [source] picked with a `ScreenSourcePicker`. On
-  /// the web and Android, pass none: the browser shows its own picker, and
+  /// the web and phones, pass none: the browser shows its own picker,
   /// Android its screen-capture consent dialog (under this package's
-  /// foreground service; `docs/design.md` §10). With
+  /// foreground service), and iOS its broadcast picker for the app's
+  /// Broadcast Upload Extension (`docs/design.md` §10; on iOS this
+  /// completes once the user has started the broadcast). With
   /// [ScreenShareOptions.captureAudio], where the platform captures audio
-  /// (not Android), the audio is published too, as [screenAudio].
+  /// (not phones), the audio is published too, as [screenAudio].
   ///
   /// The share is sent as one layer tuned for text by default
   /// ([ScreenSharePresets.detail]: up to 15 fps and 2.5 Mbps, captured at
@@ -229,21 +231,22 @@ class LocalParticipant {
   /// sent as VP8, like every video track (the session default).
   ///
   /// When the share ends outside the app (the shared window closes, the
-  /// browser's "Stop sharing" button, or Android's stop control or
-  /// notification), it is unpublished with its audio,
+  /// browser's "Stop sharing" button, Android's stop control or
+  /// notification, or iOS's broadcast stop), it is unpublished with its
+  /// audio,
   /// and signaling is updated; the [LocalTrackUnpublishedEvent] carries the
   /// [LocalTrackUnpublishedEvent.endReason]. Muting it ends the capture but
   /// keeps it published; unmuting shares the same source again (on the
-  /// web and Android, the browser or the system asks again).
+  /// web and phones, the browser or the system asks again).
   ///
   /// If the capture delivers no frames (on macOS: no Screen Recording
   /// permission), the room reports a [LocalScreenShareStalledEvent]; see
   /// [RoomOptions.screenShareStallTimeout].
   ///
-  /// Throws [UnsupportedError] on iOS (roadmap M9), an [ArgumentError] on
-  /// desktop without a [source], and a [MediaException] if the share
-  /// doesn't start (including a cancelled browser picker or consent
-  /// dialog).
+  /// Throws an [ArgumentError] on desktop without a [source], and a
+  /// [MediaException] if the share doesn't start: a cancelled browser
+  /// picker or consent dialog, an iOS broadcast not started in time, or a
+  /// [ScreenShareSetupException] when the iOS app isn't set up for it.
   Future<LocalMediaPublication> publishScreen({
     ScreenSource? source,
     ScreenShareOptions options = const ScreenShareOptions(),

@@ -12,10 +12,11 @@
 // Then each side says it is done (in its signaling metadata) and waits for
 // the other before leaving, so neither cuts the other's media short.
 //
-// With CF_REALTIME_CROSS_DEVICE_SCREEN=true, an Android side shares its
-// screen instead of its camera (answer the consent dialog; it publishes
-// its microphone first, so its session stays connected meanwhile), so the
-// other side checks a phone's screen share arriving. Each side pulls the
+// With CF_REALTIME_CROSS_DEVICE_SCREEN=true, a phone shares its screen
+// instead of its camera (answer Android's consent dialog, or tap "Start
+// Broadcast" in iOS's picker within 2 minutes; it publishes its microphone
+// first, so its session stays connected meanwhile), so the other side
+// checks a phone's screen share arriving. Each side pulls the
 // other's screen, else camera, else microphone.
 //
 // Skipped unless CF_REALTIME_BROKER_URL, CF_REALTIME_BROKER_TOKEN,
@@ -42,7 +43,7 @@ const _peerTimeout = Duration(minutes: 5);
 /// How long one media check may take.
 const _timeout = Duration(seconds: 30);
 
-/// Whether an Android side shares its screen instead of its camera.
+/// Whether a phone shares its screen instead of its camera.
 const _shareScreen = bool.fromEnvironment('CF_REALTIME_CROSS_DEVICE_SCREEN');
 
 /// The metadata key each side sets to `done` when it has finished.
@@ -83,21 +84,30 @@ void main() {
       _log('joined as $self');
 
       // Camera with the default simulcast layers, else the microphone; or
-      // the screen, on Android when asked.
+      // the screen, on a phone when asked.
       LocalMediaPublication published;
       final screen =
           _shareScreen &&
           !kIsWeb &&
-          defaultTargetPlatform == TargetPlatform.android;
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS);
       try {
         if (screen) {
           // The microphone first, so the session is connected while the
           // consent dialog waits: the SFU drops a session whose
           // PeerConnection never connected (410 on the first push).
           await room.localParticipant.publishMicrophone();
+          if (defaultTargetPlatform == TargetPlatform.iOS) {
+            _log('TAP "Start Broadcast" on the iPhone (within 2 minutes)');
+          }
         }
         published = screen
-            ? await room.localParticipant.publishScreen()
+            ? await room.localParticipant.publishScreen(
+                // iOS waits this long for "Start Broadcast".
+                options: const ScreenShareOptions(
+                  broadcastStartTimeout: Duration(minutes: 2),
+                ),
+              )
             : await room.localParticipant.publishCamera();
       } on MediaException catch (e) {
         _log('no camera ($e), publishing the microphone');

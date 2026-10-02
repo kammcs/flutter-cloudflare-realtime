@@ -2,6 +2,7 @@
 /// @docImport 'screen_source_picker.dart';
 library;
 
+import 'media_backend.dart';
 import 'media_types.dart';
 
 /// A failure in the media layer, reported on [LocalMediaSource.errors] or
@@ -79,6 +80,32 @@ final class ScreenCapturePermissionException
       'Recording (Screen Recording on macOS 14 and earlier), turn this app '
       'on, then quit and reopen it. macOS applies the permission only after '
       'a restart.';
+}
+
+/// The app isn't set up for screen share on this platform: on iOS, the
+/// Broadcast Upload Extension, its App Group or the Info.plist keys are
+/// missing (`docs/design.md` §10).
+///
+/// This is a developer's mistake, not the user's: the share can't start
+/// until the app is rebuilt. Log [guidance]; tell the user only that screen
+/// sharing isn't available.
+final class ScreenShareSetupException extends MediaException {
+  /// Creates the exception.
+  const ScreenShareSetupException(
+    super.message, {
+    this.problems = const [],
+    super.cause,
+  });
+
+  /// What's missing.
+  final List<BroadcastSetupProblem> problems;
+
+  /// What to fix, for developers: one line per problem, then where the
+  /// setup is described.
+  String get guidance => [
+    for (final problem in problems) problem.description,
+    'See "iOS screen share setup" in the cloudflare_realtime README.',
+  ].join('\n');
 }
 
 /// Every candidate device failed to produce a track.

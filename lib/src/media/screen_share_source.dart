@@ -23,8 +23,9 @@ enum ScreenShareEndReason {
   stopped,
 
   /// The user stopped it outside the app: the browser's "Stop sharing"
-  /// button (web), or the system's stop control or the share's
-  /// notification (Android).
+  /// button (web), the system's stop control or the share's notification
+  /// (Android), or the broadcast's stop in the status bar or Control
+  /// Center (iOS).
   userStopped,
 
   /// The shared window closed or the shared display went away (desktop), or
@@ -48,9 +49,15 @@ enum ScreenShareEndReason {
 ///   entries merge into the app's); see `docs/design.md` §10. Every start
 ///   asks for consent again, including unmuting with
 ///   [MutePolicy.releaseCapture].
-/// - **iOS** needs a Broadcast Upload Extension in the host app, which this
-///   package doesn't cover yet (roadmap M9). [start] and [enable] throw
-///   [UnsupportedError] there.
+/// - **iOS:** [start] without a source; the system's broadcast picker
+///   ("Start Broadcast") is the picker, and the host app's Broadcast Upload
+///   Extension captures the screen (set up as the README's "iOS screen
+///   share setup" says; `docs/design.md` §10). If the setup is incomplete,
+///   [start] returns `false` and reports a [ScreenShareSetupException] on
+///   [errors]. [start] completes once the user has started the broadcast;
+///   if that doesn't happen within [ScreenShareOptions.broadcastStartTimeout]
+///   (the picker was dismissed, or the user waited), it returns `false` and
+///   reports nothing.
 ///
 /// [usesSystemPicker] tells the two kinds apart: `true` where the browser
 /// or the system picks what to share, `false` where the app passes a
@@ -62,13 +69,15 @@ enum ScreenShareEndReason {
 /// `onEnded`, so on desktop the source watches the capturer's source list
 /// instead, and ends the share when the shared window or display goes away.
 /// On Android the package's native code reports the projection stopping
-/// (the system's stop control) and the notification's "Stop sharing"; both
-/// end the share as [ScreenShareEndReason.userStopped].
+/// (the system's stop control) and the notification's "Stop sharing"; on
+/// iOS, the broadcast finishing. Both end the share as
+/// [ScreenShareEndReason.userStopped].
 ///
 /// [track] carries the video track. With [ScreenShareOptions.captureAudio]
 /// on a platform that supports it, [audioTrack] carries system or tab
-/// audio; broadcasting applies to both. Android doesn't capture screen
-/// audio: the option is ignored there and [audioTrack] stays `null`.
+/// audio; broadcasting applies to both. Android and iOS don't capture
+/// screen audio: the option is ignored there and [audioTrack] stays
+/// `null`.
 ///
 /// Defaults to [MutePolicy.releaseCapture]: [stopBroadcasting] ends the
 /// share.
@@ -95,6 +104,10 @@ class ScreenShareSource extends LocalMediaSource {
   /// How often the desktop source list is re-scanned while sharing.
   final Duration sourceWatchInterval;
 
+  /// How long a release waits on iOS for the extension to report the end
+  /// of the broadcast, so the next share doesn't find it still running.
+  static const _broadcastEndTimeout = Duration(seconds: 3);
+
   ScreenShareOptions _wantedOptions;
   ScreenSource? _selected;
   String? _capturedSourceId;
@@ -103,6 +116,9 @@ class ScreenShareSource extends LocalMediaSource {
   bool _serviceRunning = false;
   StreamSubscription<ScreenSource>? _removedSubscription;
   StreamSubscription<String?>? _serviceStoppedSubscription;
+  StreamSubscription<BroadcastExtensionEvent>? _broadcastSubscription;
+  bool _broadcastFinished = false;
+  Completer<void>? _wake;
   Timer? _watchTimer;
   final StateStream<CapturedTrack?> _audioTrack = StateStream(
     null,
@@ -115,18 +131,23 @@ class ScreenShareSource extends LocalMediaSource {
   final StreamController<ScreenShareEndReason> _ended =
       StreamController.broadcast();
 
-  /// Whether screen share is implemented on this platform (desktop, web
-  /// and Android).
+  /// Whether screen share is implemented on this platform (desktop, web,
+  /// Android and iOS). On iOS it also needs the host app's setup, which
+  /// [start] checks.
   bool get isSupported =>
       _media.platform.isDesktop ||
       _media.platform == MediaPlatform.web ||
-      _service != null;
+      _service != null ||
+      _broadcast != null;
 
-  /// Whether the browser (web) or the system's consent dialog (Android)
-  /// picks what to share, rather than the app passing a [ScreenSource]
-  /// (desktop). When `true`, call [start] without a source.
+  /// Whether the browser (web), the system's consent dialog (Android) or
+  /// its broadcast picker (iOS) picks what to share, rather than the app
+  /// passing a [ScreenSource] (desktop). When `true`, call [start] without
+  /// a source.
   bool get usesSystemPicker =>
-      _media.platform == MediaPlatform.web || _service != null;
+      _media.platform == MediaPlatform.web ||
+      _service != null ||
+      _broadcast != null;
 
   /// Whether the browser picks the source (web). See [usesSystemPicker],
   /// which also covers Android's consent dialog.
@@ -138,8 +159,12 @@ class ScreenShareSource extends LocalMediaSource {
       ? _media.screenCaptureService
       : null;
 
+  /// The iOS broadcast extension, or `null` elsewhere.
+  BroadcastExtensionBackend? get _broadcast =>
+      _media.platform == MediaPlatform.ios ? _media.broadcastExtension : null;
+
   /// The desktop source chosen with [start] or [select]. Always `null` on
-  /// the web and Android.
+  /// the web and phones.
   ScreenSource? get selectedSource => _selected;
 
   /// The capture options.
@@ -180,14 +205,18 @@ class ScreenShareSource extends LocalMediaSource {
   }
 
   /// Starts sharing [source] (desktop), or asks the browser to show its
-  /// picker (web) or the system its consent dialog (Android); there
-  /// [source] must be `null` ([usesSystemPicker]).
+  /// picker (web), the system its consent dialog (Android) or its
+  /// broadcast picker (iOS); there [source] must be `null`
+  /// ([usesSystemPicker]).
   ///
   /// If a share is already running, switches it to [source] and [options].
   /// Returns whether the share is running afterwards (`false` too when the
-  /// user cancels the picker or dialog); failures go to [errors]. Throws
-  /// [UnsupportedError] on iOS, and an [ArgumentError] on desktop if no
-  /// source was given or selected before.
+  /// user cancels the picker or dialog, or on iOS doesn't start the
+  /// broadcast within [ScreenShareOptions.broadcastStartTimeout]); failures
+  /// go to [errors].
+  /// Throws an [ArgumentError] on desktop if no source was given or
+  /// selected before, and [UnsupportedError] where screen share isn't
+  /// available ([isSupported]).
   Future<bool> start({ScreenSource? source, ScreenShareOptions? options}) {
     _checkSupported();
     if (source != null && usesSystemPicker) {
@@ -221,13 +250,16 @@ class ScreenShareSource extends LocalMediaSource {
   void _checkSupported() {
     if (isSupported) return;
     throw UnsupportedError(
-      'Screen share on ${_media.platform.name} is not implemented yet. '
-      'iOS needs a Broadcast Upload Extension in the host app (roadmap M9).',
+      'Screen share is not available on ${_media.platform.name} with this '
+      'MediaBackend.',
     );
   }
 
   @override
   void didChangeState() {
+    // Stops waiting for the iOS broadcast when the share is turned off.
+    final wake = _wake;
+    if (!isEnabled && wake != null && !wake.isCompleted) wake.complete();
     if (_broadcastAudioTrack.isClosed) return;
     _broadcastAudioTrack.set(
       isEnabled && isBroadcasting ? _audioTrack.value : null,
@@ -253,29 +285,37 @@ class ScreenShareSource extends LocalMediaSource {
     if (!isEnabled) return;
 
     final service = _service;
+    final broadcast = _broadcast;
     final MediaStream stream;
     try {
-      if (service != null) {
-        if (!await service.requestConsent()) {
-          // The user cancelled the consent dialog: not an error.
-          turnOff();
-          return;
+      if (broadcast != null) {
+        final captured = await _captureBroadcast(broadcast);
+        if (captured == null) return;
+        stream = captured;
+      } else {
+        if (service != null) {
+          if (!await service.requestConsent()) {
+            // The user cancelled the consent dialog: not an error.
+            turnOff();
+            return;
+          }
+          if (!isEnabled || isDisposed) return;
+          _serviceRunning = true;
+          await service.startService();
+          if (!isEnabled || isDisposed) {
+            await _stopService();
+            return;
+          }
         }
-        if (!isEnabled || isDisposed) return;
-        _serviceRunning = true;
-        await service.startService();
-        if (!isEnabled || isDisposed) {
-          await _stopService();
-          return;
-        }
+        stream = wantedId == null
+            ? await _media.getDisplayMedia(webScreenConstraints(_wantedOptions))
+            : await _captureDesktop(wantedId);
       }
-      stream = wantedId == null
-          ? await _media.getDisplayMedia(webScreenConstraints(_wantedOptions))
-          : await _captureDesktop(wantedId);
     } on ScreenSourceNotFoundException catch (error) {
       fail(error);
       return;
     } catch (error) {
+      _stopBroadcastEvents();
       await _stopService();
       if (usesBrowserPicker && isPermissionError(error)) {
         // The user closed the browser's picker: not an error.
@@ -294,12 +334,14 @@ class ScreenShareSource extends LocalMediaSource {
     }
     final videoTracks = stream.getVideoTracks();
     if (videoTracks.isEmpty) {
+      _stopBroadcastEvents();
       await releaseStream(stream);
       await _stopService();
       fail(const MediaCaptureException('getDisplayMedia returned no video.'));
       return;
     }
     if (!isEnabled || isDisposed) {
+      _stopBroadcastEvents();
       await releaseStream(stream);
       await _stopService();
       return;
@@ -316,6 +358,123 @@ class ScreenShareSource extends LocalMediaSource {
     );
     setTrack(video);
     await _watchForEnd(video, wantedId);
+  }
+
+  /// Captures through the iOS Broadcast Upload Extension: checks the
+  /// app's setup, hands the extension its settings, shows the system's
+  /// broadcast picker (`getDisplayMedia`, which returns at once), then
+  /// waits for the user to start the broadcast. A broadcast that is already
+  /// running is used at once, without the picker.
+  ///
+  /// Returns `null` if the share didn't start: the setup is incomplete
+  /// (reported), the wait timed out or the share was turned off meanwhile
+  /// (not reported). Throws for a failing call, like `getDisplayMedia`.
+  /// Leaves [_broadcastSubscription] listening for the broadcast's end.
+  Future<MediaStream?> _captureBroadcast(
+    BroadcastExtensionBackend broadcast,
+  ) async {
+    final status = await broadcast.status();
+    if (!status.isReady) {
+      fail(
+        ScreenShareSetupException(
+          'The app is not set up for screen share on iOS: '
+          '${status.problems.map((p) => p.name).join(', ')}.',
+          problems: status.problems,
+        ),
+      );
+      return null;
+    }
+    if (!isEnabled || isDisposed) return null;
+    await broadcast.prepare(
+      frameRate: _wantedOptions.frameRate,
+      scale: _wantedOptions.broadcastScale,
+    );
+    if (!isEnabled || isDisposed) return null;
+
+    final started = Completer<bool>();
+    if (status.broadcasting) started.complete(true);
+    _broadcastFinished = false;
+    _stopBroadcastEvents();
+    _broadcastSubscription = broadcast.events.listen((event) {
+      switch (event) {
+        case BroadcastExtensionEvent.started:
+          if (!started.isCompleted) started.complete(true);
+        case BroadcastExtensionEvent.finished:
+          if (!started.isCompleted) {
+            started.complete(false);
+            return;
+          }
+          _broadcastFinished = true;
+          final video = currentTrack;
+          if (video != null) {
+            _endedExternally(video, ScreenShareEndReason.userStopped);
+          }
+      }
+    });
+    final stream = await _media.getDisplayMedia(
+      iosBroadcastConstraints(pickerShown: !status.broadcasting),
+    );
+
+    final wake = _wake = Completer<void>();
+    if (!isEnabled || isDisposed) wake.complete();
+    final timeoutAfter = _wantedOptions.broadcastStartTimeout;
+    final timeout = Timer(timeoutAfter, () {
+      if (!started.isCompleted) started.complete(false);
+    });
+    final running = await Future.any([
+      started.future,
+      wake.future.then((_) => false),
+    ]);
+    timeout.cancel();
+    _wake = null;
+    if (running && isEnabled && !isDisposed) return stream;
+
+    // Cancelled, timed out or turned off: nothing to report.
+    _stopBroadcastEvents();
+    await releaseStream(stream);
+    try {
+      // flutter_webrtc keeps listening on its socket when nothing ever
+      // connected; a late broadcast mustn't find it.
+      await broadcast.abandon();
+    } catch (error) {
+      debugPrint('cloudflare_realtime: abandoning the broadcast: $error');
+    }
+    if (isEnabled && !isDisposed) {
+      debugPrint(
+        'cloudflare_realtime: the screen broadcast did not start (the '
+        'picker was dismissed or not answered within '
+        '$timeoutAfter, or the broadcast ended at once).',
+      );
+      turnOff();
+    }
+    return null;
+  }
+
+  void _stopBroadcastEvents() {
+    // Not awaited, like the other subscriptions (see _release).
+    unawaited(_broadcastSubscription?.cancel());
+    _broadcastSubscription = null;
+  }
+
+  /// Completes once the iOS broadcast has finished, or right away if none
+  /// is running. Listens before its first `await`, so call it before
+  /// releasing the capture whose end it waits for.
+  Future<void> _broadcastEnded(BroadcastExtensionBackend broadcast) async {
+    final finished = Completer<void>();
+    final subscription = broadcast.events.listen((event) {
+      if (event == BroadcastExtensionEvent.finished && !finished.isCompleted) {
+        finished.complete();
+      }
+    });
+    try {
+      if ((await broadcast.status()).broadcasting) {
+        await finished.future.timeout(_broadcastEndTimeout, onTimeout: () {});
+      }
+    } catch (error) {
+      debugPrint('cloudflare_realtime: waiting for the broadcast: $error');
+    } finally {
+      unawaited(subscription.cancel());
+    }
   }
 
   /// Captures a desktop source, working around flutter-webrtc #1085: the
@@ -360,6 +519,13 @@ class ScreenShareSource extends LocalMediaSource {
           ? ScreenShareEndReason.userStopped
           : ScreenShareEndReason.sourceClosed,
     );
+    if (_broadcast != null) {
+      // _broadcastSubscription reports the end; it may already have come.
+      if (_broadcastFinished) {
+        _endedExternally(video, ScreenShareEndReason.userStopped);
+      }
+      return;
+    }
     final service = _service;
     if (service != null) {
       final trackId = video.track.id;
@@ -416,6 +582,7 @@ class ScreenShareSource extends LocalMediaSource {
     _removedSubscription = null;
     unawaited(_serviceStoppedSubscription?.cancel());
     _serviceStoppedSubscription = null;
+    _stopBroadcastEvents();
     final current = currentTrack;
     _endReason = null;
     if (current == null) {
@@ -426,8 +593,14 @@ class ScreenShareSource extends LocalMediaSource {
     _capturedOptions = null;
     _audioTrack.set(null);
     setTrack(null);
-    // The capture first, then its foreground service.
+    // The capture first, then its foreground service (Android) or the
+    // broadcast's end (iOS).
+    final broadcast = _broadcast;
+    final broadcastEnded = broadcast == null
+        ? null
+        : _broadcastEnded(broadcast);
     await releaseStream(current.stream);
+    await broadcastEnded;
     await _stopService();
     if (reason != null && !_ended.isClosed) _ended.add(reason);
   }

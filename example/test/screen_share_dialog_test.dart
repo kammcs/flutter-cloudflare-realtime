@@ -19,6 +19,9 @@ class _Backend implements MediaBackend {
   ScreenCaptureServiceBackend? get screenCaptureService => null;
 
   @override
+  BroadcastExtensionBackend? get broadcastExtension => null;
+
+  @override
   Future<List<MediaDevice>> enumerateDevices() async => const [];
 
   @override

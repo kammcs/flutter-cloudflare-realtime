@@ -72,5 +72,13 @@
 	<string>The microphone is used to send your audio to the call.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>The local network is used to reach a development server on your network.</string>
+	<key>RTCAppGroupIdentifier</key>
+	<string>$(CF_REALTIME_APP_GROUP)</string>
+	<key>RTCScreenSharingExtension</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER).BroadcastExtension</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 </dict>
 </plist>

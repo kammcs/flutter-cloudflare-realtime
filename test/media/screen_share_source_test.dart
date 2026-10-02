@@ -517,15 +517,266 @@ void main() {
     });
   });
 
-  test('iOS throws UnsupportedError', () async {
-    final share = ScreenShareSource(
-      backend: FakeMediaBackend(platform: MediaPlatform.ios),
+  group('iOS', () {
+    late FakeBroadcastExtension broadcast;
+
+    setUp(() {
+      broadcast = FakeBroadcastExtension();
+      backend = FakeMediaBackend(
+        platform: MediaPlatform.ios,
+        broadcast: broadcast,
+      );
+      // Like the real extension: releasing the capture ends the broadcast.
+      backend.onDisplayMedia = (constraints) async {
+        final stream = FakeStream([
+          FakeTrack(kind: 'video')..onStop = broadcast.captureReleased,
+        ]);
+        backend.streams.add(stream);
+        return stream;
+      };
+    });
+
+    test(
+      'checks the setup, shows the picker, waits for the broadcast',
+      () async {
+        final share = ScreenShareSource(
+          backend: backend,
+          options: const ScreenShareOptions(
+            frameRate: 10,
+            broadcastScale: 0.75,
+          ),
+        );
+        expect(share.isSupported, isTrue);
+        expect(share.usesSystemPicker, isTrue);
+        expect(share.usesBrowserPicker, isFalse);
+        expect(() => share.start(source: screen1), throwsArgumentError);
+        expect(() => share.select(screen1), throwsUnsupportedError);
+
+        var done = false;
+        final started = share.start().then((ok) {
+          done = true;
+          return ok;
+        });
+        await pumpEventQueue();
+        expect(broadcast.calls, ['status', 'prepare:10@0.75']);
+        expect(backend.displayMediaCalls.single, {
+          'audio': false,
+          'video': {'deviceId': 'broadcast'},
+        });
+        expect(done, isFalse, reason: 'waits for the user');
+        expect(share.currentTrack, isNull);
+
+        broadcast.start();
+        expect(await started, isTrue);
+        expect(share.currentTrack, isNotNull);
+        expect(share.selectedSource, isNull);
+        await share.dispose();
+      },
     );
-    expect(share.isSupported, isFalse);
-    expect(share.usesSystemPicker, isFalse);
-    expect(() => share.start(), throwsUnsupportedError);
-    expect(() => share.startBroadcasting(), throwsUnsupportedError);
-    await share.dispose();
+
+    test('a missing setup is reported with guidance', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      broadcast.problems = const [
+        BroadcastSetupProblem.noAppGroupKey,
+        BroadcastSetupProblem.extensionMissing,
+      ];
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      final error = errors.single as ScreenShareSetupException;
+      expect(error.problems, broadcast.problems);
+      expect(error.guidance, contains('RTCAppGroupIdentifier'));
+      expect(error.guidance, contains('Embed Foundation Extensions'));
+      expect(error.guidance, contains('iOS screen share setup'));
+      expect(backend.displayMediaCalls, isEmpty);
+      expect(broadcast.calls, ['status']);
+      await share.dispose();
+    });
+
+    test('a failing setup check is a capture error, not a hang', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      broadcast.statusError = MissingPluginException();
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors.single, isA<MediaCaptureException>());
+      await share.dispose();
+    });
+
+    test('a broadcast that never starts times out without an error', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(backend: backend);
+        final errors = <MediaException>[];
+        share.errors.listen(errors.add);
+        bool? result;
+        share.start().then((ok) => result = ok);
+        async.elapse(const Duration(seconds: 59));
+        expect(result, isNull);
+
+        async.elapse(const Duration(seconds: 2));
+        expect(result, isFalse);
+        expect(errors, isEmpty);
+        expect(share.isEnabled, isFalse);
+        expect(backend.streams.single.track.stopped, isTrue);
+        expect(broadcast.calls.last, 'abandon');
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
+    test('the start timeout is configurable', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(
+          backend: backend,
+          options: const ScreenShareOptions(
+            broadcastStartTimeout: Duration(seconds: 5),
+          ),
+        );
+        bool? result;
+        share.start().then((ok) => result = ok);
+        async.elapse(const Duration(seconds: 6));
+        expect(result, isFalse);
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
+    test('stopping while waiting gives up at once', () async {
+      final share = ScreenShareSource(backend: backend);
+      final started = share.start();
+      await pumpEventQueue();
+      await share.stop();
+
+      expect(await started, isFalse);
+      expect(backend.streams.single.track.stopped, isTrue);
+      expect(broadcast.calls.last, 'abandon');
+      // A broadcast that starts late is ignored.
+      broadcast.start();
+      await pumpEventQueue();
+      expect(share.currentTrack, isNull);
+      await share.dispose();
+    });
+
+    test('a broadcast that finishes before it starts returns false', () async {
+      final share = ScreenShareSource(backend: backend);
+      final started = share.start();
+      await pumpEventQueue();
+      broadcast.finish();
+      expect(await started, isFalse);
+      expect(share.isEnabled, isFalse);
+      await share.dispose();
+    });
+
+    test('a running broadcast is used without the picker', () async {
+      broadcast.broadcasting = true;
+      final share = ScreenShareSource(backend: backend);
+      expect(await share.start(), isTrue);
+      expect(backend.displayMediaCalls.single, {
+        'audio': false,
+        'video': {'deviceId': 'broadcast-manual'},
+      });
+      await share.dispose();
+    });
+
+    test(
+      'the user stopping the broadcast ends the share as userStopped',
+      () async {
+        final share = ScreenShareSource(backend: backend);
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        final started = share.startBroadcasting();
+        await pumpEventQueue();
+        broadcast.start();
+        expect(await started, isTrue);
+        final video = videoOf(share);
+
+        broadcast.finish();
+        await pumpEventQueue();
+        expect(reasons, [ScreenShareEndReason.userStopped]);
+        expect(share.isEnabled, isFalse);
+        expect(share.currentBroadcastTrack, isNull);
+        expect(video.stopped, isTrue);
+        await share.dispose();
+      },
+    );
+
+    test('stopping waits for the broadcast to finish', () async {
+      final share = ScreenShareSource(backend: backend);
+      final reasons = <ScreenShareEndReason>[];
+      share.ended.listen(reasons.add);
+      final started = share.start();
+      await pumpEventQueue();
+      broadcast.start();
+      expect(await started, isTrue);
+
+      await share.stop();
+      expect(broadcast.broadcasting, isFalse);
+      expect(reasons, [ScreenShareEndReason.stopped]);
+
+      // The next share shows the picker again.
+      final again = share.start();
+      await pumpEventQueue();
+      expect(
+        (backend.displayMediaCalls.last['video'] as Map)['deviceId'],
+        'broadcast',
+      );
+      broadcast.start();
+      expect(await again, isTrue);
+      await share.dispose();
+    });
+
+    test('a broadcast that never reports its end delays a stop only a bit', () {
+      fakeAsync((async) {
+        backend.onDisplayMedia = (constraints) async =>
+            FakeStream([FakeTrack(kind: 'video')]);
+        final share = ScreenShareSource(backend: backend);
+        share.start();
+        async.flushMicrotasks();
+        broadcast.start();
+        async.flushMicrotasks();
+        expect(share.currentTrack, isNotNull);
+
+        var stopped = false;
+        share.stop().then((_) => stopped = true);
+        async.elapse(const Duration(seconds: 2));
+        expect(stopped, isFalse);
+        async.elapse(const Duration(seconds: 2));
+        expect(stopped, isTrue);
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
+    test('captureAudio is ignored, not an error', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      final started = share.start(
+        options: const ScreenShareOptions(captureAudio: true),
+      );
+      await pumpEventQueue();
+      broadcast.start();
+      expect(await started, isTrue);
+      expect(backend.displayMediaCalls.single['audio'], isFalse);
+      expect(share.currentAudioTrack, isNull);
+      expect(errors, isEmpty);
+      await share.dispose();
+    });
+
+    test('without the broadcast backend it is unsupported', () async {
+      final share = ScreenShareSource(
+        backend: FakeMediaBackend(platform: MediaPlatform.ios),
+      );
+      expect(share.isSupported, isFalse);
+      expect(share.usesSystemPicker, isFalse);
+      expect(() => share.start(), throwsUnsupportedError);
+      expect(() => share.startBroadcasting(), throwsUnsupportedError);
+      await share.dispose();
+    });
   });
 
   test('dispose releases the share and completes its streams', () async {

@@ -43,7 +43,14 @@ export 'src/media/flutter_webrtc_media_backend.dart'
     show FlutterWebrtcMediaBackend;
 export 'src/media/local_media_source.dart' show LocalMediaSource, MutePolicy;
 export 'src/media/media_backend.dart'
-    show DesktopCapturerBackend, MediaBackend, ScreenCaptureServiceBackend;
+    show
+        BroadcastExtensionBackend,
+        BroadcastExtensionEvent,
+        BroadcastExtensionStatus,
+        BroadcastSetupProblem,
+        DesktopCapturerBackend,
+        MediaBackend,
+        ScreenCaptureServiceBackend;
 export 'src/media/media_device_list.dart' show MediaDeviceList;
 export 'src/media/media_errors.dart'
     show
@@ -52,6 +59,7 @@ export 'src/media/media_errors.dart'
         MediaException,
         MediaPermissionDeniedException,
         ScreenCapturePermissionException,
+        ScreenShareSetupException,
         ScreenSourceNotFoundException,
         ScreenSourcesException;
 export 'src/media/media_types.dart'

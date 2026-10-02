@@ -2,7 +2,11 @@ import AVFoundation
 import Flutter
 import UIKit
 
-/// Call audio routing on iOS (docs/design.md §4.6).
+/// The package's iOS plugin: call audio routing (docs/design.md §4.6),
+/// here, and the screen share's Broadcast Upload Extension support
+/// (`ScreenBroadcast`, §10).
+///
+/// Call audio routing:
 ///
 /// Thin by design: it lists the routes, reports the current one and its
 /// changes, and selects one. Which route to pick is decided in Dart, and
@@ -17,9 +21,19 @@ import UIKit
 public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var sink: FlutterEventSink?
   private var observer: NSObjectProtocol?
+  private let broadcast = ScreenBroadcast()
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = CloudflareRealtimePlugin()
+    let broadcast = instance.broadcast
+    FlutterMethodChannel(
+      name: "dev.kammcs.cloudflare_realtime/screen_broadcast",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { call, result in broadcast.handle(call, result: result) }
+    FlutterEventChannel(
+      name: "dev.kammcs.cloudflare_realtime/screen_broadcast_events",
+      binaryMessenger: registrar.messenger()
+    ).setStreamHandler(broadcast)
     let methods = FlutterMethodChannel(
       name: "dev.kammcs.cloudflare_realtime/call_audio",
       binaryMessenger: registrar.messenger())
