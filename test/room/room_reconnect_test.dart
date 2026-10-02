@@ -911,6 +911,7 @@ void main() {
     test('publishing waits for the new session', () {
       _fake((async, pump) {
         final alice = join(pump, 'alice');
+        h.autoConnect = true;
         h.pcOf(alice).emitConnectionState(_failed);
         pump();
         LocalMediaPublication? mic;
@@ -921,6 +922,16 @@ void main() {
         pump();
         expect(mic!.publication.session, same(alice.session));
         expect(h.announced('alice')!.tracks.keys, [mic!.trackName]);
+        // The re-session connected the new session for the waiting publish
+        // before it was pushed (docs/design.md §8.1, Publishing late), even
+        // with RoomOptions.connectEarly off.
+        expect(
+          [
+            for (final c in h.broker.calls)
+              if (c.sessionId == alice.session.sessionId) c.operation,
+          ],
+          ['datachannels/establish', 'renegotiate', 'tracks/new'],
+        );
         alice.leave();
         pump();
       });

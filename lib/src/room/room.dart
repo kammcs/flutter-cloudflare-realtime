@@ -172,6 +172,12 @@ class Room {
   Future<void>? _leaving;
   // The last session whose failure the room handled.
   SfuSession? _failureHandled;
+  // Operations (publishes) waiting for a re-session to run on its new
+  // session ([_onSessionWithRetry]). The re-session connects that session
+  // for them before it ends, even with RoomOptions.connectEarly off: the SFU
+  // sometimes never serves a track pushed onto a session that hasn't
+  // connected yet (docs/design.md §8.1, Publishing late).
+  int _waitingForNewSession = 0;
 
   /// The SFU session that carries this room's media now.
   ///
@@ -630,7 +636,7 @@ class Room {
     Future<T> Function(SfuSession session) operation,
   ) async {
     if (isReconnecting) {
-      await _whenNotReconnecting();
+      await _waitForNewSession();
       _checkNotLeft();
     }
     final session = _session;
@@ -648,12 +654,23 @@ class Room {
       // The session's failure reaches the room through a stream, which may
       // not have delivered it yet: start the re-session now.
       if (failure != null) _onSessionFailure(session, failure);
-      await _whenNotReconnecting();
+      await _waitForNewSession();
       if (_left || identical(_session, session) || !_session.isUsable) {
         rethrow;
       }
     }
     return operation(_session);
+  }
+
+  /// [_whenNotReconnecting], for an operation that runs on the new session
+  /// next: the re-session connects that session before it ends.
+  Future<void> _waitForNewSession() async {
+    _waitingForNewSession++;
+    try {
+      await _whenNotReconnecting();
+    } finally {
+      _waitingForNewSession--;
+    }
   }
 
   /// Completes once no reconnection is running, so an operation that needs

@@ -128,6 +128,9 @@ void main() {
         final first = alice.session;
         expire({first.sessionId});
         final events = record(alice);
+        // Peer connections created from now on (the re-session's) connect
+        // once negotiated.
+        h.autoConnect = true;
 
         // The user answers the permission prompt late.
         async.elapse(const Duration(seconds: 30));
@@ -188,11 +191,100 @@ void main() {
       });
     });
 
+    test('the retry is pushed once the new session has connected, so peers '
+        'can pull it', () {
+      // late_publish_test on a Pixel, without connectEarly: Bob never
+      // pulled Alice's video. The re-session left the new session
+      // unconnected, so the retried push was its first negotiation, and
+      // the SFU sometimes never serves a track pushed that way: every pull,
+      // from any session, answers `not_found_track_error`, while the SFU
+      // lists the track active and receives its media (about 1 in 150 such
+      // pushes on the device; never once the session had connected).
+      // Modelled at its worst: every push onto an unconnected session.
+      fake((async, pump) {
+        final alice = join(pump, 'alice', _late);
+        final bob = join(pump, 'bob', _late);
+        final first = alice.session;
+        expire({first.sessionId});
+        h.autoConnect = true;
+
+        final unpullable = <String>{};
+        final sfu = h.broker.onNewTracks!;
+        h.broker.onNewTracks = (sessionId, request) async {
+          if (_isPush(request)) {
+            final connected =
+                h.pcBySession[sessionId]?.connectionState ==
+                RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+            if (!connected) {
+              unpullable.addAll([
+                for (final t in request.tracks) '$sessionId/${t.trackName}',
+              ]);
+            }
+            return sfu(sessionId, request);
+          }
+          if (request.tracks.any(
+            (t) => unpullable.contains('${t.sessionId}/${t.trackName}'),
+          )) {
+            return TracksResponse(
+              tracks: [
+                for (final t in request.tracks)
+                  TrackResult(
+                    location: TrackLocation.remote,
+                    sessionId: t.sessionId,
+                    trackName: t.trackName,
+                    errorCode: 'not_found_track_error',
+                  ),
+              ],
+            );
+          }
+          return sfu(sessionId, request);
+        };
+
+        async.elapse(const Duration(seconds: 30));
+        LocalMediaPublication? mic;
+        alice.localParticipant.publishMicrophone().then((p) => mic = p);
+        pump();
+        async.elapse(const Duration(seconds: 1)); // The backoff delay.
+        pump();
+
+        final second = alice.session;
+        expect(mic!.publication.session, same(second));
+        expect(
+          [
+            for (final c in h.broker.calls)
+              if (c.sessionId == second.sessionId) c.operation,
+          ],
+          ['datachannels/establish', 'renegotiate', 'tracks/new'],
+          reason: 'the new session is connected before the retried push',
+        );
+        expect(
+          unpullable,
+          isNot(
+            contains(
+              '${second.sessionId}/'
+              '${mic!.trackName}',
+            ),
+          ),
+        );
+
+        async.elapse(const Duration(seconds: 5));
+        pump();
+        final bobAliceMic = bob.participant('alice')!.microphone!;
+        expect(bobAliceMic.subscriptionState, SfuTrackState.active);
+        expect(bobAliceMic.subscription!.remoteSessionId, second.sessionId);
+
+        alice.leave();
+        bob.leave();
+        pump();
+      });
+    });
+
     // These three run in real time: disposing a device source that the
     // room created doesn't complete in fake time.
     test('surfaces the error when the new session is gone too', () async {
       final h = RoomHarness();
       final alice = await h.join('alice', options: _lateFast);
+      h.autoConnect = true;
       // Every session expires before its push.
       final original = h.broker.onNewTracks!;
       h.broker.onNewTracks = (sessionId, request) async {
@@ -278,6 +370,7 @@ void main() {
         final alice = join(pump, 'alice', _late);
         final first = alice.session.sessionId;
         expire({first});
+        h.autoConnect = true;
         final events = record(alice);
         LocalMediaPublication? mic;
         LocalMediaPublication? cam;
@@ -305,6 +398,7 @@ void main() {
       fake((async, pump) {
         final alice = join(pump, 'alice', _late);
         final first = alice.session.sessionId;
+        h.autoConnect = true;
         h.broker.onEstablishDataChannels = (sessionId, request) async {
           if (sessionId == first) {
             throw _gone('datachannels/establish', sessionId);

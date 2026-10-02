@@ -23,8 +23,9 @@ class _Aborted implements Exception {
 /// 5. pulls every wanted remote track, and every DataChannel subscription,
 ///    from the publishers' current sessions;
 /// 6. connects the new session even if nothing moved
-///    ([RoomOptions.connectEarly]), and waits for the new peer connection
-///    to connect, if anything was negotiated on it (see [_whenConnected]).
+///    ([RoomOptions.connectEarly], or a publish waiting to run on it), and
+///    waits for the new peer connection to connect, if anything was
+///    negotiated on it (see [_whenConnected]).
 ///
 /// Only one episode runs at a time. Triggers during an episode coalesce
 /// into it: one about the attempt's own session makes that attempt count as
@@ -335,8 +336,12 @@ class _Reconnection {
 
       // 6. Media flows once ICE is up. With nothing to move, connect the
       //    new session anyway (RoomOptions.connectEarly), so the SFU keeps
-      //    it until the first publish.
-      if (room.options.connectEarly && !next.hasNegotiated) {
+      //    it until the first publish; and always when a publish waits to
+      //    run on it: a push onto a session that hasn't connected yet can
+      //    leave the track unpullable (docs/design.md §8.1, Publishing
+      //    late).
+      if ((room.options.connectEarly || room._waitingForNewSession > 0) &&
+          !next.hasNegotiated) {
         await room._connectEarly(next);
         _checkUsable(next);
       }

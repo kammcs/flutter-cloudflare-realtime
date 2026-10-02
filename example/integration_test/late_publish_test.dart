@@ -157,7 +157,18 @@ Future<void> _received(Room bob, Room alice, TrackKind kind) async {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
   }
-  if (pulled == null) fail('Bob never pulled Alice\'s ${kind.name}');
+  if (pulled == null) {
+    // What Bob has, for the next time this fails.
+    for (final p in bob.currentParticipants) {
+      final track = kind == TrackKind.video ? p.camera : p.microphone;
+      _log(
+        'Bob sees ${p.participantId} on ${p.sessionId} (Alice is on '
+        '${alice.session.sessionId}): ${track?.trackName} '
+        '${track?.subscriptionState?.name}, last error ${track?.error}',
+      );
+    }
+    fail('Bob never pulled Alice\'s ${kind.name}');
+  }
 
   Future<num> counter() async {
     num total = 0;
