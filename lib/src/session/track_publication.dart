@@ -139,6 +139,10 @@ class LocalTrackPublication {
   ///
   /// The number of layers and their `rid`s can't change on a live
   /// transceiver; a later [SfuSession.republish] uses [encodings] as given.
+  ///
+  /// On Windows, flutter_webrtc (1.6) ignores the change: its plugin edits
+  /// copies of the encodings and reports success, so the sender keeps the
+  /// encodings it was published with until the next republish.
   Future<void> setEncodings(List<SendEncoding> encodings) async {
     if (state == SfuTrackState.closed) {
       throw StateError('The publication is closed.');

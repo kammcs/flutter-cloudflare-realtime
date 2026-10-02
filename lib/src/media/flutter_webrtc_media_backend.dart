@@ -45,9 +45,14 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
       } catch (_) {
         return _enumerate(); // Not implemented here: labels decide.
       }
+      // The Windows and Linux plugin (flutter_webrtc's common C++) makes the
+      // facing up: "front" for the second camera, "back" for the others.
+      final pluginFacing =
+          platform != MediaPlatform.windows && platform != MediaPlatform.linux;
       return orderBuiltInCameras([
         for (final source in sources)
-          if (source is Map) ?mediaDeviceFromSource(source),
+          if (source is Map)
+            ?mediaDeviceFromSource(source, pluginFacing: pluginFacing),
       ]);
     }
     return _enumerate();
@@ -217,9 +222,14 @@ String? audioInputToSelect(
 ///
 /// Native platforms give `facing` for cameras: `front`, `back` (Android,
 /// Darwin), or `unspecified` (a Mac's built-in camera). Browsers don't, so
-/// the label decides there ([cameraFacingFromLabel]).
+/// the label decides there ([cameraFacingFromLabel]). With [pluginFacing]
+/// `false` (Windows and Linux, whose plugin calls the second camera
+/// `front` and every other one `back`), the label decides too.
 @visibleForTesting
-MediaDevice? mediaDeviceFromSource(Map<Object?, Object?> source) {
+MediaDevice? mediaDeviceFromSource(
+  Map<Object?, Object?> source, {
+  bool pluginFacing = true,
+}) {
   final kind = MediaDeviceKind.fromWireName('${source['kind'] ?? ''}');
   if (kind == null) return null;
   final label = '${source['label'] ?? ''}';
@@ -230,7 +240,7 @@ MediaDevice? mediaDeviceFromSource(Map<Object?, Object?> source) {
     label: label,
     groupId: groupId is String ? groupId : null,
     facing: kind == MediaDeviceKind.videoInput
-        ? switch (source['facing']) {
+        ? switch (pluginFacing ? source['facing'] : null) {
             'front' || 'user' => CameraFacing.user,
             'back' || 'environment' => CameraFacing.environment,
             _ => cameraFacingFromLabel(label),

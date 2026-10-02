@@ -7,12 +7,15 @@
 //     framesEncoded flat). Bob then switches up to the high layer: Alice
 //     resumes at once and Bob keeps decoding; whether the SFU moves him up
 //     is logged. Then Bob pulls the paused high layer afresh: it resumes,
-//     and Bob decodes it within [_newPullTimeout].
+//     and Bob decodes it within [_newPullTimeout]. Windows can't pause: the
+//     room reports a RoomErrorEvent and the rest runs as the baseline.
 // (b) Announcement: the announced simulcast size is the captured size (the
-//     sender's media-source), portrait on a phone held upright.
+//     sender's media-source, or on Windows, where it has no size, layer a's
+//     encoded size), portrait on a phone held upright.
 // (c) Codec: with RoomOptions.videoCodec H.264, Bob decodes H.264 (the
 //     codec in Bob's stats), and the encoder in use is logged (hardware or
-//     not).
+//     not). Windows never sends H.264: it sends VP8 and reports a
+//     RoomErrorEvent.
 //
 // Skipped unless CF_REALTIME_BROKER_URL is set; see broker_settings.dart
 // for the settings (including the dev server's X-Dev-User) and a command
@@ -45,6 +48,10 @@ const _pauseDelay = Duration(seconds: 3);
 /// `--dart-define=CF_QUALITY_PAUSING=false` runs (a) without pausing, as a
 /// baseline for the switch-up time.
 const _pausing = bool.fromEnvironment('CF_QUALITY_PAUSING', defaultValue: true);
+
+/// Windows neither pauses layers nor sends H.264 (docs/design.md §6, §6.2).
+final bool _windows =
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -88,7 +95,19 @@ void main() {
           ),
         ),
       );
+      final errors = <RoomErrorEvent>[];
+      final events = alice.events.listen((e) {
+        if (e is RoomErrorEvent) errors.add(e);
+      });
+      addTearDown(events.cancel);
       final published = await alice.localParticipant.publishCamera();
+      // Windows can't pause (flutter_webrtc ignores encoding changes there):
+      // the room says so, and the rest runs as the baseline.
+      final pausing = _pausing && !_windows;
+      if (_pausing && _windows) {
+        expect(errors.map((e) => e.operation), contains('layerPausing'));
+        _log('Windows: no layer pausing (${errors.first.error})');
+      }
       await published.publication.whenSending().timeout(_timeout);
       final cam = await _remoteCamera(bob, alice);
 
@@ -105,7 +124,7 @@ void main() {
         '(announced ${published.simulcast})',
       );
       _log(
-        'captured ${source.$1}x${source.$2}, announced '
+        'captured ${source.$1}x${source.$2} (${source.$3}), announced '
         '${announced!.width}x${announced.height} '
         '(the camera reported ${published.mediaSource.currentTrack?.track.getSettings()['width']}x'
         '${published.mediaSource.currentTrack?.track.getSettings()['height']})',
@@ -124,7 +143,7 @@ void main() {
         (s) => s.framesDecoded > 0,
         'Bob decoding the low layer',
       );
-      if (_pausing) {
+      if (pausing) {
         final watch = Stopwatch()..start();
         await _poll(
           () async => published.pausedLayers,
@@ -195,7 +214,7 @@ void main() {
       // again), then pulls afresh at high. The layer resumes and Bob decodes
       // it within [_newPullTimeout].
       await cam.setPreferredLayer(SimulcastLayer.low);
-      if (_pausing) {
+      if (pausing) {
         await _poll(
           () async => published.pausedLayers,
           (p) => setEquals(p, {'a', 'b'}),
@@ -259,8 +278,22 @@ Future<void> _codecTest(
   };
   _log('video encoders: $encoders');
   final (alice, bob) = await joinBoth(RoomOptions(videoCodec: videoCodec));
+  final errors = <RoomErrorEvent>[];
+  final events = alice.events.listen((e) {
+    if (e is RoomErrorEvent) errors.add(e);
+  });
+  addTearDown(events.cancel);
   final published = await alice.localParticipant.publishCamera();
-  expect(published.videoCodec, videoCodec);
+  // Windows never sends H.264 (flutter-webrtc #982): VP8 instead, reported
+  // as a RoomErrorEvent (docs/design.md §6, Codec).
+  final noH264 = videoCodec == VideoCodec.h264 && _windows;
+  if (noH264) {
+    expect(published.videoCodec, VideoCodec.vp8);
+    expect(errors.map((e) => e.operation), contains('videoCodec'));
+    _log('Windows: asked for H.264, sends VP8 (${errors.first.error})');
+  } else {
+    expect(published.videoCodec, videoCodec);
+  }
   await published.publication.whenSending().timeout(_timeout);
   final cam = await _remoteCamera(bob, alice);
   await cam.setPreferredLayer(SimulcastLayer.high);
@@ -285,7 +318,10 @@ Future<void> _codecTest(
   );
   // A platform without the encoder falls back to VP8.
   final expected =
-      encoders.any((m) => m.toLowerCase() == videoCodec.mimeType.toLowerCase())
+      !noH264 &&
+          encoders.any(
+            (m) => m.toLowerCase() == videoCodec.mimeType.toLowerCase(),
+          )
       ? videoCodec.mimeType
       : 'video/VP8';
   expect(codec?.toLowerCase(), expected.toLowerCase());
@@ -372,14 +408,21 @@ Map<String, _Video> _outbound(List<StatsReport> reports) => {
       ),
 };
 
-/// The size of the (first) video media-source.
-(int, int) _mediaSource(List<StatsReport> reports) {
+/// The size of the (first) video media-source, or where its report has no
+/// size (Windows), what the full-size layer `a` encodes, and which of the
+/// two it is.
+(int, int, String) _mediaSource(List<StatsReport> reports) {
   for (final r in reports) {
     if (r.type == 'media-source' && r.values['kind'] == 'video') {
-      return (_int(r.values['width']), _int(r.values['height']));
+      final width = _int(r.values['width']);
+      if (width > 0) return (width, _int(r.values['height']), 'media-source');
     }
   }
-  return (0, 0);
+  final a = _outbound(reports)['a'];
+  if (a != null && a.active != false && a.width > 0) {
+    return (a.width, a.height, 'layer a (no size in the media-source)');
+  }
+  return (0, 0, 'none');
 }
 
 String? _codecOf(List<StatsReport> reports, String? codecId) {

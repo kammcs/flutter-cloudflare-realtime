@@ -105,7 +105,7 @@ void main() {
         })!.facing,
         isNull,
       );
-      // Windows doesn't report one at all.
+      // No facing reported.
       expect(
         mediaDeviceFromSource({
           'deviceId': 'B2',
@@ -113,6 +113,38 @@ void main() {
           'label': 'Integrated Webcam',
         })!.facing,
         isNull,
+      );
+    });
+
+    test("ignores the Windows plugin's made-up facing; the label decides", () {
+      // flutter_webrtc's C++ plugin says "front" for the second camera and
+      // "back" for every other one.
+      expect(
+        mediaDeviceFromSource({
+          'deviceId': 'W0',
+          'kind': 'videoinput',
+          'label': 'OBSBOT Tiny 2 StreamCamera',
+          'facing': 'back',
+        }, pluginFacing: false)!.facing,
+        isNull,
+      );
+      expect(
+        mediaDeviceFromSource({
+          'deviceId': 'W1',
+          'kind': 'videoinput',
+          'label': 'OBSBOT Virtual Camera',
+          'facing': 'front',
+        }, pluginFacing: false)!.facing,
+        isNull,
+      );
+      expect(
+        mediaDeviceFromSource({
+          'deviceId': 'W2',
+          'kind': 'videoinput',
+          'label': 'Microsoft Camera Rear',
+          'facing': 'front',
+        }, pluginFacing: false)!.facing,
+        CameraFacing.environment,
       );
     });
 

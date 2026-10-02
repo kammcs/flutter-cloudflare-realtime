@@ -30,6 +30,10 @@ import '../util/coalescing_runner.dart';
 /// it on ([LayerPausingOptions.on]) where uplink and battery matter more
 /// than how fast a view gets sharper, for example for big rooms of small
 /// tiles.
+///
+/// **Not on Windows:** flutter_webrtc ignores encoding changes there, so a
+/// Windows publisher keeps every layer on and reports a [RoomErrorEvent]
+/// `layerPausing` once. Windows participants still report their demand.
 @immutable
 class LayerPausingOptions {
   /// Creates layer pausing options.
