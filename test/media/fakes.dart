@@ -115,6 +115,7 @@ class FakeMediaBackend implements MediaBackend {
     this.platform = MediaPlatform.windows,
     List<MediaDevice> devices = const [],
     this.desktop,
+    this.screenCapture,
   }) : _devices = List.of(devices);
 
   @override
@@ -145,6 +146,11 @@ class FakeMediaBackend implements MediaBackend {
 
   @override
   DesktopCapturerBackend? get desktopCapturer => desktop;
+
+  final FakeScreenCaptureService? screenCapture;
+
+  @override
+  ScreenCaptureServiceBackend? get screenCaptureService => screenCapture;
 
   List<MediaDevice> get devices => List.unmodifiable(_devices);
 
@@ -227,6 +233,63 @@ class FakeMediaBackend implements MediaBackend {
   }
 
   Future<void> close() => _changes.close();
+}
+
+/// A scriptable [ScreenCaptureServiceBackend] (Android's consent dialog
+/// and foreground service). Records every call in [calls].
+class FakeScreenCaptureService implements ScreenCaptureServiceBackend {
+  /// What the consent dialog answers.
+  bool consent = true;
+
+  /// When set, [startService] throws it.
+  Object? startError;
+
+  /// What [watch] answers.
+  bool canWatch = true;
+
+  /// When set, [requestConsent] waits for it.
+  Completer<void>? consentGate;
+
+  /// `consent`, `start`, `watch:<trackId>`, `stop`, in order.
+  final List<String> calls = [];
+
+  bool running = false;
+
+  final _stopped = StreamController<String?>.broadcast(sync: true);
+
+  /// Simulates the user stopping the share outside the app: the system's
+  /// stop ([trackId]) or the notification (`null`).
+  void stopFromSystem([String? trackId]) => _stopped.add(trackId);
+
+  @override
+  Future<bool> requestConsent() async {
+    calls.add('consent');
+    await consentGate?.future;
+    return consent;
+  }
+
+  @override
+  Future<void> startService() async {
+    calls.add('start');
+    final error = startError;
+    if (error != null) throw error;
+    running = true;
+  }
+
+  @override
+  Future<bool> watch(String trackId) async {
+    calls.add('watch:$trackId');
+    return canWatch;
+  }
+
+  @override
+  Future<void> stopService() async {
+    calls.add('stop');
+    running = false;
+  }
+
+  @override
+  Stream<String?> get stopped => _stopped.stream;
 }
 
 /// A scriptable [DesktopCapturerBackend].

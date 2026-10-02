@@ -16,6 +16,9 @@ class _Backend implements MediaBackend {
   final DesktopCapturerBackend? desktopCapturer;
 
   @override
+  ScreenCaptureServiceBackend? get screenCaptureService => null;
+
+  @override
   Future<List<MediaDevice>> enumerateDevices() async => const [];
 
   @override

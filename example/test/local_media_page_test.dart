@@ -15,6 +15,9 @@ class _ListingOnlyBackend implements MediaBackend {
   final DesktopCapturerBackend? desktopCapturer;
 
   @override
+  ScreenCaptureServiceBackend? get screenCaptureService => null;
+
+  @override
   MediaPlatform get platform => MediaPlatform.windows;
 
   @override

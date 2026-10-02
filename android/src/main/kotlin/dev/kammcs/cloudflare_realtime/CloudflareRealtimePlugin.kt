@@ -11,12 +11,15 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Call audio routing on Android (docs/design.md §4.6).
+ * Call audio routing on Android (docs/design.md §4.6), and the screen
+ * share's foreground service ([ScreenCapture], §10).
  *
  * Thin by design: it lists the routes, reports the current one and its
  * changes, selects one, and puts the device in call mode while a call has
@@ -29,6 +32,7 @@ import io.flutter.plugin.common.MethodChannel
  */
 class CloudflareRealtimePlugin :
     FlutterPlugin,
+    ActivityAware,
     MethodChannel.MethodCallHandler,
     EventChannel.StreamHandler {
     private lateinit var methods: MethodChannel
@@ -39,6 +43,10 @@ class CloudflareRealtimePlugin :
     private var active = false
     private var savedMode = AudioManager.MODE_NORMAL
     private var focusRequest: AudioFocusRequest? = null
+    private lateinit var screenMethods: MethodChannel
+    private lateinit var screenEvents: EventChannel
+    private lateinit var screen: ScreenCapture
+    private var activityBinding: ActivityPluginBinding? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         audio = binding.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -47,12 +55,39 @@ class CloudflareRealtimePlugin :
         events = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/call_audio_events")
         events.setStreamHandler(this)
         disableFlutterWebrtcAudioManagement()
+        screen = ScreenCapture(binding.applicationContext)
+        screenMethods = MethodChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/screen_capture")
+        screenMethods.setMethodCallHandler(screen)
+        screenEvents = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/screen_capture_events")
+        screenEvents.setStreamHandler(screen)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
         if (active) deactivate()
+        screenMethods.setMethodCallHandler(null)
+        screenEvents.setStreamHandler(null)
+        screen.dispose()
+    }
+
+    // --- Activity (the screen share's permission request) ----------------
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activityBinding = binding
+        binding.addRequestPermissionsResultListener(screen)
+        screen.activity = binding.activity
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) =
+        onAttachedToActivity(binding)
+
+    override fun onDetachedFromActivity() {
+        activityBinding?.removeRequestPermissionsResultListener(screen)
+        activityBinding = null
+        screen.activity = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {

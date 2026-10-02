@@ -288,7 +288,7 @@ class _ScreenShareControlsState extends State<_ScreenShareControls> {
     if (!screen.isSupported) {
       return const Text(
         'Screen share on this platform needs host-app setup that the package '
-        "doesn't cover yet (roadmap M6).",
+        "doesn't cover yet (roadmap M9).",
       );
     }
     return StreamBuilder<CapturedTrack?>(
@@ -308,7 +308,7 @@ class _ScreenShareControlsState extends State<_ScreenShareControls> {
                 label: const Text('Stop sharing'),
               ),
               const SizedBox(height: 16),
-            ] else if (screen.usesBrowserPicker)
+            ] else if (screen.usesSystemPicker)
               FilledButton.icon(
                 onPressed: () => screen.start(),
                 icon: const Icon(Icons.screen_share),

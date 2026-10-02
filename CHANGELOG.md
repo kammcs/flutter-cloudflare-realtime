@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Screen share on Android** (`docs/design.md` §10, roadmap M9):
+  - `ScreenShareSource.start()` and `LocalParticipant.publishScreen()` work on Android, without a source: the system's consent dialog is the picker. A cancelled dialog returns `false` (`publishScreen` throws a `MediaCaptureException`), like a cancelled browser picker.
+  - The package's Android plugin runs the share under its own foreground service of type `mediaProjection`, started after consent and before the capture, as Android 14+ requires. Its manifest declares the service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` and `POST_NOTIFICATIONS` permissions, which merge into the app. The notification has a **Stop sharing** action; the package asks for the notification permission once per launch on Android 13+, and the share works without it.
+  - A share stopped from the system (the status-bar chip) or from the notification ends with `ScreenShareEndReason.userStopped`, and the room unpublishes it.
+  - `ScreenShareSource.usesSystemPicker`: `true` on the web and Android, where the browser or the system picks what to share. `usesBrowserPicker` stays web-only.
+  - `MediaBackend.screenCaptureService` (a new `ScreenCaptureServiceBackend`) is the seam for the consent dialog and the service. Custom `MediaBackend`s must implement it (return `null` where none is needed).
+  - Screen audio (`captureAudio`) isn't supported on Android and is ignored.
+  - Example: on Android, **Share screen** goes straight to the consent dialog; `integration_test/screen_share_test.dart`.
 - The same camera behaviour on every platform:
   - **The front camera opens by default.** `CameraOptions.facing` now defaults to `CameraFacing.user`, and cameras facing that way are tried first (Android lists its back camera first, so the back camera used to open). Pass `facing: null` for the platform's order.
   - **`CameraSource.switchCamera()` and `LocalParticipant.switchCamera()`:** one call that flips front ↔ back on phones and moves to the next camera elsewhere (virtual cameras last). A published camera keeps its track and sender, so subscribers see the new camera without pulling again.

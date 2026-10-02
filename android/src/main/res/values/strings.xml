@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The screen share notification (ScreenCaptureService). Apps can
+     override or translate these by defining strings with the same names. -->
+<resources>
+    <string name="cloudflare_realtime_screen_share_channel">Screen sharing</string>
+    <string name="cloudflare_realtime_screen_share_title">Sharing your screen</string>
+    <string name="cloudflare_realtime_screen_share_text">Everything on your screen is visible to the call.</string>
+    <string name="cloudflare_realtime_screen_share_stop">Stop sharing</string>
+</resources>

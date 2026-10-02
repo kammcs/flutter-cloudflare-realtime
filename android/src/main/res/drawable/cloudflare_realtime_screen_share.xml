@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The screen share notification's small icon: a screen with an up
+     arrow. Apps can override it with a drawable of the same name. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M2,4h20v13H2z M4,6v9h16V6z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8,18.5h8v1.5H8z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,7l-3.5,3.5h2.5v3h2v-3h2.5z" />
+</vector>

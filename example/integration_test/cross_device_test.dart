@@ -12,6 +12,12 @@
 // Then each side says it is done (in its signaling metadata) and waits for
 // the other before leaving, so neither cuts the other's media short.
 //
+// With CF_REALTIME_CROSS_DEVICE_SCREEN=true, an Android side shares its
+// screen instead of its camera (answer the consent dialog; it publishes
+// its microphone first, so its session stays connected meanwhile), so the
+// other side checks a phone's screen share arriving. Each side pulls the
+// other's screen, else camera, else microphone.
+//
 // Skipped unless CF_REALTIME_BROKER_URL, CF_REALTIME_BROKER_TOKEN,
 // CF_REALTIME_BROKER_USER and CF_REALTIME_CROSS_DEVICE=1 are set; see
 // broker_settings.dart and docs/checkpoint.md §7. Give both devices the
@@ -35,6 +41,9 @@ const _peerTimeout = Duration(minutes: 5);
 
 /// How long one media check may take.
 const _timeout = Duration(seconds: 30);
+
+/// Whether an Android side shares its screen instead of its camera.
+const _shareScreen = bool.fromEnvironment('CF_REALTIME_CROSS_DEVICE_SCREEN');
 
 /// The metadata key each side sets to `done` when it has finished.
 const _phaseKey = 'crossDevicePhase';
@@ -73,10 +82,23 @@ void main() {
       addTearDown(leave);
       _log('joined as $self');
 
-      // Camera with the default simulcast layers, else the microphone.
+      // Camera with the default simulcast layers, else the microphone; or
+      // the screen, on Android when asked.
       LocalMediaPublication published;
+      final screen =
+          _shareScreen &&
+          !kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.android;
       try {
-        published = await room.localParticipant.publishCamera();
+        if (screen) {
+          // The microphone first, so the session is connected while the
+          // consent dialog waits: the SFU drops a session whose
+          // PeerConnection never connected (410 on the first push).
+          await room.localParticipant.publishMicrophone();
+        }
+        published = screen
+            ? await room.localParticipant.publishScreen()
+            : await room.localParticipant.publishCamera();
       } on MediaException catch (e) {
         _log('no camera ($e), publishing the microphone');
         published = await room.localParticipant.publishMicrophone();
@@ -102,13 +124,15 @@ void main() {
           .firstWhere((peers) => peers.isNotEmpty)
           .timeout(_peerTimeout)
           .then((peers) => peers.first);
-      final remote = _mediaOf(peer)!;
       final peerHeights = await peer.changes
           .startWith(peer)
           .map((p) => p.metadata?[_heightsKey])
           .firstWhere((h) => h is Map)
           .timeout(_peerTimeout)
           .then((h) => [for (final v in (h as Map).values) v as num]);
+      // After the heights: the peer announces them once its main track is
+      // published (a screen may follow a microphone).
+      final remote = _mediaOf(peer)!;
       _log(
         'peer ${peer.participantId}: ${remote.source.name}, '
         'simulcast ${remote.simulcast != null}, layer heights $peerHeights',
@@ -218,9 +242,9 @@ String _layers(RemoteTrackPublication p) {
       'pull ${p.subscription?.preferredRid}';
 }
 
-/// The participant's camera, else its microphone.
+/// The participant's screen, else its camera, else its microphone.
 RemoteTrackPublication? _mediaOf(RemoteParticipant p) =>
-    p.camera ?? p.microphone;
+    p.screen ?? p.camera ?? p.microphone;
 
 /// One `inbound-rtp` report, reduced to what the test checks.
 class _Inbound {

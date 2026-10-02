@@ -38,6 +38,46 @@ abstract interface class MediaBackend {
   /// The desktop screen/window capturer, or `null` where there is none
   /// (web, Android, iOS).
   DesktopCapturerBackend? get desktopCapturer;
+
+  /// The system consent and foreground service a screen share needs on
+  /// Android, or `null` where `getDisplayMedia` needs neither (desktop,
+  /// web) or screen share isn't available (iOS, for now).
+  ScreenCaptureServiceBackend? get screenCaptureService;
+}
+
+/// What a screen share needs around `getDisplayMedia` on Android
+/// (`docs/design.md` §10): the MediaProjection consent dialog, and a
+/// foreground service of type `mediaProjection`, which Android 14+ requires
+/// to be running after consent and before the projection is created.
+///
+/// A share calls [requestConsent], then [startService], then
+/// `getDisplayMedia`, then [watch] with the video track's ID; and
+/// [stopService] once the capture is released (or failed).
+abstract interface class ScreenCaptureServiceBackend {
+  /// Shows the system's screen-capture consent dialog. Completes with
+  /// `false` if the user cancelled it.
+  ///
+  /// May first ask for the notification permission (Android 13+), so the
+  /// service's notification shows; a denial doesn't stop the share.
+  Future<bool> requestConsent();
+
+  /// Starts the foreground service and completes once it is in the
+  /// foreground. Throws if it can't start.
+  Future<void> startService();
+
+  /// Watches the projection behind the screen track [trackId], so a share
+  /// the user stops from the system arrives on [stopped]. Completes with
+  /// whether it can.
+  Future<bool> watch(String trackId);
+
+  /// Stops the foreground service and the watch. Safe to call when nothing
+  /// runs.
+  Future<void> stopService();
+
+  /// Emits when the user ends the share outside the app: from the system
+  /// (the projection's `onStop`, with the track ID [watch] was given) or
+  /// from the service's notification (`null`: whichever share is running).
+  Stream<String?> get stopped;
 }
 
 /// `flutter_webrtc`'s `desktopCapturer`, converted to immutable

@@ -151,6 +151,33 @@ void main() {
       await alice.leave();
     });
 
+    test('stopping from the system unpublishes (Android)', () async {
+      final service = FakeScreenCaptureService();
+      final android = FakeMediaBackend(
+        platform: MediaPlatform.android,
+        devices: [cam1, mic1],
+        screenCapture: service,
+      );
+      h = RoomHarness(media: android);
+      final alice = await h.join('alice');
+      final events = _record(alice);
+      final share = await alice.localParticipant.publishScreen();
+      expect(service.calls, ['consent', 'start', startsWith('watch:')]);
+      final track = share.mediaSource.currentTrack!.track as FakeTrack;
+
+      service.stopFromSystem(track.id);
+      await _settle();
+      expect(share.isPublished, isFalse);
+      expect(h.announced('alice')!.tracks, isEmpty);
+      expect(
+        events.whereType<LocalTrackUnpublishedEvent>().single.endReason,
+        ScreenShareEndReason.userStopped,
+      );
+      expect(service.running, isFalse);
+      await alice.leave();
+      await android.close();
+    });
+
     test('a share that ends while it is being pushed is unpublished', () async {
       final alice = await h.join('alice');
       final push = h.broker.onNewTracks!;

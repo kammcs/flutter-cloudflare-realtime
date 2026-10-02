@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -36,6 +39,7 @@ void main() {
         final share = ScreenShareSource(backend: backend);
         expect(share.isSupported, isTrue);
         expect(share.usesBrowserPicker, isFalse);
+        expect(share.usesSystemPicker, isFalse);
 
         expect(
           await share.start(
@@ -277,6 +281,7 @@ void main() {
     test('uses the browser picker', () async {
       final share = ScreenShareSource(backend: backend);
       expect(share.usesBrowserPicker, isTrue);
+      expect(share.usesSystemPicker, isTrue);
       expect(() => share.start(source: screen1), throwsArgumentError);
       expect(() => share.select(screen1), throwsUnsupportedError);
 
@@ -321,18 +326,206 @@ void main() {
     });
   });
 
-  group('mobile', () {
-    for (final platform in [MediaPlatform.android, MediaPlatform.ios]) {
-      test('${platform.name} throws UnsupportedError', () async {
-        final share = ScreenShareSource(
-          backend: FakeMediaBackend(platform: platform),
-        );
-        expect(share.isSupported, isFalse);
-        expect(() => share.start(), throwsUnsupportedError);
-        expect(() => share.startBroadcasting(), throwsUnsupportedError);
+  group('android', () {
+    late FakeScreenCaptureService service;
+
+    setUp(() {
+      service = FakeScreenCaptureService();
+      backend = FakeMediaBackend(
+        platform: MediaPlatform.android,
+        screenCapture: service,
+      );
+    });
+
+    test('asks for consent, then starts the service, then captures', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(share.isSupported, isTrue);
+      expect(share.usesSystemPicker, isTrue);
+      expect(share.usesBrowserPicker, isFalse);
+      expect(() => share.start(source: screen1), throwsArgumentError);
+      expect(() => share.select(screen1), throwsUnsupportedError);
+      var startedBeforeCapture = false;
+      backend.onDisplayMedia = (constraints) async {
+        startedBeforeCapture = service.running;
+        final stream = FakeStream([FakeTrack(kind: 'video')]);
+        backend.streams.add(stream);
+        return stream;
+      };
+
+      expect(await share.start(), isTrue);
+      expect(startedBeforeCapture, isTrue);
+      final video = videoOf(share);
+      expect(service.calls, ['consent', 'start', 'watch:${video.id}']);
+      expect(backend.displayMediaCalls, hasLength(1));
+      expect(share.selectedSource, isNull);
+
+      await share.stop();
+      expect(video.stopped, isTrue);
+      expect(service.calls.last, 'stop');
+      expect(service.running, isFalse);
+      await share.dispose();
+    });
+
+    test('a cancelled consent dialog returns false, not an error', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      service.consent = false;
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors, isEmpty);
+      expect(share.isEnabled, isFalse);
+      expect(service.calls, ['consent']);
+      expect(backend.displayMediaCalls, isEmpty);
+      await share.dispose();
+    });
+
+    test('a service that fails to start is a capture error', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      service.startError = PlatformException(code: 'screen_capture');
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors.single, isA<MediaCaptureException>());
+      expect(backend.displayMediaCalls, isEmpty);
+      expect(service.calls, ['consent', 'start', 'stop']);
+      await share.dispose();
+    });
+
+    test('a failed capture stops the service', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      backend.onDisplayMedia = (constraints) async =>
+          throw 'Unable to getDisplayMedia: SecurityException';
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors.single, isA<MediaCaptureException>());
+      expect(service.calls, ['consent', 'start', 'stop']);
+      expect(service.running, isFalse);
+      await share.dispose();
+    });
+
+    test(
+      'stopped while the consent dialog is open: nothing is captured',
+      () async {
+        final share = ScreenShareSource(backend: backend);
+        service.consentGate = Completer<void>();
+        final started = share.start();
+        await pumpEventQueue();
+        final stopped = share.stop();
+        service.consentGate!.complete();
+
+        expect(await started, isFalse);
+        await stopped;
+        expect(backend.displayMediaCalls, isEmpty);
+        expect(service.calls, ['consent']);
+        await share.dispose();
+      },
+    );
+
+    for (final (what, byTrack) in [
+      ('the system stop control', true),
+      ('the notification', false),
+    ]) {
+      test('$what ends the share as userStopped', () async {
+        final share = ScreenShareSource(backend: backend);
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        await share.startBroadcasting();
+        final video = videoOf(share);
+
+        service.stopFromSystem(byTrack ? video.id : null);
+        await pumpEventQueue();
+        expect(reasons, [ScreenShareEndReason.userStopped]);
+        expect(share.isEnabled, isFalse);
+        expect(share.currentBroadcastTrack, isNull);
+        expect(video.stopped, isTrue);
+        expect(service.calls.last, 'stop');
         await share.dispose();
       });
     }
+
+    test("a stop for another share's track is ignored", () async {
+      final share = ScreenShareSource(backend: backend);
+      final reasons = <ScreenShareEndReason>[];
+      share.ended.listen(reasons.add);
+      await share.start();
+
+      service.stopFromSystem('some-other-track');
+      await pumpEventQueue();
+      expect(reasons, isEmpty);
+      expect(share.currentTrack, isNotNull);
+      await share.dispose();
+      expect(reasons, [ScreenShareEndReason.stopped]);
+    });
+
+    test('captureAudio is ignored, not an error', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      // Like flutter_webrtc on Android: video only, whatever is asked.
+      backend.onDisplayMedia = (constraints) async =>
+          FakeStream([FakeTrack(kind: 'video')]);
+
+      expect(
+        await share.start(
+          options: const ScreenShareOptions(captureAudio: true),
+        ),
+        isTrue,
+      );
+      expect(share.currentAudioTrack, isNull);
+      expect(errors, isEmpty);
+      await share.dispose();
+    });
+
+    test('a watch that fails still shares', () async {
+      final share = ScreenShareSource(backend: backend);
+      service.canWatch = false;
+      expect(await share.start(), isTrue);
+      expect(share.currentTrack, isNotNull);
+      await share.dispose();
+    });
+
+    test(
+      'muting releases the capture; unmuting asks for consent again',
+      () async {
+        final share = ScreenShareSource(backend: backend);
+        await share.startBroadcasting();
+        await share.stopBroadcasting();
+        expect(share.currentTrack, isNull);
+        expect(service.calls.last, 'stop');
+
+        await share.startBroadcasting();
+        expect(share.currentTrack, isNotNull);
+        expect(service.calls.where((c) => c == 'consent'), hasLength(2));
+        await share.dispose();
+      },
+    );
+
+    test('without the service backend it is unsupported', () async {
+      final share = ScreenShareSource(
+        backend: FakeMediaBackend(platform: MediaPlatform.android),
+      );
+      expect(share.isSupported, isFalse);
+      expect(() => share.start(), throwsUnsupportedError);
+      await share.dispose();
+    });
+  });
+
+  test('iOS throws UnsupportedError', () async {
+    final share = ScreenShareSource(
+      backend: FakeMediaBackend(platform: MediaPlatform.ios),
+    );
+    expect(share.isSupported, isFalse);
+    expect(share.usesSystemPicker, isFalse);
+    expect(() => share.start(), throwsUnsupportedError);
+    expect(() => share.startBroadcasting(), throwsUnsupportedError);
+    await share.dispose();
   });
 
   test('dispose releases the share and completes its streams', () async {

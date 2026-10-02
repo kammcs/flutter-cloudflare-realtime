@@ -292,6 +292,7 @@ The example has these integration tests in [`example/integration_test/`](../exam
 - `reconnect_test.dart`: two rooms in one process; the publisher's session is dropped and replaced, then the subscriber's, and the track must arrive again each time (criterion 3, automated).
 - `audio_routing_test.dart`: on phones, a voice call starts on the earpiece (or a connected headset), publishing a camera moves it to the speaker, `selectAudioRoute` and `setSpeakerphone` move it as asked (compare the Android log with `adb shell dumpsys audio`, "Active communication device"); on desktops, the room reports it has no audio routes. Then each microphone in turn, with the subscriber still receiving audio.
 - `camera_switch_test.dart`: two rooms in one process; the publisher switches its camera twice during the call (`switchCamera()`), and the subscriber must keep decoding frames each time. It also checks that a phone opens its front camera and that the capture is near the requested preset. With one camera, it only checks the call.
+- `screen_share_test.dart` (Android only; skipped elsewhere): two rooms in one process; the publisher shares its screen (`publishScreen()`), its outbound frames and the subscriber's decoded frames must rise, and stopping must unpublish it. The consent dialog needs a tap: "Share one app" → "Share entire screen" → "Share screen" on Android 14+, "Start now" before that. Grant `POST_NOTIFICATIONS` first (`adb shell pm grant <package> android.permission.POST_NOTIFICATIONS`) or answer its prompt. To automate the taps, poll `adb shell uiautomator dump` from a background loop and `adb shell input tap` the centre of each button. With `--dart-define=CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP=true` it shares a second time and waits up to 2 minutes for a stop from outside the app: the notification's **Stop sharing** or the red status-bar chip. It must end with `userStopped`. An accessibility client such as `uiautomator` running at the end of the test can fail it with "A SemanticsHandle was active"; that is the tool, not the share.
 - `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 
 They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](../example/integration_test/broker_settings.dart)), as `--dart-define`s or, on desktop, environment variables:
@@ -303,6 +304,8 @@ They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](
 | `CF_REALTIME_BROKER_USER` | a user name, such as `it-windows` (sent as `X-Dev-User`; the dev server rejects requests without it) |
 | `CF_REALTIME_ROOM` | optional; default `integration-test` |
 | `CF_REALTIME_CROSS_DEVICE` | `1` to run `cross_device_test.dart` (skipped otherwise) |
+| `CF_REALTIME_CROSS_DEVICE_SCREEN` | `--dart-define` only: `true` makes the Android side of `cross_device_test.dart` publish its microphone, then share its screen instead of its camera (answer the consent dialog) |
+| `CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP` | `--dart-define` only: `true` makes `screen_share_test.dart` also wait for a stop from outside the app |
 
 Run them on each platform, from `example/`:
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import 'media_backend.dart';
@@ -71,6 +72,62 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
   @override
   DesktopCapturerBackend? get desktopCapturer =>
       platform.isDesktop ? const _FlutterWebrtcDesktopCapturer() : null;
+
+  @override
+  ScreenCaptureServiceBackend? get screenCaptureService =>
+      platform == MediaPlatform.android
+      ? const AndroidScreenCaptureService()
+      : null;
+}
+
+/// The Android [ScreenCaptureServiceBackend]: `flutter_webrtc`'s consent
+/// dialog (`Helper.requestCapturePermission`, whose result its next
+/// `getDisplayMedia` uses) and this package's foreground service
+/// (`ScreenCapture.kt`, `ScreenCaptureService.kt`).
+class AndroidScreenCaptureService implements ScreenCaptureServiceBackend {
+  /// Creates the backend.
+  const AndroidScreenCaptureService();
+
+  static const _methods = MethodChannel(
+    'dev.kammcs.cloudflare_realtime/screen_capture',
+  );
+  static const _events = EventChannel(
+    'dev.kammcs.cloudflare_realtime/screen_capture_events',
+  );
+
+  static final Stream<String?> _stopped = _events
+      .receiveBroadcastStream()
+      .where((event) => event is Map && event['event'] == 'stopped')
+      .map((event) {
+        final trackId = (event as Map)['trackId'];
+        return trackId is String ? trackId : null;
+      })
+      .asBroadcastStream();
+
+  @override
+  Future<bool> requestConsent() async {
+    try {
+      await _methods.invokeMethod<bool>('prepare');
+    } catch (error) {
+      // The notification permission is a nicety; the share works without.
+      debugPrint('cloudflare_realtime: notification permission: $error');
+    }
+    // Keeps the system's choice of a single app or the entire screen.
+    return await rtc.Helper.requestCapturePermission();
+  }
+
+  @override
+  Future<void> startService() => _methods.invokeMethod<void>('startService');
+
+  @override
+  Future<bool> watch(String trackId) async =>
+      await _methods.invokeMethod<bool>('watch', {'trackId': trackId}) ?? false;
+
+  @override
+  Future<void> stopService() => _methods.invokeMethod<void>('stopService');
+
+  @override
+  Stream<String?> get stopped => _stopped;
 }
 
 /// The microphone to select before `getUserMedia` with [constraints] on

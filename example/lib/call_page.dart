@@ -219,12 +219,17 @@ class _CallPageState extends State<CallPage> {
     }
     final platform = widget.mediaBackend.platform;
     final web = platform == MediaPlatform.web;
+    if (platform == MediaPlatform.android) {
+      // The system's consent dialog is the picker: no dialog of ours.
+      await _local.publishScreen();
+      return;
+    }
     ScreenSourcePicker? picker;
     if (!web) {
       picker = ScreenSourcePicker(backend: widget.mediaBackend);
       if (!picker.isSupported) {
         await picker.dispose();
-        _show('Screen share on mobile is not implemented yet (roadmap M6).');
+        _show('Screen share on iOS is not implemented yet (roadmap M9).');
         return;
       }
     }
