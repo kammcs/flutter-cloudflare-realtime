@@ -294,9 +294,9 @@ The example has these integration tests in [`example/integration_test/`](../exam
 - `reconnect_test.dart`: two rooms in one process; the publisher's session is dropped and replaced, then the subscriber's, and the track must arrive again each time (criterion 3, automated).
 - `late_publish_test.dart`: two rooms in one process; the publisher joins, stays idle for 30 s (longer than the SFU keeps an unconnected session), then publishes its camera (or microphone), and the subscriber must decode it. Run twice: with the default `connectEarly` the joined session must be kept; without it, the publish must complete after one re-session (roadmap M10).
 - `stats_test.dart`: two rooms in one process ([design.md §7.1](design.md#71-typed-stats-and-connection-quality-m12), roadmap M12 part A). The publisher sends its camera (three simulcast layers) and microphone; the typed stats must show layers `a`, `b` and `c` with sizes that halve from layer to layer, bitrates, frame rates and VP8, a round-trip time on the connection, and on the subscriber the received video (frames, size, bitrate) and audio (Opus). Both sides must rate the connection `good` or `excellent`. Then the publisher's session is failed with reconnection off, so it stays in signaling with its media stopped: it must be `lost` to itself at once and to the subscriber within `lostAfter` (5 s). It first checks that the camera captures frames, and fails with a hint about the camera and microphone permissions if not.
-- `audio_routing_test.dart`: on phones, a voice call starts on the earpiece (or a connected headset), publishing a camera moves it to the speaker, `selectAudioRoute` and `setSpeakerphone` move it as asked (compare the Android log with `adb shell dumpsys audio`, "Active communication device"); on desktops, the room reports it has no audio routes. Then each microphone in turn, with the subscriber still receiving audio.
+- `audio_routing_test.dart`: on phones, a voice call starts on the earpiece (or a connected headset), publishing a camera moves it to the speaker, `selectAudioRoute` and `setSpeakerphone` move it as asked (compare the Android log with `adb shell dumpsys audio`, "Active communication device"); on desktops and in browsers, the room reports it has no audio routes. Then each microphone in turn, with the subscriber still receiving audio. In a browser it also checks that the subscriber's audio plays in the package's hidden `<audio>` element (not paused, its clock moving, not blocked by the autoplay policy) and, where the browser has `setSinkId`, that choosing each output device keeps it playing there.
 - `camera_switch_test.dart`: two rooms in one process; the publisher switches its camera twice during the call (`switchCamera()`), and the subscriber must keep decoding frames each time. It also checks that a phone opens its front camera and that the capture is near the requested preset. With one camera, it only checks the call.
-- `screen_share_test.dart` (phones only; skipped elsewhere): two rooms in one process; the publisher shares its screen (`publishScreen()`), its outbound frames and the subscriber's decoded frames must rise, and stopping must unpublish it. The consent dialog needs a tap: "Share one app" → "Share entire screen" → "Share screen" on Android 14+, "Start now" before that. Grant `POST_NOTIFICATIONS` first (`adb shell pm grant <package> android.permission.POST_NOTIFICATIONS`) or answer its prompt. To automate the taps, poll `adb shell uiautomator dump` from a background loop and `adb shell input tap` the centre of each button. With `--dart-define=CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP=true` it shares a second time and waits up to 2 minutes for a stop from outside the app: the notification's **Stop sharing** or the red status-bar chip. It must end with `userStopped`. **On an iPhone** the example's `BroadcastExtension` must be signed (the same team as the app; automatic signing creates its App ID and the App Group). A first test, which needs no person (`--plain-name "set up"`), checks the setup from the app (the `Info.plist` keys, the App Group, the embedded extension). The share test publishes the microphone first, then logs `TAP "Start Broadcast" on the iPhone` and waits up to 2 minutes for the tap in the system's picker; with the external stop it logs `STOP the broadcast` (the red status-bar indicator, or Control Center). An accessibility client such as `uiautomator` running at the end of the test can fail it with "A SemanticsHandle was active"; that is the tool, not the share.
+- `screen_share_test.dart` (phones, and browsers with `--dart-define=CF_REALTIME_SCREEN_SHARE_WEB=true`; skipped on desktops): two rooms in one process; the publisher shares its screen (`publishScreen()`), its outbound frames and the subscriber's decoded frames must rise, and stopping must unpublish it. The consent dialog needs a tap: "Share one app" → "Share entire screen" → "Share screen" on Android 14+, "Start now" before that. Grant `POST_NOTIFICATIONS` first (`adb shell pm grant <package> android.permission.POST_NOTIFICATIONS`) or answer its prompt. To automate the taps, poll `adb shell uiautomator dump` from a background loop and `adb shell input tap` the centre of each button. With `--dart-define=CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP=true` it shares a second time and waits up to 2 minutes for a stop from outside the app: the notification's **Stop sharing** or the red status-bar chip. It must end with `userStopped`. **On an iPhone** the example's `BroadcastExtension` must be signed (the same team as the app; automatic signing creates its App ID and the App Group). A first test, which needs no person (`--plain-name "set up"`), checks the setup from the app (the `Info.plist` keys, the App Group, the embedded extension). The share test publishes the microphone first, then logs `TAP "Start Broadcast" on the iPhone` and waits up to 2 minutes for the tap in the system's picker; with the external stop it logs `STOP the broadcast` (the red status-bar indicator, or Control Center). An accessibility client such as `uiautomator` running at the end of the test can fail it with "A SemanticsHandle was active"; that is the tool, not the share. **In a browser** the browser's own picker must accept by itself (see [In a browser](#in-a-browser)); the test then also shares with `captureAudio` and checks that the tab or system audio the browser gives is published and pulled.
 - `background_test.dart` (phones only; [design.md §4.7](design.md#47-calls-outside-the-foreground-background-interruptions-proximity-native)): two rooms in one process.
   - **Background:** the publisher sends its microphone and camera, the test logs `BACKGROUND NOW` and waits up to 2 minutes for the app to leave the screen, then checks for 20 s that outbound audio packets, microphone energy and encoded frames (and the subscriber's received audio and decoded frames) keep rising; then `FOREGROUND NOW`, and it waits for the app to come back. On Android the package's `CallService` must be in the foreground while something is published, and gone once nothing is. Run it with the driver, from `example/`, which presses Home and brings the app back over adb, and prints `dumpsys activity services` (`CallService`, `isForeground`, `foregroundServiceType`: 0x80 microphone, 0x40 camera) and the proximity wake lock from `dumpsys power` at each `CHECK` line:
 
@@ -346,6 +346,7 @@ They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](
 | `CF_REALTIME_CROSS_DEVICE_SCREEN` | `--dart-define` only: `true` makes a phone side of `cross_device_test.dart` publish its microphone, then share its screen instead of its camera (answer Android's consent dialog, or tap "Start Broadcast" on the iPhone within 2 minutes) |
 | `CF_REALTIME_SYSTEM_CALL_DRIVER` | `--dart-define` only: `1` (set by `system_call_test_driver.sh`) runs `system_call_test.dart`'s background case, which needs Home pressed |
 | `CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP` | `--dart-define` only: `true` makes `screen_share_test.dart` also wait for a stop from outside the app |
+| `CF_REALTIME_SCREEN_SHARE_WEB` | `--dart-define` only: `true` runs `screen_share_test.dart` in a browser, whose picker must accept by itself ([In a browser](#in-a-browser)) |
 | `CF_QUALITY_PAUSING` | `--dart-define` only: `false` runs `publish_quality_test.dart`'s layer test without pausing (a baseline) |
 | `CF_QUALITY_CODECS` | `--dart-define` only: the codecs `publish_quality_test.dart` checks, comma-separated (`h264,vp9,av1`; default `h264`) |
 
@@ -383,6 +384,56 @@ flutter test integration_test/cross_device_test.dart -d windows --dart-define=CF
 ```
 
 Both must print `All tests passed!`. Each side logs `[cross-device]` lines: the layer heights each side sends, the inbound bytes and frames, and how long each layer switch took. Start the second shell once the first has built and installed, so the two builds don't compete; any two devices work (macOS, a second phone), as long as both reach the dev server.
+
+### In a browser
+
+The same tests run in a browser through `flutter drive`, with the example's [`test_driver/integration_test.dart`](../example/test_driver/integration_test.dart) and a WebDriver server. `flutter test -d chrome` doesn't run integration tests.
+
+1. **Get the WebDriver** for the browser, into any folder (nothing system-wide):
+   - Chrome: the chromedriver of the same version as the installed Chrome (`npx @puppeteer/browsers install chromedriver@<Chrome version>`), started as `chromedriver --port=4444`.
+   - Firefox: [geckodriver](https://github.com/mozilla/geckodriver/releases), `geckodriver --port=4444`.
+   - Safari: `safaridriver`, which comes with macOS. Once per Mac: `sudo safaridriver --enable`, and in Safari → Settings → Advanced, "Show features for web developers", then Develop → "Allow Remote Automation". Safari has no fake camera or microphone.
+2. **Run one file at a time**, from `example/`:
+
+   ```sh
+   flutter drive --driver=test_driver/integration_test.dart \
+     --target=integration_test/sfu_loopback_test.dart \
+     -d web-server --browser-name=chrome --headless \
+     --web-browser-flag=--use-fake-device-for-media-stream \
+     --web-browser-flag=--use-fake-ui-for-media-stream \
+     --dart-define=CF_REALTIME_BROKER_URL=<SERVER> \
+     --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> \
+     --dart-define=CF_REALTIME_BROKER_USER=it-web
+   ```
+
+   - **Fake devices.** `--use-fake-device-for-media-stream` gives Chrome a fake camera (`fake_device_0`, a moving pattern at the size asked for), three microphones, three audio outputs and, for `getDisplayMedia`, an 800×450 screen with an audio track. `--use-fake-ui-for-media-stream` accepts the camera, microphone and screen prompts. Firefox takes preferences instead, from a profile folder whose `user.js` sets `media.navigator.streams.fake` and `media.navigator.permission.disabled` to `true`: pass it with `--web-browser-flag=-profile --web-browser-flag=<folder>`.
+   - **Autoplay.** Chrome plays the call audio without `--autoplay-policy=no-user-gesture-required`, because the page captures the microphone. A page that only receives would need a click first (`Room.audioPlaybackBlocked`, `Room.startAudio()`).
+   - **Wasm.** Add `--wasm --profile` to run the same file compiled to WebAssembly.
+   - **The output.** `flutter drive` prints only `All tests passed.` or the failure. The tests' own lines (and the `+N ~M` counts that show skipped tests) go to the browser's console. To see them in Chrome, start chromedriver with `--enable-chrome-logs` and add `--web-browser-flag=--enable-logging=stderr --web-browser-flag=--v=0`: they appear in chromedriver's output as `INFO:CONSOLE` lines. For Firefox, set `devtools.console.stdout.content` to `true` in the profile.
+   - **The settings are compiled into the page.** `--dart-define` values end up in the web build (`build/web` for `--profile`). Delete `build/web` afterwards, and never publish or share it. If the Flutter tool crashes, its report (`flutter_01.log`) contains the command line, token included: delete it too.
+3. **Cross-device:** run `cross_device_test.dart` this way with `--dart-define=CF_REALTIME_CROSS_DEVICE=1 --dart-define=CF_REALTIME_ROOM=<room>`, at the same time as the other device's `flutter test` (start both from one script).
+
+The dev server answers browsers' CORS preflights for its broker routes, `X-Dev-User` included (`DEV_CORS_ORIGINS`, default `*`), and the signaling WebSocket takes the token in its query string, so nothing changes on the server for a browser.
+
+#### Web results
+
+October 2, 2026, Chrome 154 (headless, fake devices) on macOS 27, against the dev server. "JS" is the default debug build, "Wasm" `--wasm --profile`.
+
+| Test | Chrome (JS) | Chrome (Wasm) | Firefox 137 | Safari 27 |
+|---|---|---|---|---|
+| `sfu_loopback_test` | Pass | Pass | not run | not run |
+| `datachannel_echo_test` | Pass | Pass | not run | not run |
+| `reconnect_test` | Pass | Pass | not run | not run |
+| `camera_switch_test` | Pass (one camera, `fake_device_0`, no facing in its label: 640×360 as asked) | Pass | not run | not run |
+| `late_publish_test` | Pass (kept session: 108 ms; without early connect: one re-session, 6.1 s) | Pass | not run | not run |
+| `stats_test` | Pass (three layers 1280×720 / 640×360 / 320×180 at ~20 fps, RTT 2–6 ms, `excellent`; `lost` after 6–8 s) | Pass | not run | not run |
+| `publish_quality_test` | Pass (paused after 2.3 s, resumed in 78–90 ms; switching up stayed on `b` for 20 s in both runs; a new pull of `a` decoded in 0.24–0.35 s; H.264 sent with OpenH264, decoded with VideoToolbox) | Pass | not run | not run |
+| `audio_routing_test` | Pass (no routes; the `<audio>` element plays; `setSinkId` to each of three outputs) | Pass | not run | not run |
+| `screen_share_test` (`CF_REALTIME_SCREEN_SHARE_WEB`) | Pass (800×450; with `captureAudio`, the audio published and pulled) | Pass | not run | not run |
+| `background_test`, `system_call_test` | Skipped (phones only), as expected | n/a | n/a | n/a |
+| `cross_device_test` with a Pixel 10 | Pass both ways (the layer switches low / high / low in 8.6–12.7 s) | not run | not run | not run |
+
+Firefox didn't start under the sandbox of the tool that ran these, and Safari's remote automation was off, so both are still to run.
 
 ## 8. Troubleshooting
 

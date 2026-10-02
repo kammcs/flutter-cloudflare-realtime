@@ -7,8 +7,11 @@
 // - Room.setSpeakerphone forces the speaker or the earpiece;
 // - choosing a microphone keeps the call sending audio.
 //
-// Desktops have no call audio routing, which the room reports
-// (canSelectAudioRoute) instead of doing something else.
+// Desktops and browsers have no call audio routing, which the room
+// reports (canSelectAudioRoute) instead of doing something else. In a
+// browser the test also checks that Bob's pulled audio plays in the
+// package's hidden <audio> element, and, where the browser supports
+// setSinkId, that choosing each output device keeps it playing there.
 //
 // Two rooms in one process share in-memory signaling: Alice publishes, Bob
 // pulls. The route is read back from the platform; on iOS the test also
@@ -29,6 +32,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:integration_test/integration_test.dart';
 
 import 'broker_settings.dart';
+import 'support/web_audio_probe.dart';
 
 const _timeout = Duration(seconds: 30);
 
@@ -45,7 +49,7 @@ void main() {
       final permission = MicrophoneSource();
       await permission.enable();
       await permission.dispose();
-      if (Platform.isAndroid || Platform.isIOS) {
+      if (_phone) {
         final camera = CameraSource();
         await camera.enable();
         await camera.dispose();
@@ -70,7 +74,7 @@ void main() {
       );
       addTearDown(bob.leave);
 
-      final phone = Platform.isAndroid || Platform.isIOS;
+      final phone = _phone;
       expect(alice.canSelectAudioRoute, phone);
       if (!phone) {
         await expectLater(alice.setSpeakerphone(false), throwsUnsupportedError);
@@ -80,6 +84,7 @@ void main() {
       final published = await alice.localParticipant.publishMicrophone();
       await published.publication.whenSending().timeout(_timeout);
       await _audioArriving(bob, 'in a voice call');
+      if (kIsWeb) await _webAudioPlays(bob, 'in a voice call');
 
       if (phone) {
         _log('routes: ${alice.currentAudioRoutes.join('; ')}');
@@ -131,10 +136,78 @@ void main() {
         _log('microphone "${device.label}" (${device.deviceId})');
         await _audioArriving(bob, 'from "${device.label}"');
       }
+
+      if (kIsWeb) await _webOutputs(bob);
     },
     skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),
   );
+}
+
+/// A phone (call audio routing); never a browser, which has no `Platform`.
+final bool _phone = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+/// In a browser: Bob's pulled audio has an `<audio>` element that plays
+/// (not paused, its clock moving) a live track, or the autoplay policy
+/// blocked it and the room says so.
+Future<void> _webAudioPlays(Room bob, String when, {String? sinkId}) async {
+  List<WebAudioElement> playing() => [
+    for (final e in remoteAudioElements())
+      if (!e.paused && e.liveAudioTracks > 0) e,
+  ];
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (playing().isEmpty && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  final before = playing();
+  _log(
+    '$when: audio elements ${remoteAudioElements()}, '
+    'blocked: ${bob.audioPlaybackBlocked}',
+  );
+  expect(
+    bob.audioPlaybackBlocked,
+    isFalse,
+    reason: 'the autoplay policy blocked the call audio',
+  );
+  expect(before, isNotEmpty, reason: '$when: no <audio> element plays');
+  await Future<void>.delayed(const Duration(seconds: 1));
+  final after = playing();
+  expect(
+    after.any((a) => before.any((b) => a.currentTime > b.currentTime)),
+    isTrue,
+    reason: '$when: the <audio> element\'s clock stands still',
+  );
+  if (sinkId != null) {
+    expect(after.map((e) => e.sinkId), everyElement(sinkId), reason: when);
+  }
+}
+
+/// In a browser: each audio output in turn through `setSinkId`, where the
+/// browser supports it; [Room.setAudioOutputDevice] throws where it doesn't.
+Future<void> _webOutputs(Room bob) async {
+  final outputs = [
+    for (final d in await rtc.navigator.mediaDevices.enumerateDevices())
+      if (d.kind == 'audiooutput') d,
+  ];
+  _log(
+    'canSelectAudioOutput: ${bob.canSelectAudioOutput}; outputs: '
+    '${outputs.map((d) => '"${d.label}" (${d.deviceId})').join('; ')}',
+  );
+  if (!bob.canSelectAudioOutput) {
+    await expectLater(
+      bob.setAudioOutputDevice('default'),
+      throwsUnsupportedError,
+    );
+    return;
+  }
+  for (final output in [...outputs.skip(1), ...outputs.take(1)]) {
+    await bob.setAudioOutputDevice(output.deviceId);
+    await _webAudioPlays(
+      bob,
+      'on output "${output.label}"',
+      sinkId: output.deviceId,
+    );
+  }
 }
 
 void _log(String message) => debugPrint(
@@ -157,7 +230,7 @@ Future<void> _expectRoute(Room room, AudioRouteKind kind, String when) async {
     '${outputs.isEmpty ? '' : '; flutter_webrtc outputs: ${outputs.join(', ')}'}',
   );
   expect(route?.kind, kind, reason: 'route $when');
-  if (Platform.isIOS && kind != AudioRouteKind.other) {
+  if (!kIsWeb && Platform.isIOS && kind != AudioRouteKind.other) {
     final onSpeaker = outputs.every((o) => o.startsWith('Speaker='));
     expect(onSpeaker, kind == AudioRouteKind.speaker, reason: 'iOS $when');
   }

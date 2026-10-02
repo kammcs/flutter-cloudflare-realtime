@@ -20,9 +20,16 @@
 // red status-bar indicator or Control Center), which must unpublish it
 // with ScreenShareEndReason.userStopped.
 //
+// In a browser it runs only with CF_REALTIME_SCREEN_SHARE_WEB=true, as
+// the browser's picker needs a person unless the browser accepts it by
+// itself: Chrome with --use-fake-ui-for-media-stream (and
+// --use-fake-device-for-media-stream for a fake screen), or Firefox with
+// media.navigator.permission.disabled. docs/checkpoint.md §7 has the
+// command lines.
+//
 // Skipped unless CF_REALTIME_BROKER_URL is set (see broker_settings.dart),
-// and on platforms where the app picks the source (desktop) or a browser
-// picker needs the user (web). The test never prints the settings.
+// and on desktops, where the app picks the source. The test never prints
+// the settings.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/foundation.dart';
@@ -44,6 +51,8 @@ const _externalStopTimeout = Duration(minutes: 2);
 const _externalStop = bool.fromEnvironment(
   'CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP',
 );
+
+const _web = kIsWeb && bool.fromEnvironment('CF_REALTIME_SCREEN_SHARE_WEB');
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -133,6 +142,8 @@ void main() {
       await _gone(bob, alice, remote);
       _log('unpublished; gone from Bob');
 
+      if (_web) await _webScreenAudio(alice, bob);
+
       if (!_externalStop) return;
 
       // Second share: stopped outside the app.
@@ -157,12 +168,44 @@ void main() {
       expect(alice.localParticipant.screen, isNull);
       _log('stopped outside the app: ${ended.endReason!.name}');
     },
-    skip: settings.skip || !(android || ios),
+    skip: settings.skip || !(android || ios || _web),
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }
 
 void _log(String message) => debugPrint('[screen-share] $message');
+
+/// In a browser: a share with `captureAudio` publishes the tab or system
+/// audio the browser gives (Chrome's fake screen has some) as Alice's
+/// `screenAudio`, and Bob pulls it.
+Future<void> _webScreenAudio(Room alice, Room bob) async {
+  final shared = await alice.localParticipant.publishScreen(
+    options: const ScreenShareOptions(captureAudio: true),
+  );
+  await shared.publication.whenSending().timeout(_timeout);
+  final share = shared.mediaSource as ScreenShareSource;
+  final audio = share.currentAudioTrack;
+  _log('with captureAudio: audio track ${audio == null ? 'none' : 'live'}');
+  if (audio != null) {
+    final published = alice.localParticipant.screenAudio;
+    expect(published, isNotNull, reason: 'the screen audio is published');
+    await published!.publication.whenSending().timeout(_timeout);
+    final deadline = DateTime.now().add(_timeout);
+    while (bob.currentParticipants.every(
+      (p) =>
+          p.sessionId != alice.session.sessionId ||
+          p.screenAudio?.subscriptionState != SfuTrackState.active,
+    )) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail("Bob never received Alice's screen audio");
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    _log('Bob receives the screen audio');
+  }
+  await shared.unpublish();
+  expect(alice.localParticipant.screenAudio, isNull);
+}
 
 void _askToShare(bool ios) => _log(
   ios

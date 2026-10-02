@@ -22,6 +22,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   stream_channel: ^2.1.4
+  web: ^1.1.0
 
 flutter:
   uses-material-design: true

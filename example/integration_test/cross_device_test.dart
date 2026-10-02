@@ -64,7 +64,8 @@ void main() {
       final realtime = CloudflareRealtime(broker: dev.brokerConfig());
       final signaling = dev.createSignaling();
       final random = Random.secure();
-      final self = '${dev.userName}:${random.nextInt(1 << 32)}';
+      // Not 1 << 32: shifts are 32-bit on the web, which makes that 0.
+      final self = '${dev.userName}:${random.nextInt(0x7fffffff)}';
       final room = await realtime.join(
         settings.room,
         signaling: signaling,

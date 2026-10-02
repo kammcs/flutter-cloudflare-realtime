@@ -108,10 +108,12 @@ void main() {
         timeout: const Duration(seconds: 20),
       );
 
-      // 1. The publisher's layers.
+      // 1. The publisher's layers, and the microphone (published after the
+      // camera, so its first report may come a read later: no rate yet).
       final sent = await _until(alice, 'Alice sends three layers', (s) {
         final c = s.local[cam.trackName];
         return c != null &&
+            (s.local[mic.trackName]?.bitrate ?? 0) > 0 &&
             ['a', 'b', 'c'].every(
               (rid) =>
                   (c.layer(rid)?.bitrate ?? 0) > 0 &&
@@ -148,7 +150,7 @@ void main() {
       expect(sent.connection!.localCandidate?.type, isNotNull);
       final micStats = sent.local[mic.trackName];
       expect(micStats?.codec, 'audio/opus');
-      expect(micStats?.bitrate, greaterThan(0));
+      expect(micStats?.bitrate, greaterThan(0), reason: '$micStats');
       // The same through the publication.
       expect(cam.currentStats?.layers, hasLength(3));
 
