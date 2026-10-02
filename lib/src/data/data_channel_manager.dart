@@ -257,6 +257,24 @@ class DataChannelManager {
     );
   }
 
+  /// See [SfuSession.establishConnection]: sets up the transport now, on
+  /// the queue, unless something was negotiated on the session already.
+  Future<void> establishTransport() {
+    final done = Completer<void>();
+    unawaited(
+      _port.runQueued(
+        () async {
+          if (!_port.session.hasNegotiated) await _establish();
+          done.complete();
+        },
+        onError: (error, stackTrace) {
+          if (!done.isCompleted) done.completeError(error, stackTrace);
+        },
+      ),
+    );
+    return done.future;
+  }
+
   /// Sets up the SCTP transport, once per session.
   ///
   /// `datachannels/establish` is sent without an offer, so no local channel

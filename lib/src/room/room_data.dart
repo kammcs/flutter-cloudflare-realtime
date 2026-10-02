@@ -36,13 +36,10 @@ class RoomData {
     DataChannelProfile profile = DataChannelProfile.reliable,
   }) async {
     _room._checkNotLeft();
-    if (_room.isReconnecting) {
-      await _room._whenNotReconnecting();
-      _room._checkNotLeft();
-    }
-    final channel = await _room._session.publishDataChannel(
-      name,
-      profile: profile,
+    // Waits for a running re-session, and publishes again on the new
+    // session if this one fails under it (as LocalParticipant does).
+    final channel = await _room._onSessionWithRetry(
+      (session) => session.publishDataChannel(name, profile: profile),
     );
     _published.add(channel);
     return channel;
@@ -89,15 +86,13 @@ class RoomData {
         'is not in this room',
       );
     }
-    if (_room.isReconnecting) {
-      await _room._whenNotReconnecting();
-      _room._checkNotLeft();
-    }
-    final channel = await _room._session.subscribeDataChannel(
-      participant.sessionId,
-      name,
-      profile: profile,
-      canReply: canReply,
+    final channel = await _room._onSessionWithRetry(
+      (session) => session.subscribeDataChannel(
+        participant.sessionId,
+        name,
+        profile: profile,
+        canReply: canReply,
+      ),
     );
     if (_room._left) {
       await channel.close();

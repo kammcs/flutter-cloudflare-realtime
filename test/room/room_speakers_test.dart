@@ -246,7 +246,13 @@ void main() {
     run((async, pump, poll) {
       late Room bob;
       h
-          .join('bob', options: const RoomOptions(activeSpeaker: null))
+          .join(
+            'bob',
+            options: const RoomOptions(
+              connectEarly: false,
+              activeSpeaker: null,
+            ),
+          )
           .then((r) => bob = r);
       pump();
       final ann = _Puppet(h, 'ann')..announce({'m': _mic});

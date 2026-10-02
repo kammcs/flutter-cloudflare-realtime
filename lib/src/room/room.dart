@@ -164,6 +164,8 @@ class Room {
   MediaDeviceList? _deviceList;
   bool _left = false;
   Future<void>? _leaving;
+  // The last session whose failure the room handled.
+  SfuSession? _failureHandled;
 
   /// The SFU session that carries this room's media now.
   ///
@@ -424,11 +426,16 @@ class Room {
     } catch (error) {
       _emit(RoomErrorEvent('audioRouting', error));
     }
+    // Connect the peer connection while signaling joins, so the SFU keeps
+    // the session even if the first publish waits on a prompt (§8.1).
+    final early = options.connectEarly ? _connectEarly(_session) : null;
     final self = localParticipant.state;
     await signaling.join(roomId, self);
     _announced = self;
-    // Take the session's state now, so the room is returned connected. The
-    // failures stream replays a failure that already happened.
+    await early;
+    // Take the session's state now, so the room is returned connected (or
+    // connecting, after an early connect). The failures stream replays a
+    // failure that already happened, such as a 410 on the early connect.
     _onSessionState(_session, _session.currentConnectionState);
     _listenToSession(_session);
     _subscriptions.add(
@@ -493,6 +500,21 @@ class Room {
     _sessionListeners.clear();
   }
 
+  /// Connects [session]'s peer connection before anything is published
+  /// ([RoomOptions.connectEarly], [SfuSession.establishConnection]). Never
+  /// throws: a gone session fails and the re-session replaces it; after any
+  /// other error the session stays usable, and the first publish or pull
+  /// negotiates as it would have anyway.
+  Future<void> _connectEarly(SfuSession session) async {
+    try {
+      await session.establishConnection();
+    } catch (error) {
+      if (!_left && session.isUsable) {
+        _emit(RoomErrorEvent('connectEarly', error));
+      }
+    }
+  }
+
   void _setState(RoomConnectionState state) {
     if (_state.isClosed || _state.value == state) return;
     _state.set(state);
@@ -507,8 +529,12 @@ class Room {
     if (_reconnection.isRunning || _reconnection.gaveUp) return;
     if (session.failure != null) return;
     _setState(switch (state) {
-      // Nothing negotiated yet: the session is usable.
-      SfuConnectionState.initial => RoomConnectionState.connected,
+      // Nothing negotiated yet: the session is usable. Once something is
+      // (an early connect at join), the connection is on its way.
+      SfuConnectionState.initial =>
+        session.hasNegotiated
+            ? RoomConnectionState.connecting
+            : RoomConnectionState.connected,
       SfuConnectionState.connecting => RoomConnectionState.connecting,
       SfuConnectionState.connected => RoomConnectionState.connected,
       SfuConnectionState.disconnected => RoomConnectionState.reconnecting,
@@ -519,9 +545,52 @@ class Room {
 
   void _onSessionFailure(SfuSession session, SfuSessionFailure failure) {
     if (_left || !identical(session, _session)) return;
+    // Reported once per session: by its failures stream, or earlier by an
+    // operation that saw it fail ([_onSessionWithRetry]).
+    if (identical(_failureHandled, session)) return;
+    _failureHandled = session;
     _emit(RoomSessionFailedEvent(failure));
     _reconnection.sessionFailed(failure);
     if (!_reconnection.isRunning) _setState(RoomConnectionState.disconnected);
+  }
+
+  /// Runs [operation] (a publish) on the room's session, waiting for a
+  /// running re-session first. If it fails because that session failed
+  /// under it (most often the SFU expiring a session whose peer connection
+  /// never connected: `SessionGoneException`, HTTP 410), it waits for the
+  /// room's re-session and runs [operation] once more, on the new session.
+  /// A second failure, a re-session that gives up, or automatic
+  /// reconnection being off surfaces the error. The SFU's rejection of the
+  /// track itself ([SfuTrackException], [SfuDataChannelException]) and
+  /// errors on a session that is still usable are thrown at once.
+  Future<T> _onSessionWithRetry<T>(
+    Future<T> Function(SfuSession session) operation,
+  ) async {
+    if (isReconnecting) {
+      await _whenNotReconnecting();
+      _checkNotLeft();
+    }
+    final session = _session;
+    try {
+      return await operation(session);
+    } catch (error) {
+      if (_left ||
+          error is SfuTrackException ||
+          error is SfuDataChannelException) {
+        rethrow;
+      }
+      final failure = session.failure;
+      final replaced = !identical(_session, session) || isReconnecting;
+      if (failure == null && !(session.isClosed && replaced)) rethrow;
+      // The session's failure reaches the room through a stream, which may
+      // not have delivered it yet: start the re-session now.
+      if (failure != null) _onSessionFailure(session, failure);
+      await _whenNotReconnecting();
+      if (_left || identical(_session, session) || !_session.isUsable) {
+        rethrow;
+      }
+    }
+    return operation(_session);
   }
 
   /// Completes once no reconnection is running, so an operation that needs

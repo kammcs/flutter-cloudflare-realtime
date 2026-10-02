@@ -320,7 +320,7 @@ void main() {
       () async {
         final alice = await h.join(
           'alice',
-          options: const RoomOptions(speakerphone: true),
+          options: const RoomOptions(connectEarly: false, speakerphone: true),
         );
         expect(alice.currentAudioRoute, _speaker);
         await alice.leave();

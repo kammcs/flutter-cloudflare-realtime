@@ -276,7 +276,7 @@ void main() {
         List<RoomEvent> events,
       )
       body, {
-      RoomOptions options = const RoomOptions(),
+      RoomOptions options = const RoomOptions(connectEarly: false),
     }) {
       fakeAsync((async) {
         late Room alice;
@@ -433,11 +433,17 @@ void main() {
         async.elapse(const Duration(seconds: 20));
         expect(stalled(events), isEmpty);
       });
-      run((async, alice, share, events) {
-        reportFrames(alice, share, 0);
-        async.elapse(const Duration(seconds: 30));
-        expect(stalled(events), isEmpty);
-      }, options: const RoomOptions(screenShareStallTimeout: null));
+      run(
+        (async, alice, share, events) {
+          reportFrames(alice, share, 0);
+          async.elapse(const Duration(seconds: 30));
+          expect(stalled(events), isEmpty);
+        },
+        options: const RoomOptions(
+          connectEarly: false,
+          screenShareStallTimeout: null,
+        ),
+      );
     });
   });
 }

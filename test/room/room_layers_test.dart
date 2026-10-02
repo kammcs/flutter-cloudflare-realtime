@@ -34,7 +34,7 @@ void _run(
     void Function(Map<String, TrackInfo>) announce,
   )
   body, {
-  RoomOptions options = const RoomOptions(),
+  RoomOptions options = const RoomOptions(connectEarly: false),
 }) {
   fakeAsync((async) {
     void pump() {
@@ -410,6 +410,7 @@ void main() {
         expect(cam.isSubscribed, isFalse, reason: 'no grace');
       },
       options: const RoomOptions(
+        connectEarly: false,
         hiddenVideoLinger: null,
         leaseReleaseGrace: Duration.zero,
       ),

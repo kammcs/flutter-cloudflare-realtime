@@ -407,21 +407,22 @@ class LocalParticipant {
     SimulcastInfo? simulcast,
     Stream<CapturedTrack?>? tracks,
   }) async {
+    // Readable and unique; kept for the publication's lifetime, so a
+    // republish on a new session (docs/design.md §8) keeps the name.
+    final trackName = '${source.name}-${generateTrackName()}';
     final LocalTrackPublication publication;
     try {
-      // While the room replaces its session, push to the new one.
-      if (_room.isReconnecting) {
-        await _room._whenNotReconnecting();
-        _room._checkNotLeft();
-      }
-      publication = await _room._session.publishTrackStream(
-        (tracks ?? mediaSource.broadcastTrack).map((t) => t?.track),
-        kind: kind.name,
-        options: PublishOptions(
-          // Readable and unique; kept for the publication's lifetime, so a
-          // republish on a new session (docs/design.md §8) keeps the name.
-          trackName: '${source.name}-${generateTrackName()}',
-          sendEncodings: encodings,
+      // While the room replaces its session, push to the new one. A push
+      // whose session fails under it (the SFU expired a session that never
+      // connected: 410) is pushed again once the room has a new session.
+      publication = await _room._onSessionWithRetry(
+        (session) => session.publishTrackStream(
+          (tracks ?? mediaSource.broadcastTrack).map((t) => t?.track),
+          kind: kind.name,
+          options: PublishOptions(
+            trackName: trackName,
+            sendEncodings: encodings,
+          ),
         ),
       );
     } catch (_) {

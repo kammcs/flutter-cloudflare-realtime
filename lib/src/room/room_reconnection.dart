@@ -22,8 +22,9 @@ class _Aborted implements Exception {
 ///    backoff;
 /// 5. pulls every wanted remote track, and every DataChannel subscription,
 ///    from the publishers' current sessions;
-/// 6. waits for the new peer connection to connect, if anything was
-///    negotiated on it (see [_whenConnected]).
+/// 6. connects the new session even if nothing moved
+///    ([RoomOptions.connectEarly]), and waits for the new peer connection
+///    to connect, if anything was negotiated on it (see [_whenConnected]).
 ///
 /// Only one episode runs at a time. Triggers during an episode coalesce
 /// into it: one about the attempt's own session makes that attempt count as
@@ -73,8 +74,12 @@ class _Reconnection {
   /// The current session's connection state changed.
   void sessionState(SfuConnectionState state) {
     final pcState = switch (state) {
-      // Nothing negotiated: no connect timeout until something is.
-      SfuConnectionState.initial => null,
+      // Nothing negotiated: no connect timeout until something is. After an
+      // early connect at join, `new` is on its way to connecting.
+      SfuConnectionState.initial =>
+        _room._session.hasNegotiated
+            ? RTCPeerConnectionState.RTCPeerConnectionStateNew
+            : null,
       SfuConnectionState.connecting =>
         RTCPeerConnectionState.RTCPeerConnectionStateConnecting,
       SfuConnectionState.connected =>
@@ -328,7 +333,13 @@ class _Reconnection {
       ]);
       _checkUsable(next);
 
-      // 6. Media flows once ICE is up.
+      // 6. Media flows once ICE is up. With nothing to move, connect the
+      //    new session anyway (RoomOptions.connectEarly), so the SFU keeps
+      //    it until the first publish.
+      if (room.options.connectEarly && !next.hasNegotiated) {
+        await room._connectEarly(next);
+        _checkUsable(next);
+      }
       await _whenConnected(next);
       _checkUsable(next);
     } catch (_) {
@@ -387,6 +398,7 @@ class _Reconnection {
   /// `new` is final: there is nothing to connect.
   Future<void> _whenConnected(SfuSession next) async {
     bool negotiated() =>
+        next.hasNegotiated ||
         next.publications.isNotEmpty ||
         next.subscriptions.isNotEmpty ||
         next.dataChannels.isNotEmpty;

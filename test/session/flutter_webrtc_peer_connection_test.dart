@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/src/session/flutter_webrtc_peer_connection.dart';
+import 'package:cloudflare_realtime/src/broker/models/common.dart' show SdpType;
 import 'package:cloudflare_realtime/src/session/peer_connection.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
@@ -74,6 +76,18 @@ class _FakeRtcPeerConnection extends Fake implements webrtc.RTCPeerConnection {
 
   @override
   Future<List<webrtc.RTCRtpTransceiver>> getTransceivers() async => current;
+
+  /// What `getLocalDescription()` returns; throws [localDescriptionError]
+  /// instead when set.
+  webrtc.RTCSessionDescription? local;
+  Object? localDescriptionError;
+
+  @override
+  Future<webrtc.RTCSessionDescription?> getLocalDescription() async {
+    final error = localDescriptionError;
+    if (error != null) throw error;
+    return local;
+  }
 
   @override
   Future<void> close() async => log.add('pc.close');
@@ -171,6 +185,30 @@ void main() {
     await pc.createAnswer();
     expect(rtc.offerConstraints, [<String, dynamic>{}]);
     expect(rtc.answerConstraints, [<String, dynamic>{}]);
+  });
+
+  group('localDescription', () {
+    test('is the platform\'s description', () async {
+      rtc.local = webrtc.RTCSessionDescription('v=0', 'offer');
+      final d = await pc.localDescription();
+      expect(d!.type, SdpType.offer);
+      expect(d.sdp, 'v=0');
+    });
+
+    test('is null while there is none, including when the platform throws '
+        'for it (Android)', () async {
+      expect(await pc.localDescription(), isNull);
+      rtc.local = webrtc.RTCSessionDescription('', 'offer');
+      expect(await pc.localDescription(), isNull);
+      rtc.localDescriptionError = PlatformException(
+        code: 'getLocalDescriptionFailed',
+        message:
+            "Attempt to read from field 'java.lang.String "
+            "org.webrtc.SessionDescription.description' on a null object "
+            'reference',
+      );
+      expect(await pc.localDescription(), isNull);
+    });
   });
 
   test('close() closes DataChannels before the connection', () async {

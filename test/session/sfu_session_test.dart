@@ -13,6 +13,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         RTCSignalingState;
 
 import '../support/sdp_fixtures.dart';
+
+import 'package:cloudflare_realtime/src/session/sfu_session.dart';
+
 import '../support/session_harness.dart';
 
 TracksRequest _tracksRequest(BrokerCall call) => call.request! as TracksRequest;
@@ -71,14 +74,151 @@ void main() {
       expect(h.peerConnections.created, isEmpty);
     });
 
-    test('throws the broker error when sessions/new fails', () async {
+    test('throws the broker error when sessions/new fails, and closes the '
+        'PC it created meanwhile', () async {
       h.broker.onNewSession = (_) async =>
           throw const BrokerUnauthorizedException(operation: 'sessions/new');
       await expectLater(
         h.connect(),
         throwsA(isA<BrokerUnauthorizedException>()),
       );
-      expect(h.peerConnections.created, isEmpty);
+      expect(h.pc.closed, isTrue, reason: 'nothing leaks');
+      expect(h.broker.forgotten, isEmpty, reason: 'no session was created');
+    });
+
+    test('creates the PC while sessions/new runs', () async {
+      final sessionCreated = Completer<NewSessionResponse>();
+      h.broker.onNewSession = (_) => sessionCreated.future;
+      SfuSession? session;
+      final connecting = h.connect().then((s) => session = s);
+      await pumpEventQueue();
+
+      expect(h.broker.operations, ['sessions/new', 'generate-ice-servers']);
+      expect(
+        h.peerConnections.created,
+        hasLength(1),
+        reason: 'the PC does not wait for sessions/new',
+      );
+      expect(session, isNull);
+
+      sessionCreated.complete(const NewSessionResponse(sessionId: 's-late'));
+      await connecting;
+      expect(session!.sessionId, 's-late');
+      expect(h.pc.closed, isFalse);
+    });
+
+    test('sessions/new does not wait for a slow PC either', () async {
+      final pcCreated = Completer<void>();
+      var newSessionCalls = 0;
+      h.broker.onNewSession = (_) async {
+        newSessionCalls++;
+        return const NewSessionResponse(sessionId: 's-1');
+      };
+      final connecting = connectSfuSession(
+        broker: h.broker,
+        createPeerConnection: (configuration) async {
+          await pcCreated.future;
+          return h.peerConnections.call(configuration);
+        },
+      );
+      await pumpEventQueue();
+      expect(newSessionCalls, 1);
+      pcCreated.complete();
+      expect((await connecting).sessionId, 's-1');
+    });
+
+    test('forgets the new session if the PC cannot be created', () async {
+      await expectLater(
+        connectSfuSession(
+          broker: h.broker,
+          createPeerConnection: (_) async =>
+              throw StateError('no peer connection factory'),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(h.broker.forgotten, ['session-1']);
+    });
+
+    test('closes the PC and forgets the session when sessions/new returns '
+        'an error code', () async {
+      h.broker.onNewSession = (_) async => const NewSessionResponse(
+        sessionId: 's-err',
+        errorCode: 'internal',
+        errorDescription: 'try later',
+      );
+      await expectLater(h.connect(), throwsA(isA<SfuRequestException>()));
+      expect(h.broker.forgotten, ['s-err']);
+      expect(h.pc.closed, isTrue);
+    });
+  });
+
+  group('establishConnection', () {
+    test('negotiates the DataChannel transport, so the PC connects before '
+        'the first push', () async {
+      final session = await h.connect();
+      expect(session.hasNegotiated, isFalse);
+
+      await session.establishConnection();
+
+      expect(h.broker.operations.skip(2), [
+        'datachannels/establish',
+        'renegotiate',
+      ]);
+      expect(h.pc.log, [
+        'setRemoteDescription(offer)',
+        'createAnswer',
+        'setLocalDescription(answer)',
+      ]);
+      expect(session.hasNegotiated, isTrue);
+      expect(session.dataChannels, isEmpty);
+
+      // Publishing and DataChannels then work as before, on the same
+      // transport: no second establish.
+      final pub = await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+      expect(pub.state, SfuTrackState.active);
+      await session.publishDataChannel('chat');
+      expect(h.broker.callsTo('datachannels/establish'), hasLength(1));
+    });
+
+    test('does nothing once something was negotiated', () async {
+      final session = await h.connect();
+      await session.publish(FakeMediaStreamTrack(kind: 'audio'));
+      expect(session.hasNegotiated, isTrue);
+      await session.establishConnection();
+      await session.establishConnection();
+      expect(h.broker.callsTo('datachannels/establish'), isEmpty);
+    });
+
+    test('a 410 fails the session, like any call', () async {
+      final session = await h.connect();
+      h.broker.onEstablishDataChannels = (sessionId, _) async =>
+          throw SessionGoneException(
+            operation: 'datachannels/establish',
+            sessionId: sessionId,
+            statusCode: 410,
+          );
+      await expectLater(
+        session.establishConnection(),
+        throwsA(isA<SessionGoneException>()),
+      );
+      expect(session.failure, isA<SfuSessionGone>());
+      expect(session.hasNegotiated, isFalse);
+    });
+
+    test('another failure leaves the session usable and retryable', () async {
+      final session = await h.connect();
+      h.broker.onEstablishDataChannels = (_, _) async =>
+          throw const BrokerNetworkException(
+            operation: 'datachannels/establish',
+          );
+      await expectLater(
+        session.establishConnection(),
+        throwsA(isA<BrokerNetworkException>()),
+      );
+      expect(session.isUsable, isTrue);
+      h.broker.onEstablishDataChannels = null;
+      await session.establishConnection();
+      expect(session.hasNegotiated, isTrue);
     });
   });
 

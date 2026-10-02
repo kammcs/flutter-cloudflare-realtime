@@ -318,11 +318,17 @@ void main() {
     test('AutoSubscribe.all pulls video too; none pulls nothing', () async {
       final eve = await h.join(
         'eve',
-        options: const RoomOptions(autoSubscribe: AutoSubscribe.all),
+        options: const RoomOptions(
+          connectEarly: false,
+          autoSubscribe: AutoSubscribe.all,
+        ),
       );
       final zed = await h.join(
         'zed',
-        options: const RoomOptions(autoSubscribe: AutoSubscribe.none),
+        options: const RoomOptions(
+          connectEarly: false,
+          autoSubscribe: AutoSubscribe.none,
+        ),
       );
       await ann.join('ann-1', {'m': _mic, 'c': _cam});
       await _settle();
@@ -363,7 +369,10 @@ void main() {
     test('the default layer is configurable', () async {
       final eve = await h.join(
         'eve',
-        options: const RoomOptions(defaultVideoLayer: SimulcastLayer.low),
+        options: const RoomOptions(
+          connectEarly: false,
+          defaultVideoLayer: SimulcastLayer.low,
+        ),
       );
       await ann.join('ann-1', {
         'c': _cam.copyWith(
@@ -429,7 +438,10 @@ void main() {
       // No grace period, so releases take effect at once.
       final eve = await h.join(
         'eve',
-        options: const RoomOptions(leaseReleaseGrace: Duration.zero),
+        options: const RoomOptions(
+          connectEarly: false,
+          leaseReleaseGrace: Duration.zero,
+        ),
       );
       addTearDown(eve.leave);
       await ann.join('ann-1', {'c': _cam});
@@ -509,6 +521,7 @@ void main() {
             .join(
               'eve',
               options: const RoomOptions(
+                connectEarly: false,
                 pullRetry: BackoffConfig(
                   initialDelay: Duration(seconds: 1),
                   maxDelay: Duration(seconds: 1),
@@ -852,7 +865,10 @@ void main() {
         'disconnects with an event', () async {
       final room = await h.join(
         'alice',
-        options: const RoomOptions(reconnect: ReconnectOptions.disabled),
+        options: const RoomOptions(
+          connectEarly: false,
+          reconnect: ReconnectOptions.disabled,
+        ),
       );
       final events = _record(room);
       final states = <RoomConnectionState>[];

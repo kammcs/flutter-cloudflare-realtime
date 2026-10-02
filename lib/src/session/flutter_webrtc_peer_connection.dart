@@ -195,7 +195,16 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
 
   @override
   Future<SessionDescription?> localDescription() async {
-    final description = await _pc.getLocalDescription();
+    final webrtc.RTCSessionDescription? description;
+    try {
+      description = await _pc.getLocalDescription();
+    } catch (_) {
+      // Android's plugin throws (a NullPointerException in
+      // `MethodCallHandlerImpl`) instead of answering null while there is
+      // no local description yet: an SFU offer applied as the session's
+      // first SDP (`datachannels/establish`) read it before any was set.
+      return null;
+    }
     final sdp = description?.sdp;
     if (description == null || sdp == null || sdp.isEmpty) return null;
     return _fromRtc(description);

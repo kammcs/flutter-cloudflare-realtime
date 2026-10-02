@@ -30,6 +30,13 @@ void main() {
       final subscriber = await SfuSession.connect(broker: broker);
       addTearDown(subscriber.close);
       expect(publisher.sessionId, isNot(subscriber.sessionId));
+      // Connect both now: the SFU expires a session whose peer connection
+      // never connected (about ten seconds), and the first capture below
+      // can take that long on a loaded machine.
+      await Future.wait([
+        publisher.establishConnection(),
+        subscriber.establishConnection(),
+      ]);
 
       final stream = await _captureLocalMedia();
       addTearDown(() async {

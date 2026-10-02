@@ -161,7 +161,7 @@ class RoomHarness {
   Future<Room> join(
     String participantId, {
     String roomId = 'room',
-    RoomOptions options = const RoomOptions(),
+    RoomOptions options = const RoomOptions(connectEarly: false),
     Map<String, Object?>? metadata,
     Signaling? signaling,
   }) => realtime.join(

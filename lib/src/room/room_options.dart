@@ -186,6 +186,7 @@ class RoomOptions {
     this.activeSpeaker = const ActiveSpeakerConfig(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
     this.speakerphone,
+    this.connectEarly = true,
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -260,4 +261,18 @@ class RoomOptions {
   /// headset comes first either way, and the user can still pick a route
   /// with [Room.selectAudioRoute]. No effect on desktops and in browsers.
   final bool? speakerphone;
+
+  /// Whether the room connects its SFU session's peer connection as soon as
+  /// it has one, at join and after every re-session, rather than at the
+  /// first publish or pull. Default `true`.
+  ///
+  /// The SFU expires a session whose peer connection never connected
+  /// (about ten seconds after creating it), so a first publish that waits
+  /// on a permission prompt or a screen-share picker would otherwise find
+  /// the session gone. Connecting early ([SfuSession.establishConnection])
+  /// sets up the session's DataChannel transport, which costs one more
+  /// exchange with the broker and keeps an idle SCTP association. Either
+  /// way, a publish that finds its session gone is retried once on the
+  /// room's new session (`docs/design.md` §8.1).
+  final bool connectEarly;
 }

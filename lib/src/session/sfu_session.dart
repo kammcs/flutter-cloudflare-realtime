@@ -120,12 +120,19 @@ class SfuSession {
 
   /// Creates an SFU session and its peer connection.
   ///
-  /// As in partytracks, this requests `sessions/new` and the ICE servers
-  /// (unless [SfuSessionOptions.iceServers] is set) together, then creates
-  /// the peer connection with `bundlePolicy: max-bundle`. Nothing is
-  /// negotiated until the first [publish] or [subscribe].
+  /// Requests `sessions/new` while it fetches the ICE servers (unless
+  /// [SfuSessionOptions.iceServers] is set) and creates the peer connection
+  /// with `bundlePolicy: max-bundle`. Nothing is negotiated until the first
+  /// [publish], [subscribe] or [establishConnection].
   ///
-  /// Throws the broker's exception if either call fails.
+  /// **The SFU expires a session whose peer connection never connected**,
+  /// about ten seconds after `sessions/new` (later calls then fail with a
+  /// `SessionGoneException`, HTTP 410). If the first publish may come later
+  /// than that (a permission prompt, a screen-share picker), call
+  /// [establishConnection] right after connecting. A `Room` does.
+  ///
+  /// Throws the broker's exception if either call fails, or the platform's
+  /// if the peer connection can't be created; nothing is left open then.
   static Future<SfuSession> connect({
     required BrokerClient broker,
     SfuSessionOptions options = const SfuSessionOptions(),
@@ -199,6 +206,13 @@ class SfuSession {
 
   /// Whether operations can still run: not closed and not failed.
   bool get isUsable => !_closed && _failure == null;
+
+  /// Whether an SDP exchange has completed on this session (a push, a pull
+  /// or [establishConnection]), so its peer connection has something to
+  /// connect. Until then [connectionState] stays
+  /// [SfuConnectionState.initial] and the SFU may expire the session.
+  bool get hasNegotiated => _negotiated;
+  bool _negotiated = false;
 
   /// The publications on this session, including ones still being pushed.
   List<LocalTrackPublication> get publications =>
@@ -578,6 +592,31 @@ class SfuSession {
   /// The DataChannels on this session, published and subscribed, including
   /// ones still being set up.
   List<SfuDataChannel> get dataChannels => _dataChannels?.channels ?? const [];
+
+  /// Connects the peer connection now, before anything is published or
+  /// subscribed, so the SFU keeps the session.
+  ///
+  /// The SFU expires a session whose peer connection never connected:
+  /// about ten seconds after `sessions/new` (9 to 13 seconds observed),
+  /// the next call fails with a `SessionGoneException` (HTTP 410). Nothing
+  /// connects until the first SDP exchange, so a first publish that waits
+  /// on a permission prompt or a screen-share picker fails. This sets up
+  /// the session's DataChannel transport (`datachannels/establish`,
+  /// answering the SFU's offer: one `application` m-line and no media),
+  /// after which ICE and DTLS connect and the session stays. Later
+  /// DataChannels use the same transport; publishing and subscribing work
+  /// as before.
+  ///
+  /// Runs on the operation queue. Does nothing if something was negotiated
+  /// already ([hasNegotiated]) or the transport is set up. Completes once
+  /// the SFU's offer is answered, not when the peer connection connects
+  /// (watch [connectionState]). Throws the broker's exception or an
+  /// [SfuRequestException] if that fails; a `SessionGoneException` also
+  /// fails the session, like any call.
+  Future<void> establishConnection() {
+    _throwIfUnusable();
+    return _data.establishTransport();
+  }
 
   /// The peer connection's WebRTC statistics (`getStats()`): every
   /// sender's and receiver's reports, such as `inbound-rtp` with
@@ -1005,6 +1044,7 @@ class SfuSession {
           ? description
           : SessionDescription(type: description.type, sdp: sdp),
     );
+    _negotiated = true;
   }
 
   /// Applies an SFU offer, answers it, and sends the answer with
@@ -1445,49 +1485,54 @@ Future<SfuSession> connectSfuSession({
   PeerConnectionFactory createPeerConnection =
       createFlutterWebrtcPeerConnection,
 }) async {
-  // partytracks requests the session and the ICE servers together
-  // (`forkJoin`), then creates the peer connection.
+  // Two chains at once: `sessions/new`, and the ICE servers followed by the
+  // peer connection. partytracks requests the session and the ICE servers
+  // together (`forkJoin`) and creates the peer connection after both; here
+  // the peer connection doesn't wait for `sessions/new`, because
+  // flutter_webrtc's first `createPeerConnection` can take seconds on a
+  // loaded machine, and the SFU expires a session whose peer connection
+  // hasn't connected (docs/design.md §4.2, Connect).
   final configuredIceServers = options.iceServers;
   final NewSessionResponse session;
-  final List<Map<String, dynamic>> iceServers;
+  final PeerConnection peerConnection;
   try {
-    (session, iceServers) = await (
+    (session, peerConnection) = await (
       broker.newSession(
         NewSessionRequest(correlationId: options.correlationId),
       ),
-      configuredIceServers == null
-          ? broker.getIceServers()
-          : Future.value(configuredIceServers),
+      (configuredIceServers == null
+              ? broker.getIceServers()
+              : Future.value(configuredIceServers))
+          .then(
+            (iceServers) => createPeerConnection({
+              'iceServers': iceServers,
+              'bundlePolicy': 'max-bundle',
+              'sdpSemantics': 'unified-plan',
+            }),
+          ),
     ).wait;
   } on ParallelWaitError<
-    (NewSessionResponse?, List<Map<String, dynamic>>?),
+    (NewSessionResponse?, PeerConnection?),
     (AsyncError?, AsyncError?)
   > catch (e) {
+    // `wait` lets both chains finish, so whatever one of them created is
+    // released here: nothing leaks when the other fails.
     final created = e.values.$1;
     if (created != null) broker.forgetSession(created.sessionId);
+    final opened = e.values.$2;
+    if (opened != null) await _closeQuietly(opened);
     final error = e.errors.$1 ?? e.errors.$2!;
     Error.throwWithStackTrace(error.error, error.stackTrace);
   }
 
   if (session.hasError) {
     broker.forgetSession(session.sessionId);
+    await _closeQuietly(peerConnection);
     throw SfuRequestException(
       operation: 'sessions/new',
       errorCode: session.errorCode!,
       errorDescription: session.errorDescription,
     );
-  }
-
-  final PeerConnection peerConnection;
-  try {
-    peerConnection = await createPeerConnection({
-      'iceServers': iceServers,
-      'bundlePolicy': 'max-bundle',
-      'sdpSemantics': 'unified-plan',
-    });
-  } catch (_) {
-    broker.forgetSession(session.sessionId);
-    rethrow;
   }
   return SfuSession._(
     broker: broker,
@@ -1495,6 +1540,14 @@ Future<SfuSession> connectSfuSession({
     peerConnection: peerConnection,
     options: options,
   );
+}
+
+Future<void> _closeQuietly(PeerConnection peerConnection) async {
+  try {
+    await peerConnection.close();
+  } catch (_) {
+    // Never used: nothing else to release.
+  }
 }
 
 // -----------------------------------------------------------------------------

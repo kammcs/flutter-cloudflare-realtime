@@ -26,6 +26,7 @@ class _MaxRandom implements math.Random {
 
 /// Delays of 1 s, 2 s, then 4 s; three attempts per episode.
 const _options = RoomOptions(
+  connectEarly: false,
   reconnect: ReconnectOptions(
     backoff: BackoffConfig(
       initialDelay: Duration(seconds: 1),
@@ -640,7 +641,10 @@ void main() {
         final alice = join(
           pump,
           'alice',
-          options: const RoomOptions(reconnect: ReconnectOptions.disabled),
+          options: const RoomOptions(
+            connectEarly: false,
+            reconnect: ReconnectOptions.disabled,
+          ),
         );
         final events = _record(alice);
         final mic = wait(pump, alice.localParticipant.publishMicrophone());
