@@ -151,6 +151,26 @@ final class TrackSubscriptionFailedEvent extends RoomEvent {
       'willRetry: $willRetry)';
 }
 
+/// A participant's [Participant.connectionQuality] changed
+/// (`docs/design.md` §7.1): the local participant's own connection, or what
+/// arrives from a remote participant.
+final class ConnectionQualityChangedEvent extends RoomEvent {
+  /// Creates the event.
+  const ConnectionQualityChangedEvent(this.participant, this.quality);
+
+  /// Whose quality changed: the [LocalParticipant] or a
+  /// [RemoteParticipant].
+  final Participant participant;
+
+  /// The new quality.
+  final ConnectionQuality quality;
+
+  @override
+  String toString() =>
+      'ConnectionQualityChangedEvent(${participant.participantId}, '
+      '${quality.name})';
+}
+
 /// The local participant published a track, and it was announced.
 final class LocalTrackPublishedEvent extends RoomEvent {
   /// Creates the event.

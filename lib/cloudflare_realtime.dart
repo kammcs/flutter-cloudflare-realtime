@@ -113,10 +113,18 @@ export 'src/signaling/participant_state.dart'
     show ParticipantState, SimulcastInfo, TrackInfo, TrackKind, TrackSource;
 export 'src/signaling/signaling.dart' show Signaling;
 
-// Quality: active speaker and simulcast layer selection (design.md §6, §7).
+// Quality: active speaker, simulcast layer selection, typed stats and
+// connection quality (design.md §6, §7, §7.1).
 // The detectors, the stats poller and the layer controller stay internal:
 // the Room owns them and exposes their results.
 export 'src/quality/active_speaker_config.dart' show ActiveSpeakerConfig;
+export 'src/quality/call_stats.dart';
+export 'src/quality/connection_quality.dart'
+    show
+        ConnectionQuality,
+        ConnectionQualityConfig,
+        QualityThresholds,
+        RoomStatsOptions;
 export 'src/quality/layer_selection.dart' show LayerSelectionConfig, TileDemand;
 export 'src/quality/layer_selection_controller.dart' show LayerDemandReporter;
 export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;

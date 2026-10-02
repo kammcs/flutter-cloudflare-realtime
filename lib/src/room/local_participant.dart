@@ -8,12 +8,12 @@ part of 'room.dart';
 /// soon as the SFU accepts it. Other participants then see the track in
 /// [ParticipantState.tracks], with a `muted` flag that follows
 /// [LocalMediaPublication.mute] and [LocalMediaPublication.unmute].
-class LocalParticipant {
+class LocalParticipant implements Participant {
   LocalParticipant._(this._room, this.participantId, this._metadata);
 
   final Room _room;
 
-  /// This participant's ID in the room.
+  @override
   final String participantId;
 
   Map<String, Object?>? _metadata;
@@ -28,7 +28,7 @@ class LocalParticipant {
   /// from.
   String get sessionId => _room._session.sessionId;
 
-  /// The app data announced with this participant, such as a display name.
+  @override
   Map<String, Object?>? get metadata => _metadata;
 
   /// The published tracks, in publish order.
@@ -54,6 +54,7 @@ class LocalParticipant {
 
   /// Whether this participant is speaking now: their microphone is unmuted
   /// and they are in [Room.activeSpeakers].
+  @override
   bool get isSpeaking =>
       _room._speakers.monitor.currentSpeakers.contains(participantId);
 
@@ -82,6 +83,18 @@ class LocalParticipant {
   /// listener and then emitting its changes.
   Stream<bool> get speakingWhileMutedChanges =>
       _room._speakers.monitor.localSpeakingWhileMuted;
+
+  /// How well this client's own connection to the SFU works
+  /// (`docs/design.md` §7.1): the round-trip time, the loss and jitter the
+  /// SFU reports for what is sent, and whether the bandwidth estimate
+  /// limits the video. [ConnectionQuality.lost] while the room is
+  /// reconnecting or disconnected.
+  @override
+  ConnectionQuality get connectionQuality => _room._stats.local.value;
+
+  @override
+  Stream<ConnectionQuality> get connectionQualityChanges =>
+      _room._stats.local.stream;
 
   /// The state announced through signaling: the session, every published
   /// track with its mute flag and simulcast layers, and [metadata].
@@ -556,6 +569,16 @@ class LocalMediaPublication {
 
   /// Whether the track is still published.
   bool get isPublished => !_unpublished;
+
+  /// This track's typed stats from [Room.stats] (`docs/design.md` §7.1):
+  /// its sent layers, replaying the latest; `null` until it has reports.
+  /// Listening makes the room poll.
+  Stream<LocalTrackStats?> get stats =>
+      participant._room._stats.stream.map((stats) => stats.local[trackName]);
+
+  /// This track's stats in the latest [Room.stats] snapshot, if any.
+  LocalTrackStats? get currentStats =>
+      participant._room._stats.latest?.local[trackName];
 
   /// What is announced for this track.
   TrackInfo get info =>

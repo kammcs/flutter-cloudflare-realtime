@@ -5,14 +5,14 @@ part of 'room.dart';
 /// The same object represents the participant for as long as they are in
 /// the room; its state changes in place. [changes] (and
 /// [Room.participants]) emit when it does.
-class RemoteParticipant {
+class RemoteParticipant implements Participant {
   RemoteParticipant._(this._room, ParticipantState state)
     : participantId = state.participantId,
       _state = state;
 
   final Room _room;
 
-  /// The participant's ID, unique in the room.
+  @override
   final String participantId;
 
   /// The room the participant is in.
@@ -23,12 +23,17 @@ class RemoteParticipant {
   final StreamController<RemoteParticipant> _changes =
       StreamController.broadcast();
   bool _present = true;
+  // Set by the room's stats (room_stats.dart).
+  final StateStream<ConnectionQuality> _quality = StateStream(
+    ConnectionQuality.unknown,
+    distinct: true,
+  );
 
   /// The participant's current SFU session. It changes when they reconnect;
   /// the room then pulls their tracks from the new session.
   String get sessionId => _state.sessionId!;
 
-  /// The app data the participant announced, such as a display name.
+  @override
   Map<String, Object?>? get metadata => _state.metadata;
 
   /// The participant's last announced state, as received.
@@ -63,6 +68,7 @@ class RemoteParticipant {
 
   /// Whether the participant is speaking now: they are in
   /// [Room.activeSpeakers].
+  @override
   bool get isSpeaking =>
       _room._speakers.monitor.currentSpeakers.contains(participantId);
 
@@ -83,6 +89,20 @@ class RemoteParticipant {
   Stream<double> get audioLevels => _room._speakers.monitor.snapshots
       .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
       .distinct();
+
+  /// How well this participant's media arrives (`docs/design.md` §7.1):
+  /// the loss, audio jitter and video freezes on their pulled tracks, and
+  /// [ConnectionQuality.lost] when none of their pulled, unmuted tracks
+  /// received anything for [ConnectionQualityConfig.lostAfter] while they
+  /// are still in the room. It reflects their uplink and this client's
+  /// downlink together; compare with [LocalParticipant.connectionQuality].
+  /// [ConnectionQuality.unknown] until something of theirs is pulled, and
+  /// while this client is reconnecting.
+  @override
+  ConnectionQuality get connectionQuality => _quality.value;
+
+  @override
+  Stream<ConnectionQuality> get connectionQualityChanges => _quality.stream;
 
   RemoteTrackPublication? _first(TrackSource source) {
     for (final publication in _publications.values) {
@@ -151,6 +171,7 @@ class RemoteParticipant {
   void _close() {
     _present = false;
     unawaited(_changes.close());
+    unawaited(_quality.close());
   }
 
   void _disposeForLeave() {
@@ -159,6 +180,7 @@ class RemoteParticipant {
       publication._disposeForLeave();
     }
     unawaited(_changes.close());
+    unawaited(_quality.close());
   }
 
   @override
@@ -320,6 +342,15 @@ class RemoteTrackPublication {
   /// publisher's new session), and `null` when unsubscribed. The room
   /// disposes each stream it replaces.
   Stream<RenderableTrack?> get track => _track.stream;
+
+  /// This track's typed stats from [Room.stats] (`docs/design.md` §7.1),
+  /// replaying the latest: `null` while it isn't pulled on the room's
+  /// current session. Listening makes the room poll.
+  Stream<RemoteTrackStats?> get stats =>
+      _room._stats.stream.map((stats) => stats.remote[id]);
+
+  /// This track's stats in the latest [Room.stats] snapshot, if any.
+  RemoteTrackStats? get currentStats => _room._stats.latest?.remote[id];
 
   /// Emits this publication whenever [muted], [isSubscribed],
   /// [currentTrack], [subscriptionState] or [error] changes. Completes when

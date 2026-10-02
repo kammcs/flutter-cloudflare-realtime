@@ -30,6 +30,9 @@ import '../media/media_types.dart';
 import '../media/screen_share_source.dart';
 import '../quality/active_speaker_config.dart';
 import '../quality/active_speaker_monitor.dart';
+import '../quality/call_stats.dart';
+import '../quality/call_stats_reader.dart';
+import '../quality/connection_quality.dart';
 import '../quality/layer_selection.dart';
 import '../quality/layer_selection_controller.dart';
 import '../quality/simulcast_ladder.dart';
@@ -53,6 +56,7 @@ import 'screen_share_presets.dart';
 import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
+part 'participant.dart';
 part 'room_audio.dart';
 part 'room_background.dart';
 part 'remote_participant.dart';
@@ -61,6 +65,7 @@ part 'room_data.dart';
 part 'room_events.dart';
 part 'room_reconnection.dart';
 part 'room_speakers.dart';
+part 'room_stats.dart';
 part 'room_system_call.dart';
 part 'screen_share_watchdog.dart';
 
@@ -161,6 +166,8 @@ class Room {
   // room_speakers.dart.
   late final _RoomLayers _layers = _RoomLayers(this);
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
+  // Typed stats and connection quality (M12): room_stats.dart.
+  late final _RoomStats _stats = _RoomStats(this);
   // Remote audio playback (the web's audio elements): room_audio.dart.
   late final _RoomAudio _audio = _RoomAudio();
   // Background service, interruptions, camera pauses: room_background.dart.
@@ -291,6 +298,30 @@ class Room {
   /// The current value of [dominantSpeaker].
   String? get currentDominantSpeaker =>
       _speakers.monitor.currentDominantSpeaker;
+
+  /// Typed WebRTC statistics (`docs/design.md` §7.1): the transport, every
+  /// local publication's sent layers and every pulled track, read from
+  /// the session's `getStats()` every [RoomStatsOptions.interval] (2 s).
+  ///
+  /// Replays the latest snapshot to each new listener. The room polls
+  /// while someone listens (or for connection quality, which is on by
+  /// default); the first snapshot of a session has no rates. Raw reports
+  /// stay available in [RoomStats.reports] and through [session]. A
+  /// broadcast stream; completes after [leave].
+  Stream<RoomStats> get stats => _stats.stream;
+
+  /// The latest [stats] snapshot, or `null` before the first.
+  RoomStats? get currentStats => _stats.latest;
+
+  /// Takes a [stats] snapshot now. Its rates cover the time since the
+  /// previous snapshot of the session (from [stats] or here); the first
+  /// has none. Throws a [StateError] after [leave], and what `getStats()`
+  /// throws (it can fail briefly while the session renegotiates or is
+  /// replaced).
+  Future<RoomStats> getStats() {
+    _checkNotLeft();
+    return _stats.take();
+  }
 
   /// Whether the browser is refusing to play remote audio until the user
   /// interacts with the page (its autoplay policy). Show a "click to enable
@@ -567,6 +598,7 @@ class Room {
       );
     }
     _speakers.start();
+    _stats.start();
     _background.start();
   }
 
@@ -585,8 +617,8 @@ class Room {
   /// followed by another replacement.
   ///
   /// Components bound to the session re-bind synchronously here: active
-  /// speaker (`_onSessionReplaced`, room_speakers.dart). Add a call here
-  /// for any new one.
+  /// speaker and stats (`_onSessionReplaced`, room_speakers.dart). Add a
+  /// call there for any new one.
   SfuSession _replaceSession(SfuSession next) {
     final previous = _session;
     _stopListeningToSession();
@@ -797,6 +829,7 @@ class Room {
     _systemCall.dispose();
     // Stop the stats polls and the layer timers before anything else.
     _speakers.stop();
+    _stats.stop();
     _layers.dispose();
     // A reconnection in progress notices [_left] and stops; a session it
     // was connecting is closed by it.
@@ -807,6 +840,7 @@ class Room {
     }
     _subscriptions.clear();
     await _speakers.dispose();
+    await _stats.dispose();
     // Stop remote audio first: nothing should play once leave() starts.
     await _audio.dispose();
     try {

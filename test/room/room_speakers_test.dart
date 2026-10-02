@@ -214,7 +214,16 @@ void main() {
   test('polls only while there is audio, and skips failed polls', () {
     run((async, pump, poll) {
       late Room bob;
-      h.join('bob').then((r) => bob = r);
+      // No connection-quality polls: this counts the speakers' polls.
+      h
+          .join(
+            'bob',
+            options: const RoomOptions(
+              connectEarly: false,
+              stats: RoomStatsOptions(connectionQuality: null),
+            ),
+          )
+          .then((r) => bob = r);
       pump();
       final pc = h.pcOf(bob);
       poll(4);
@@ -251,6 +260,7 @@ void main() {
             options: const RoomOptions(
               connectEarly: false,
               activeSpeaker: null,
+              stats: RoomStatsOptions(connectionQuality: null),
             ),
           )
           .then((r) => bob = r);

@@ -95,5 +95,6 @@ extension _RoomSessionHooks on Room {
   /// (re)pull. This only makes the switch immediate.
   void _onSessionReplaced() {
     _speakers.rebind();
+    _stats.rebind();
   }
 }

@@ -50,7 +50,9 @@ class CallSetup {
 /// gallery/stage toggle (the stage pulls the full layer, thumbnails the
 /// lowest), a per-tile overlay with the RID asked for and the resolution
 /// received, and a menu to override the layer. Speaking participants are
-/// outlined, and the dominant speaker gets a star.
+/// outlined, and the dominant speaker gets a star. Each tile shows its
+/// participant's connection quality as bars, and the stats button adds the
+/// typed stats (layers sent, bitrate, loss, RTT) to the overlays.
 class CallPage extends StatefulWidget {
   const CallPage({
     super.key,
@@ -88,6 +90,9 @@ class _CallPageState extends State<CallPage> {
 
   /// The tile the user put on the stage, if any.
   String? _pinned;
+
+  /// Whether the tiles show the typed stats (Room.stats).
+  bool _showStats = false;
 
   Room get _room => widget.room;
   LocalParticipant get _local => _room.localParticipant;
@@ -326,6 +331,12 @@ class _CallPageState extends State<CallPage> {
               signalingStatus: widget.setup.signalingStatus,
             ),
             IconButton(
+              tooltip: _showStats ? 'Hide stats' : 'Show stats',
+              isSelected: _showStats,
+              icon: const Icon(Icons.query_stats),
+              onPressed: () => setState(() => _showStats = !_showStats),
+            ),
+            IconButton(
               tooltip: _stageLayout ? 'Gallery layout' : 'Stage layout',
               icon: Icon(_stageLayout ? Icons.grid_view : Icons.view_agenda),
               onPressed: () => setState(() => _stageLayout = !_stageLayout),
@@ -388,6 +399,8 @@ class _CallPageState extends State<CallPage> {
         id: 'local',
         label: '${widget.setup.displayName} (you)',
         participantId: _local.participantId,
+        participant: _local,
+        localPublication: camera,
         micMuted: _local.microphone?.muted ?? true,
         speaking: _local.speakingChanges,
         video: camera == null
@@ -398,6 +411,7 @@ class _CallPageState extends State<CallPage> {
         _TileData(
           id: 'local-screen',
           label: 'Your screen',
+          localPublication: screen,
           video: ParticipantVideoView.local(
             screen.mediaSource,
             fit: VideoViewFit.contain,
@@ -408,6 +422,7 @@ class _CallPageState extends State<CallPage> {
           id: remote.camera?.id ?? remote.participantId,
           label: _nameOf(remote),
           participantId: remote.participantId,
+          participant: remote,
           micMuted: remote.microphone?.muted ?? true,
           speaking: remote.speakingChanges,
           publication: remote.camera,
@@ -457,7 +472,7 @@ class _CallPageState extends State<CallPage> {
           _Tile(
             key: ValueKey(tile.id),
             data: tile,
-            session: () => _room.session,
+            showStats: _showStats,
             dominant:
                 tile.participantId != null && tile.participantId == dominant,
           ),
@@ -496,7 +511,7 @@ class _CallPageState extends State<CallPage> {
               child: _Tile(
                 key: ValueKey(stage.id),
                 data: stage,
-                session: () => _room.session,
+                showStats: _showStats,
                 dominant: stage.participantId == dominant,
                 pinned: stage.id == _pinned,
               ),
@@ -520,7 +535,7 @@ class _CallPageState extends State<CallPage> {
                         child: _Tile(
                           key: ValueKey(tile.id),
                           data: tile,
-                          session: () => _room.session,
+                          showStats: _showStats,
                           dominant:
                               tile.participantId != null &&
                               tile.participantId == dominant,
@@ -744,7 +759,9 @@ class _TileData {
     this.video,
     this.micMuted = false,
     this.speaking,
+    this.participant,
     this.publication,
+    this.localPublication,
   });
 
   /// Stable across rebuilds (the publication ID for remote tracks).
@@ -757,24 +774,33 @@ class _TileData {
   final bool micMuted;
   final Stream<bool>? speaking;
 
+  /// Whose connection quality the tile shows.
+  final Participant? participant;
+
   /// The remote video shown, for the layer overlay.
   final RemoteTrackPublication? publication;
+
+  /// The local video shown, for the stats overlay.
+  final LocalMediaPublication? localPublication;
 }
 
-/// One participant's (or screen's) video, with a name label, a speaking
-/// highlight, and for remote video the simulcast layer overlay.
+/// One participant's (or screen's) video, with a name label, the
+/// connection quality, a speaking highlight, and for remote video the
+/// simulcast layer overlay (with the typed stats when [showStats]).
 class _Tile extends StatelessWidget {
   const _Tile({
     super.key,
     required this.data,
-    required this.session,
+    this.showStats = false,
     this.dominant = false,
     this.pinned = false,
     this.compact = false,
   });
 
   final _TileData data;
-  final SfuSession Function() session;
+
+  /// Whether the overlay shows the typed stats.
+  final bool showStats;
 
   /// The dominant speaker: a thicker highlight and a star.
   final bool dominant;
@@ -824,6 +850,7 @@ class _Tile extends StatelessWidget {
                       dominant: dominant,
                       pinned: pinned,
                       compact: compact,
+                      participant: data.participant,
                     ),
                   ),
                 ),
@@ -834,9 +861,16 @@ class _Tile extends StatelessWidget {
                     right: 6,
                     child: _LayerOverlay(
                       publication: publication,
-                      session: session,
                       compact: compact,
+                      showStats: showStats,
                     ),
+                  )
+                else if (data.localPublication case final publication?
+                    when showStats && !compact)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: _LocalStatsOverlay(publication: publication),
                   ),
               ],
             ),
@@ -872,6 +906,7 @@ class _Label extends StatelessWidget {
     required this.dominant,
     required this.pinned,
     required this.compact,
+    this.participant,
   });
 
   final String label;
@@ -880,6 +915,7 @@ class _Label extends StatelessWidget {
   final bool dominant;
   final bool pinned;
   final bool compact;
+  final Participant? participant;
 
   @override
   Widget build(BuildContext context) {
@@ -901,6 +937,7 @@ class _Label extends StatelessWidget {
               Icon(Icons.graphic_eq, size: size, color: Colors.greenAccent),
             if (dominant) Icon(Icons.star, size: size, color: Colors.amber),
             if (pinned) Icon(Icons.push_pin, size: size, color: Colors.white),
+            if (participant case final p?) _QualityBars(p, size: size),
             Flexible(
               child: Text(
                 label,
@@ -915,140 +952,212 @@ class _Label extends StatelessWidget {
   }
 }
 
-/// Debug overlay for a remote video: the simulcast layer asked for, the
-/// resolution actually received (from `getStats()`), and a menu to override
-/// the automatic layer.
-class _LayerOverlay extends StatefulWidget {
-  const _LayerOverlay({
-    required this.publication,
-    required this.session,
-    this.compact = false,
-  });
+/// A participant's connection quality as signal bars (Participant.connectionQuality).
+class _QualityBars extends StatelessWidget {
+  const _QualityBars(this.participant, {required this.size});
 
-  final RemoteTrackPublication publication;
-  final SfuSession Function() session;
+  final Participant participant;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ConnectionQuality>(
+      stream: participant.connectionQualityChanges,
+      initialData: participant.connectionQuality,
+      builder: (context, snapshot) {
+        final quality = snapshot.data ?? ConnectionQuality.unknown;
+        final (icon, color) = switch (quality) {
+          ConnectionQuality.excellent => (
+            Icons.signal_cellular_alt,
+            Colors.greenAccent,
+          ),
+          ConnectionQuality.good => (
+            Icons.signal_cellular_alt_2_bar,
+            Colors.lightGreenAccent,
+          ),
+          ConnectionQuality.poor => (
+            Icons.signal_cellular_alt_1_bar,
+            Colors.orangeAccent,
+          ),
+          ConnectionQuality.lost => (
+            Icons.signal_cellular_connected_no_internet_0_bar,
+            Colors.redAccent,
+          ),
+          ConnectionQuality.unknown => (
+            Icons.signal_cellular_null,
+            Colors.white54,
+          ),
+        };
+        return Tooltip(
+          message: 'Connection: ${quality.name}',
+          child: Icon(icon, size: size, color: color),
+        );
+      },
+    );
+  }
+}
+
+String _kbps(int? bitrate) => bitrate == null ? '?' : '${bitrate ~/ 1000} kbps';
+
+String _size(int? width, int? height, double? fps) =>
+    width == null || height == null
+    ? '?'
+    : '$width×$height${fps == null ? '' : ' ${fps.round()}fps'}';
+
+/// The small dark chip the overlays draw their text on.
+class _OverlayChip extends StatelessWidget {
+  const _OverlayChip(this.lines, {this.compact = false});
+
+  final List<String> lines;
   final bool compact;
 
   @override
-  State<_LayerOverlay> createState() => _LayerOverlayState();
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.black54,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      child: Text(
+        lines.join('\n'),
+        textAlign: TextAlign.right,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: compact ? 10 : 12,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    ),
+  );
 }
 
-class _LayerOverlayState extends State<_LayerOverlay> {
-  Timer? _timer;
-  String? _resolution;
+/// Debug overlay for a remote video: the simulcast layer asked for, the
+/// resolution actually received (from the typed stats, Room.stats), and a
+/// menu to override the automatic layer. With [showStats], also the codec,
+/// bitrate, loss, jitter and freezes.
+class _LayerOverlay extends StatelessWidget {
+  const _LayerOverlay({
+    required this.publication,
+    this.compact = false,
+    this.showStats = false,
+  });
 
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _readStats());
-  }
+  final RemoteTrackPublication publication;
+  final bool compact;
+  final bool showStats;
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  /// The received size and frame rate, from the pull's `inbound-rtp`.
-  Future<void> _readStats() async {
-    final mid = widget.publication.subscription?.mid;
-    String? resolution;
-    if (mid != null) {
-      try {
-        for (final report in await widget.session().getStats()) {
-          final values = report.values;
-          if (report.type != 'inbound-rtp' ||
-              values['kind'] != 'video' ||
-              values['mid'] != mid) {
-            continue;
-          }
-          final width = values['frameWidth'];
-          final height = values['frameHeight'];
-          final fps = values['framesPerSecond'];
-          if (width is num && height is num) {
-            resolution =
-                '${width.round()}×${height.round()}'
-                '${fps is num ? ' ${fps.round()}fps' : ''}';
-          }
-        }
-      } catch (_) {
-        // Stats can fail briefly (renegotiation, a closed session).
-      }
-    }
-    if (mounted && resolution != _resolution) {
-      setState(() => _resolution = resolution);
-    }
-  }
-
-  Future<void> _choose(SimulcastLayer? layer) async {
+  Future<void> _choose(BuildContext context, SimulcastLayer? layer) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await widget.publication.setPreferredLayer(layer);
+      await publication.setPreferredLayer(layer);
     } on Exception catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Layer change failed: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text('Layer change failed: $e')),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<RemoteTrackLayerState>(
-      stream: widget.publication.layerChanges,
-      initialData: widget.publication.layerState,
-      builder: (context, snapshot) {
-        final state = snapshot.data!;
-        final manual = state.preferredLayer;
-        final rid = state.currentRid ?? '-';
-        final mode = manual == null ? 'auto' : manual.name;
-        final text = [
-          'rid $rid ($mode)',
-          if (state.hidden) 'hidden',
-          ?_resolution,
-        ].join(' · ');
-        final chip = DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.black54,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            child: Text(
-              text,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: widget.compact ? 10 : 12,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+    return StreamBuilder<RemoteTrackStats?>(
+      // Listening makes the room poll its stats (every 2 s).
+      stream: publication.stats,
+      initialData: publication.currentStats,
+      builder: (context, stats) => StreamBuilder<RemoteTrackLayerState>(
+        stream: publication.layerChanges,
+        initialData: publication.layerState,
+        builder: (context, snapshot) {
+          final state = snapshot.data!;
+          final s = stats.data;
+          final manual = state.preferredLayer;
+          final rid = state.currentRid ?? '-';
+          final mode = manual == null ? 'auto' : manual.name;
+          final lines = [
+            [
+              'rid $rid ($mode)',
+              if (state.hidden) 'hidden',
+              if (s?.height != null)
+                _size(s!.width, s.height, s.framesPerSecond),
+            ].join(' · '),
+            if (showStats && s != null && !compact) ...[
+              '${s.codec ?? '?'} · ${_kbps(s.bitrate)}',
+              'loss ${s.packetLoss == null ? '?' : '${(s.packetLoss! * 100).toStringAsFixed(1)} %'}'
+                  ' · jitter ${s.jitter?.inMilliseconds ?? '?'} ms',
+              'freezes ${s.freezeCount ?? '?'} · dropped ${s.framesDropped ?? '?'}'
+                  ' · pli ${s.pliCount ?? '?'}',
+            ],
+          ];
+          final chip = _OverlayChip(lines, compact: compact);
+          if (compact || publication.simulcast == null) return chip;
+          // A null value would read as "cancelled", so "auto" is a string.
+          return PopupMenuButton<String>(
+            tooltip: 'Simulcast layer',
+            onSelected: (choice) => _choose(
+              context,
+              choice == 'auto' ? null : SimulcastLayer.values.byName(choice),
             ),
-          ),
-        );
-        if (widget.compact || widget.publication.simulcast == null) {
-          return chip;
-        }
-        // A null value would read as "cancelled", so "auto" is a string.
-        return PopupMenuButton<String>(
-          tooltip: 'Simulcast layer',
-          onSelected: (choice) => _choose(
-            choice == 'auto' ? null : SimulcastLayer.values.byName(choice),
-          ),
-          itemBuilder: (context) => [
-            CheckedPopupMenuItem(
-              value: 'auto',
-              checked: manual == null,
-              child: const Text('Auto (from tile size)'),
-            ),
-            for (final layer in SimulcastLayer.values)
+            itemBuilder: (context) => [
               CheckedPopupMenuItem(
-                value: layer.name,
-                checked: manual == layer,
-                child: Text(
-                  '${layer.name[0].toUpperCase()}${layer.name.substring(1)}'
-                  ' (${layer.ridIn(widget.publication.simulcast!.rids)})',
-                ),
+                value: 'auto',
+                checked: manual == null,
+                child: const Text('Auto (from tile size)'),
               ),
+              for (final layer in SimulcastLayer.values)
+                CheckedPopupMenuItem(
+                  value: layer.name,
+                  checked: manual == layer,
+                  child: Text(
+                    '${layer.name[0].toUpperCase()}${layer.name.substring(1)}'
+                    ' (${layer.ridIn(publication.simulcast!.rids)})',
+                  ),
+                ),
+            ],
+            child: chip,
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Stats overlay for a local video: each layer sent (size, frame rate,
+/// bitrate, what limits it), and the connection's RTT and candidate types.
+class _LocalStatsOverlay extends StatelessWidget {
+  const _LocalStatsOverlay({required this.publication});
+
+  final LocalMediaPublication publication;
+
+  @override
+  Widget build(BuildContext context) {
+    final room = publication.participant.room;
+    return StreamBuilder<RoomStats>(
+      stream: room.stats,
+      initialData: room.currentStats,
+      builder: (context, snapshot) {
+        final stats = snapshot.data;
+        final track = stats?.local[publication.trackName];
+        final connection = stats?.connection;
+        final lines = [
+          if (track != null) ...[
+            track.codec ?? '?',
+            for (final layer in track.layers)
+              '${layer.rid ?? '-'}: '
+                  '${_size(layer.width, layer.height, layer.framesPerSecond)} '
+                  '${_kbps(layer.bitrate)}'
+                  '${switch (layer.qualityLimitationReason) {
+                    null || QualityLimitationReason.none => '',
+                    final reason => ' (${reason.name})',
+                  }}',
           ],
-          child: chip,
-        );
+          if (connection != null)
+            'rtt ${connection.roundTripTime?.inMilliseconds ?? '?'} ms · '
+                '${connection.localCandidate?.type?.name ?? '?'}'
+                '${connection.isRelayed ? ' (relayed)' : ''} · '
+                'out ${_kbps(connection.availableOutgoingBitrate)}',
+        ];
+        if (lines.isEmpty) return const SizedBox.shrink();
+        return _OverlayChip(lines);
       },
     );
   }

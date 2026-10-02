@@ -4,6 +4,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../quality/active_speaker_config.dart';
+import '../quality/connection_quality.dart';
 import '../quality/layer_selection.dart';
 import '../reconnect/backoff.dart';
 import '../reconnect/reconnect_trigger.dart';
@@ -184,6 +185,7 @@ class RoomOptions {
     this.hiddenVideoLinger = const Duration(seconds: 5),
     this.leaseReleaseGrace = const Duration(milliseconds: 500),
     this.activeSpeaker = const ActiveSpeakerConfig(),
+    this.stats = const RoomStatsOptions(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
     this.speakerphone,
     this.connectEarly = true,
@@ -246,6 +248,15 @@ class RoomOptions {
   /// are read and how they are smoothed. `null` turns detection off: then
   /// [Room.activeSpeakers] stays empty and no stats are polled.
   final ActiveSpeakerConfig? activeSpeaker;
+
+  /// Typed stats and connection quality (`docs/design.md` §7.1): how often
+  /// [Room.stats] reads `getStats()` (2 s), and how
+  /// [LocalParticipant.connectionQuality] and
+  /// [RemoteParticipant.connectionQuality] are rated. Quality is on by
+  /// default, which polls for as long as the room is joined; with
+  /// `RoomStatsOptions(connectionQuality: null)` the room polls only while
+  /// someone listens to [Room.stats].
+  final RoomStatsOptions stats;
 
   /// How long a local screen share may go without a captured or encoded
   /// frame, counted while the room is connected, before the room reports

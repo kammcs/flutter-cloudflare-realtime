@@ -276,7 +276,11 @@ void main() {
         List<RoomEvent> events,
       )
       body, {
-      RoomOptions options = const RoomOptions(connectEarly: false),
+      // No connection-quality polls: these tests count the watchdog's.
+      RoomOptions options = const RoomOptions(
+        connectEarly: false,
+        stats: RoomStatsOptions(connectionQuality: null),
+      ),
     }) {
       fakeAsync((async) {
         late Room alice;
