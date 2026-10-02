@@ -70,5 +70,7 @@
 	<string>The camera is used to send your video to the call.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>The microphone is used to send your audio to the call.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>The local network is used to reach a development server on your network.</string>
 </dict>
 </plist>

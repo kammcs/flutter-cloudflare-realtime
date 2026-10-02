@@ -32,3 +32,6 @@ Runner/GeneratedPluginRegistrant.*
 !default.mode2v3
 !default.pbxuser
 !default.perspectivev3
+
+# Local signing team (see Flutter/Debug.xcconfig).
+Flutter/Signing.xcconfig

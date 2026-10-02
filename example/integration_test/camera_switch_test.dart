@@ -31,6 +31,13 @@ void main() {
   testWidgets(
     'switching the camera keeps the call sending',
     (tester) async {
+      // Ask for the camera before joining. On a first run the prompt can
+      // take a while to answer, and the SFU drops a session left unused
+      // that long (410 on the first publish).
+      final permission = CameraSource();
+      await permission.enable();
+      await permission.dispose();
+
       final realtime = CloudflareRealtime(broker: settings.config());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);

@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/src/media/device_priority.dart';
 import 'package:cloudflare_realtime/src/media/flutter_webrtc_media_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -102,5 +103,67 @@ void main() {
     expect(cameraFacingFromLabel('Logitech BRIO'), isNull);
     expect(cameraFacingFromLabel('Feedback Cam'), isNull);
     expect(cameraFacingFromLabel(''), isNull);
+  });
+
+  test('orderBuiltInCameras puts the plain iOS cameras first', () {
+    MediaDevice cam(int n, String label, CameraFacing facing) => MediaDevice(
+      deviceId: 'com.apple.avfoundation.avcapturedevice.built-in_video:$n',
+      kind: MediaDeviceKind.videoInput,
+      label: label,
+      facing: facing,
+    );
+    const mic = MediaDevice(
+      deviceId: 'mic',
+      kind: MediaDeviceKind.audioInput,
+      label: 'iPhone Microphone',
+    );
+    const back = CameraFacing.environment;
+    // The order an iPhone on iOS 27 lists them in.
+    final listed = [
+      cam(7, 'Back Triple Camera', back),
+      cam(3, 'Back Dual Camera', back),
+      mic,
+      cam(6, 'Back Dual Wide Camera', back),
+      cam(0, 'Back Camera', back),
+      cam(1, 'Front Camera', CameraFacing.user),
+      cam(2, 'Back Telephoto Camera', back),
+      cam(5, 'Back Ultra Wide Camera', back),
+    ];
+    final ordered = orderBuiltInCameras(listed);
+    expect(
+      [for (final d in ordered) d.label],
+      [
+        'Back Camera',
+        'Front Camera',
+        'iPhone Microphone',
+        'Back Telephoto Camera',
+        'Back Dual Camera',
+        'Back Ultra Wide Camera',
+        'Back Dual Wide Camera',
+        'Back Triple Camera',
+      ],
+    );
+    // So a flip from the front camera lands on the plain back camera.
+    expect(
+      nextCamera(
+        ordered.where((d) => d.kind == MediaDeviceKind.videoInput).toList(),
+        current: ordered[1],
+      )!.label,
+      'Back Camera',
+    );
+  });
+
+  test('orderBuiltInCameras leaves other devices alone', () {
+    const a = MediaDevice(
+      deviceId: '47B4B64B-7067-4B9C-AD2B-AE273A71F4B5',
+      kind: MediaDeviceKind.videoInput,
+      label: 'FaceTime HD Camera',
+    );
+    const b = MediaDevice(
+      deviceId: '0',
+      kind: MediaDeviceKind.videoInput,
+      label: 'Camera 0, Facing back',
+    );
+    expect(orderBuiltInCameras([a, b]), [a, b]);
   });
 }

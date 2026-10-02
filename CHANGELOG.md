@@ -7,7 +7,9 @@
   - **`CameraSource.switchCamera()` and `LocalParticipant.switchCamera()`:** one call that flips front ↔ back on phones and moves to the next camera elsewhere (virtual cameras last). A published camera keeps its track and sender, so subscribers see the new camera without pulling again.
   - `MediaDevice.facing` says which way a camera faces, from the platform (Android, iOS) or the label (browsers); `CameraSource.currentFacing` for the camera in use. `CameraFacing` moved to `media_types.dart` (still exported from the package).
   - `ParticipantVideoView` no longer mirrors a back camera's self-view by default.
+  - On iOS, the plain cameras come first: iOS lists its virtual multi-camera devices ("Back Triple Camera") first, and `flutter_webrtc` gets no frames from them, so switching to the back camera sent nothing. Apple's built-in cameras are now ordered by the index in their ID.
   - Example: a **Switch camera** button on the call screen, and `integration_test/camera_switch_test.dart`.
+- Example on iOS: an optional, git-ignored `ios/Flutter/Signing.xcconfig` for your signing team, and `NSLocalNetworkUsageDescription` for the dev server. `docs/checkpoint.md` covers running on an iPhone, and `--no-uninstall` for integration tests on phones (so permissions survive between runs).
 - Fixes from the first runs against the real SFU (Windows):
   - Offers and answers no longer carry stray receive-only audio and video m-lines: native `flutter_webrtc` adds them unless `createOffer`/`createAnswer` get explicit empty constraints.
   - Negotiated DataChannels open on Windows: the plugin never reports their `open` state, so the package reads it from `getStats()`. Closing a session no longer logs `dataChannelClose() peerConnection is null`.

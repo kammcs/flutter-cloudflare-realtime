@@ -1,1 +1,5 @@
 #include "Generated.xcconfig"
+
+// Optional, never committed: your signing team for running on an iPhone.
+// See docs/checkpoint.md ("iOS"). Contains: DEVELOPMENT_TEAM = <team ID>
+#include? "Signing.xcconfig"

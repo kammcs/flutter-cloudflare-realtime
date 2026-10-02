@@ -40,10 +40,10 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
       } catch (_) {
         return _enumerate(); // Not implemented here: labels decide.
       }
-      return [
+      return orderBuiltInCameras([
         for (final source in sources)
           if (source is Map) ?mediaDeviceFromSource(source),
-      ];
+      ]);
     }
     return _enumerate();
   }
@@ -94,6 +94,41 @@ MediaDevice? mediaDeviceFromSource(Map<Object?, Object?> source) {
           }
         : null,
   );
+}
+
+final _builtInCamera = RegExp(
+  r'^com\.apple\.avfoundation\.avcapturedevice\.built-in_video:(\d+)$',
+);
+
+/// [devices] with Apple's built-in cameras in the order of their index
+/// (`...built-in_video:N`), in the slots they already hold; other devices
+/// keep their place.
+///
+/// iOS lists its virtual multi-camera devices first ("Back Triple Camera",
+/// "Back Dual Camera": `:7`, `:3`), and `flutter_webrtc`'s capturer gets
+/// no frames from them (an iPhone on iOS 27: 1–2 frames in 6 s, against
+/// 150–176 from "Back Camera"). The plain cameras have the lowest indexes
+/// (`:0` back, `:1` front), so this puts them first, without relying on
+/// labels, which are localized.
+@visibleForTesting
+List<MediaDevice> orderBuiltInCameras(List<MediaDevice> devices) {
+  int? index(MediaDevice d) {
+    final match = _builtInCamera.firstMatch(d.deviceId);
+    return match == null ? null : int.parse(match.group(1)!);
+  }
+
+  final slots = [
+    for (final (i, d) in devices.indexed)
+      if (index(d) != null) i,
+  ];
+  if (slots.length < 2) return devices;
+  final sorted = [for (final i in slots) devices[i]]
+    ..sort((a, b) => index(a)!.compareTo(index(b)!));
+  final result = List.of(devices);
+  for (final (n, slot) in slots.indexed) {
+    result[slot] = sorted[n];
+  }
+  return result;
 }
 
 /// Which way a camera faces, from its label: "Front Camera", "Back

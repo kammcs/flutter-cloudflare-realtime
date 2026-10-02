@@ -134,6 +134,14 @@ flutter run -d <android-id> --dart-define=DEV_SERVER_URL=http://127.0.0.1:8787 -
 
 The forward lasts until the phone is unplugged or `adb reverse --remove tcp:8787`. Only the dev server's traffic goes over USB; media still goes from the phone to Cloudflare over its own network. For the [real network drop](#criterion-3-recovery-from-a-network-drop), the dev server stays reachable over USB while Wi-Fi is off, so presence stays up: the other devices see no *left* / *joined* messages for the phone. The media recovery is the same; to see the whole table there, use the LAN address instead.
 
+**iOS** (physical device, connected by USB). Running on an iPhone needs your Apple signing team, which stays out of the repository: create `example/ios/Flutter/Signing.xcconfig` (git ignores it) with one line, `DEVELOPMENT_TEAM = <your team ID>` (Xcode → Settings → Accounts shows it). Then, with the ID from `flutter devices`:
+
+```sh
+flutter run -d <iphone-id> --dart-define=DEV_SERVER_URL=<SERVER> --dart-define=DEV_TOKEN=<TOKEN> --dart-define=DEV_USER=iphone
+```
+
+Allow the **Local Network** prompt (the app can't reach the dev server, and `flutter` can't find the app's Dart VM Service, until you do), then Camera and Microphone. iOS keeps the answers until the app is deleted. Debug builds can reach `http://` on the LAN without an App Transport Security exception: Dart's HTTP client doesn't go through Apple's URL loading.
+
 **Chrome** (optional fourth participant):
 
 ```sh
@@ -210,7 +218,7 @@ Use the 4-person call (or any call with at least two devices). Do this on each r
 
 Notes:
 
-- The SFU switches layers at a keyframe of the new layer, so the resolution follows the `rid` (which changes at once) after a delay. Against the real SFU (October 2026, Windows ↔ Android, Windows ↔ macOS and Android ↔ macOS, `cross_device_test.dart`), a switch usually took **8–13 s**, sometimes 1–4 s. The delay was strikingly regular (about 8.3 s for the first two switches and 12.4 s for the third, in both directions and with either device publishing; macOS and Android receivers saw the same: 8.6–8.8 s, then 12.2–12.7 s), and the `tracks/update` call itself answers at once, which points at the SFU rather than either client. Wait about 15 s before failing a switch.
+- The SFU switches layers at a keyframe of the new layer, so the resolution follows the `rid` (which changes at once) after a delay. Against the real SFU (October 2026, Windows ↔ Android, Windows ↔ macOS, Android ↔ macOS and iOS ↔ macOS, `cross_device_test.dart`), a switch usually took **8–13 s**, sometimes 1–4 s. The delay was strikingly regular (about 8.3 s for the first two switches and 12.4 s for the third, in both directions and with either device publishing; macOS, Android and iOS receivers saw the same: 8.1–8.8 s, then 12.2–12.7 s), and the `tracks/update` call itself answers at once, which points at the SFU rather than either client. Wait about 15 s before failing a switch.
 - A publisher only sends `a` when its uplink allows about 1.2 Mbps more than `b` and `c`. On a weak uplink the receiver can ask for `a` and get `b` (the SFU falls back to the next layer: `ridNotAvailable: asciibetical`). Check the publisher's network before failing this.
 - A camera that captures below 960×540 (some Windows webcams give 640×480) sends only two layers, `a` and `b`; asking for `c` then gets the nearest layer that exists.
 
@@ -300,12 +308,15 @@ Run them on each platform, from `example/`:
 ```sh
 flutter test integration_test -d windows --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-windows
 flutter test integration_test -d macos --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-macos
-flutter test integration_test -d <android-id> --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-android
+flutter test integration_test -d <android-id> --no-uninstall --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-android
+flutter test integration_test -d <iphone-id> --no-uninstall --dart-define=CF_REALTIME_BROKER_URL=<SERVER> --dart-define=CF_REALTIME_BROKER_TOKEN=<TOKEN> --dart-define=CF_REALTIME_BROKER_USER=it-ios
 ```
+
+**On phones, pass `--no-uninstall`.** Without it, `flutter test` deletes the app after every file, and the permissions go with it: the Local Network, Camera and Microphone prompts come back on every run, and a test that waits on an unanswered prompt times out. With it, the app (and what you allowed) stays installed between runs. On an iPhone, a run that prints *The Dart VM Service was not discovered after 60 seconds* is usually waiting on the Local Network prompt; it carries on once you allow it.
 
 One file at a time: `flutter test integration_test/reconnect_test.dart -d windows ...`. Expect `All tests passed!` with no test reported as skipped; skipped tests mean `CF_REALTIME_BROKER_URL` didn't arrive. Accept the camera and microphone prompts on macOS and Android. The tests never print the settings; keep them out of shared shell history.
 
-**Android over USB.** With `adb reverse tcp:8787 tcp:8787` ([step 3](#3-build-and-run-the-example-on-each-device)), use `CF_REALTIME_BROKER_URL=http://127.0.0.1:8787` on the phone. `flutter test` installs the app afresh for every file and removes it afterwards, so the camera and microphone prompts come back each time; a test that waits on a prompt nobody answers times out after 2 minutes. To skip the prompts, grant both as soon as the app is installed (the grant is lost with the app, so repeat it for every run):
+**Android over USB.** With `adb reverse tcp:8787 tcp:8787` ([step 3](#3-build-and-run-the-example-on-each-device)), use `CF_REALTIME_BROKER_URL=http://127.0.0.1:8787` on the phone. To skip the camera and microphone prompts on Android, grant both once the app is installed (with `--no-uninstall` the grant lasts until you delete the app):
 
 ```sh
 adb -s <android-id> shell pm grant dev.kammcs.cloudflare_realtime_example android.permission.CAMERA
@@ -352,6 +363,13 @@ Android blocks cleartext `http://` and `ws://` by default. The example allows it
 - **Local Network** (macOS 15 and later): allow the prompt on the first connection to `<SERVER>`; change it later in System Settings → Privacy & Security → Local Network.
 - **Screen Recording:** needed to share the screen. There's no entitlement for it; macOS asks on the first share. If it was denied, the share dialog shows *This app may not have permission to record the screen…*, or after sharing the call screen shows **Your screen share is empty** (after about 8 s without frames). Open System Settings → Privacy & Security → **Screen & System Audio Recording** (*Screen Recording* on macOS 14 and earlier), turn on `cloudflare_realtime_example`, then **quit and reopen the app**: macOS applies it only after a restart. A rebuilt debug app can count as a new app and be asked again. To start over: `tccutil reset ScreenCapture dev.kammcs.cloudflareRealtimeExample`.
 - The sandboxed example already has the entitlements it needs (`example/macos/Runner/*.entitlements`: network client, camera, audio input).
+
+### iOS
+
+- **Signing:** `flutter` reports that no development team is set. Create `example/ios/Flutter/Signing.xcconfig` as in [step 3](#3-build-and-run-the-example-on-each-device). Automatic signing registers the example's bundle ID and the phone with that team.
+- **Local Network:** the app needs it for the dev server, and `flutter run`/`flutter test` need it to find the app's Dart VM Service (over Bonjour). If you denied it, the screen stays white and `flutter` waits; allow the app in Settings → Privacy & Security → Local Network. The Mac side needs Bonjour too: a terminal or IDE that is sandboxed or lacks macOS's Local Network permission sees the same symptom.
+- **Camera and microphone:** Settings → Privacy & Security → Camera / Microphone, or delete the app to be asked again.
+- **The first publish fails with `SessionGoneException` (410, "Session appears to be disconnected"):** the call was joined, then a permission prompt waited long enough (about a minute) for the SFU to drop the unused session. Answer the prompts promptly, or run again: once allowed, they don't come back.
 
 ### Windows H.264 crash
 
