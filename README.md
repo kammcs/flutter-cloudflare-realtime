@@ -33,7 +33,7 @@ To try a real call across devices from your laptop, use the DEV ONLY local broke
 
 While a room publishes a microphone or a camera, the package runs a foreground service so the call keeps its microphone, camera and connection when the user leaves the app. Android 11+ silences the microphone and stops the camera of a backgrounded app without one, and Android 14+ requires its types (`microphone`, plus `camera` while the camera captures) and starts it only while the app is in the foreground. The service starts with the first publish and stops when nothing is published or the room is left.
 
-- **Manifest:** nothing to add. The package's manifest declares the service (`CallService`, types `microphone|camera`) and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS` and `WAKE_LOCK` permissions; the manifest merger brings them into your app. Your app still declares and requests `RECORD_AUDIO` and `CAMERA`.
+- **Manifest:** nothing to add. The package's manifest declares the service (`CallService`, types `microphone|camera|phoneCall`) and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS` and `WAKE_LOCK` permissions; the manifest merger brings them into your app. Your app still declares and requests `RECORD_AUDIO` and `CAMERA`.
 - **Notification:** the service shows a "Call in progress" notification that opens the app. It needs `POST_NOTIFICATIONS` on Android 13+, which the package doesn't ask for; without it the call still works in the background, the notification just isn't in the drawer. Override the strings `cloudflare_realtime_call_channel`, `…_title` and `…_text`, or the drawable `cloudflare_realtime_call`, in your app's resources.
 - **Google Play:** apps that use the `microphone` and `camera` foreground service types must declare them in the Play Console.
 - **Your own service:** pass `RoomOptions(foregroundService: false)`, and drop the package's with `tools:node="remove"` on `<service android:name="dev.kammcs.cloudflare_realtime.CallService">` (and its permissions, if nothing else needs them).
@@ -58,6 +58,18 @@ iOS stops the camera of a backgrounded app. The track stays published and sends 
 - **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
 
 See [design.md §4.7](docs/design.md#47-calls-outside-the-foreground-background-interruptions-proximity-native) for the details.
+
+### System calls on Android
+
+`SystemCalls` puts the app's calls in Android's Telecom through Jetpack Core-Telecom (Android 8+; `configure` completes with `false` below), so a phone call holds them instead of cutting them off, and cars, watches and headsets answer, end and mute them. See [design.md §4.8](docs/design.md#48-system-calls-callkit-and-android-telecom-native).
+
+- **Manifest:** nothing to add. The package declares `FOREGROUND_SERVICE_PHONE_CALL`, `USE_FULL_SCREEN_INTENT`, the `phoneCall` type on `CallService` and the receiver for the notification's Decline and Hang up; Core-Telecom adds `MANAGE_OWN_CALLS` and its `ConnectionService`.
+- **Notifications:** while a call exists, `CallService` runs with the type `phoneCall` and shows the call's `CallStyle` notification: ringing (the "Incoming calls" channel, with the ringtone, full screen, Answer and Decline) and then ongoing (Hang up). Ask for `POST_NOTIFICATIONS` (Android 13+). On Android 14+ check `NotificationManager.canUseFullScreenIntent()` and, if it's `false`, send the user to `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`: Google Play grants it by default only to calling and alarm apps, and without it an incoming call is a heads-up notification instead of a full-screen ring. The example app does both (`example/lib/system_call_demo.dart`).
+- **Answer** opens your launch activity (with the action `dev.kammcs.cloudflare_realtime.action.ANSWER_CALL`), which brings the app to the foreground and answers the call; listen to `SystemCalls.instance.events` for `SystemCallAnsweredEvent` and join the room. Answer and the full-screen ring show your activity over the lock screen until the last call ends. Your launch activity should be `singleTop` (Flutter's template is).
+- **Report incoming calls from the foreground or a high-priority FCM message's handler:** Android lets the call's foreground service start from the background only then.
+- **Texts and icon** are resources you can override: `cloudflare_realtime_call_incoming_channel`, `…_incoming`, `…_incoming_video`, `…_outgoing`, `…_ongoing`, `…_answer`, `…_decline`, `…_hang_up` (Android 12+ labels the `CallStyle` buttons itself), and the drawable `cloudflare_realtime_call`.
+- **Mute** is the global microphone mute, as Telecom's own mute button sets it (Core-Telecom 1.0 has no per-call mute); it's cleared when the last call ends.
+- **Google Play:** declare the `phoneCall` foreground service type in the Play Console.
 
 ### Screen share on Android
 

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Runs system_call_test.dart on an Android phone, plays the person's part
+# with adb ("BACKGROUND NOW": Home; "FOREGROUND NOW": back to the app, as in
+# background_test_driver.sh), and prints, at each "CHECK TELECOM" in the
+# test's log, what Telecom and the foreground service look like
+# (docs/design.md §4.8, docs/checkpoint.md):
+#
+# - Telecom's calls for the app (`dumpsys telecom`: the call's state, its
+#   self-managed flag, the audio route);
+# - the app's foreground services (`dumpsys activity services`: CallService
+#   and its types, 0x4 phoneCall, 0x80 microphone);
+# - the global microphone mute (`dumpsys audio`).
+#
+# Usage, from example/, with the phone's adb ID in ANDROID_SERIAL (adb uses
+# it too) and the broker settings as for any integration test:
+#
+#   ANDROID_SERIAL=<android-id> integration_test/system_call_test_driver.sh \
+#     --dart-define=CF_REALTIME_BROKER_URL=http://<dev server>:8787 \
+#     --dart-define=CF_REALTIME_BROKER_TOKEN=<dev token> \
+#     --dart-define=CF_REALTIME_BROKER_USER=it-android
+#
+# ADB overrides the adb binary. The extra arguments go to `flutter test`
+# unchanged and are never printed.
+set -uo pipefail
+
+: "${ANDROID_SERIAL:?Set ANDROID_SERIAL to the adb ID of the phone.}"
+export ANDROID_SERIAL
+ADB=${ADB:-adb}
+PACKAGE=dev.kammcs.cloudflare_realtime_example
+LOG=$(mktemp -t system_call_test.XXXXXX)
+
+# The call's service runs with phoneCall from the background too, and the
+# example reports incoming calls: let it post notifications.
+"$ADB" shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS 2>/dev/null
+"$ADB" shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO 2>/dev/null
+
+flutter test integration_test/system_call_test.dart -d "$ANDROID_SERIAL" \
+  --no-uninstall --dart-define=CF_REALTIME_SYSTEM_CALL_DRIVER=1 "$@" \
+  >"$LOG" 2>&1 &
+TEST=$!
+tail -n +1 -f "$LOG" &
+TAIL=$!
+
+count() { grep -c -- "$1" "$LOG" 2>/dev/null || true; }
+checks=0
+background=0
+foreground=0
+while kill -0 "$TEST" 2>/dev/null; do
+  if [ "$(count 'BACKGROUND NOW')" -gt "$background" ]; then
+    background=$((background + 1))
+    echo "--- driver: Home"
+    "$ADB" shell input keyevent KEYCODE_HOME
+  fi
+  if [ "$(count 'FOREGROUND NOW')" -gt "$foreground" ]; then
+    foreground=$((foreground + 1))
+    echo "--- driver: back to the app"
+    "$ADB" shell am start -n "$PACKAGE/.MainActivity" >/dev/null
+  fi
+  if [ "$(count 'CHECK TELECOM')" -gt "$checks" ]; then
+    checks=$((checks + 1))
+    echo "--- driver: Telecom's calls"
+    "$ADB" shell dumpsys telecom |
+      sed -n '/^  mCalls:/,/^    CallAudioModeStateMachine:/p' |
+      grep -vE '^\s*$' | head -n 30
+    echo "--- driver: foreground services"
+    "$ADB" shell dumpsys activity services "$PACKAGE" |
+      grep -E 'ServiceRecord|isForeground|foregroundServiceType' ||
+      echo "(no services)"
+    echo "--- driver: microphone mute"
+    "$ADB" shell dumpsys audio | grep -E 'mic mute' | head -n 1
+  fi
+  sleep 1
+done
+wait "$TEST"
+STATUS=$?
+sleep 1
+kill "$TAIL" 2>/dev/null
+rm -f "$LOG"
+exit "$STATUS"

@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The notifications of the package's foreground services: the call's
-     (CallService) and the screen share's (ScreenCaptureService). Apps can
+     (CallService, also a system call's CallStyle notification) and the
+     screen share's (ScreenCaptureService). Apps can
      override or translate these by defining strings with the same names. -->
 <resources>
     <string name="cloudflare_realtime_call_channel">Calls</string>
     <string name="cloudflare_realtime_call_title">Call in progress</string>
     <string name="cloudflare_realtime_call_text">Tap to return to the call.</string>
+    <!-- System calls (docs/design.md §4.8). On Android 12+ the CallStyle
+         notification labels its own buttons; the labels below are for
+         earlier releases. -->
+    <string name="cloudflare_realtime_call_incoming_channel">Incoming calls</string>
+    <string name="cloudflare_realtime_call_incoming">Incoming call</string>
+    <string name="cloudflare_realtime_call_incoming_video">Incoming video call</string>
+    <string name="cloudflare_realtime_call_outgoing">Calling…</string>
+    <string name="cloudflare_realtime_call_ongoing">Ongoing call</string>
+    <string name="cloudflare_realtime_call_answer">Answer</string>
+    <string name="cloudflare_realtime_call_decline">Decline</string>
+    <string name="cloudflare_realtime_call_hang_up">Hang up</string>
     <string name="cloudflare_realtime_screen_share_channel">Screen sharing</string>
     <string name="cloudflare_realtime_screen_share_title">Sharing your screen</string>
     <string name="cloudflare_realtime_screen_share_text">Everything on your screen is visible to the call.</string>

@@ -18,11 +18,13 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.PluginRegistry
 
 /**
  * Call audio routing on Android (docs/design.md §4.6), interruptions and
  * the proximity sensor (§4.7), the call's foreground service
- * ([CallBackground], §4.7), and the screen share's foreground service
+ * ([CallBackground], §4.7), system calls through Core-Telecom
+ * ([SystemCallRegistry], §4.8), and the screen share's foreground service
  * ([ScreenCapture], §10).
  *
  * Thin by design: it lists the routes, reports the current one and its
@@ -66,6 +68,12 @@ class CloudflareRealtimePlugin :
     private lateinit var screenEvents: EventChannel
     private lateinit var screen: ScreenCapture
     private var activityBinding: ActivityPluginBinding? = null
+    private lateinit var systemMethods: MethodChannel
+    private lateinit var systemEvents: EventChannel
+    private val systemCalls = SystemCallsChannel()
+    private val newIntentListener = PluginRegistry.NewIntentListener { intent ->
+        activityBinding?.let { SystemCallRegistry.onActivityIntent(it.activity, intent) } ?: false
+    }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         audio = binding.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -87,6 +95,11 @@ class CloudflareRealtimePlugin :
         screenMethods.setMethodCallHandler(screen)
         screenEvents = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/screen_capture_events")
         screenEvents.setStreamHandler(screen)
+        SystemCallRegistry.init(binding.applicationContext)
+        systemMethods = MethodChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/system_calls")
+        systemMethods.setMethodCallHandler(systemCalls)
+        systemEvents = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/system_calls_events")
+        systemEvents.setStreamHandler(systemCalls)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -100,14 +113,21 @@ class CloudflareRealtimePlugin :
         screenMethods.setMethodCallHandler(null)
         screenEvents.setStreamHandler(null)
         screen.dispose()
+        // The calls outlive this engine (the registry is process-wide).
+        systemMethods.setMethodCallHandler(null)
+        systemEvents.setStreamHandler(null)
+        systemCalls.dispose()
     }
 
-    // --- Activity (the screen share's permission request) ----------------
+    // --- Activity (the screen share's permission request; a system call's
+    // Answer and full-screen intents) ----------------------------------
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
         binding.addRequestPermissionsResultListener(screen)
         screen.activity = binding.activity
+        binding.addOnNewIntentListener(newIntentListener)
+        SystemCallRegistry.onActivityIntent(binding.activity, binding.activity.intent)
     }
 
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
@@ -117,6 +137,7 @@ class CloudflareRealtimePlugin :
 
     override fun onDetachedFromActivity() {
         activityBinding?.removeRequestPermissionsResultListener(screen)
+        activityBinding?.removeOnNewIntentListener(newIntentListener)
         activityBinding = null
         screen.activity = null
     }

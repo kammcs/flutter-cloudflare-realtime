@@ -7,6 +7,7 @@ import 'dev_config.dart';
 import 'local_media_page.dart';
 import 'network_changes.dart';
 import 'presence_page.dart';
+import 'system_call_demo.dart';
 import 'ws_signaling.dart';
 
 void main() {
@@ -122,6 +123,10 @@ class _JoinPageState extends State<JoinPage> {
 
   bool _joining = false;
   String? _error;
+
+  /// Joins as an outgoing system call (CallKit, Android Telecom): the call
+  /// shows in the system's UI and the lock screen (docs/design.md §4.8).
+  bool _asSystemCall = false;
   int _guestCount = 0;
 
   @override
@@ -140,22 +145,41 @@ class _JoinPageState extends State<JoinPage> {
     super.dispose();
   }
 
-  Future<void> _join() async {
-    if (_joining || !(_formKey.currentState?.validate() ?? false)) return;
+  /// Joins the room. With [incoming] (an answered system call) or "Start
+  /// as system call", the room follows a system call: it leaves when the
+  /// call ends (the lock screen's End), and the system's mute is the
+  /// microphone's.
+  Future<void> _join({SystemCall? incoming}) async {
+    if (_joining || !(_formKey.currentState?.validate() ?? false)) {
+      await incoming?.end(SystemCallEndReason.failed);
+      return;
+    }
     final roomId = _roomController.text.trim();
     setState(() {
       _joining = true;
       _error = null;
     });
+    var call = incoming;
     try {
       if (_choice == SignalingChoice.inMemory &&
           _brokerUrlController.text.trim().isEmpty) {
+        await call?.end(SystemCallEndReason.failed);
         await _joinPresenceOnly(roomId);
         return;
       }
       final setup = _choice == SignalingChoice.inMemory
           ? _inMemorySetup(roomId)
           : _devServerSetup();
+      if (call == null && _asSystemCall) {
+        if (!await prepareSystemCalls()) {
+          _showSnack('System calls are not supported here: a plain call.');
+        }
+        call = await SystemCalls.instance.startOutgoingCall(
+          handle: CallHandle(roomId),
+          displayName: 'Room $roomId',
+        );
+        await call.reportConnecting();
+      }
       final Room room;
       try {
         // Android 12+: Bluetooth headsets are audio routes only with this.
@@ -177,17 +201,25 @@ class _JoinPageState extends State<JoinPage> {
         await setup.disposeSignaling();
         rethrow;
       }
+      if (call != null && call.outgoing && !call.isEnded) {
+        // The room is the other side here: it "answered".
+        await call.reportConnected();
+      }
       if (!mounted) {
         await room.leave();
         await setup.disposeSignaling();
+        await call?.end(SystemCallEndReason.failed);
         return;
       }
+      final systemCall = call;
+      call = null;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => CallPage(
             room: room,
             setup: setup,
             mediaBackend: widget.mediaBackend,
+            systemCall: systemCall,
           ),
         ),
       );
@@ -197,8 +229,46 @@ class _JoinPageState extends State<JoinPage> {
       // Broker and session exceptions never contain SDP or tokens.
       setState(() => _error = 'Could not join: $e');
     } finally {
+      // A system call whose room never opened.
+      await call?.end(SystemCallEndReason.failed);
       if (mounted) setState(() => _joining = false);
     }
+  }
+
+  /// Reports an incoming system call in 5 s (time to lock the phone or
+  /// leave the app, to see the full-screen ring), as an app's signaling or
+  /// push would; answering it, here or in the system's UI, joins the room.
+  Future<void> _simulateIncomingCall() async {
+    if (_joining || !(_formKey.currentState?.validate() ?? false)) return;
+    final roomId = _roomController.text.trim();
+    if (!await prepareSystemCalls()) {
+      _showSnack('System calls are not supported here: in-app only.');
+    }
+    _showSnack('An incoming call rings in 5 s.');
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final SystemCall call;
+    try {
+      call = await SystemCalls.instance.reportIncomingCall(
+        handle: const CallHandle('demo-caller'),
+        displayName: 'Demo caller',
+        payload: {'room': roomId},
+      );
+    } on Exception catch (e) {
+      _showSnack('Could not report the call: $e');
+      return;
+    }
+    if (!mounted) {
+      await call.end();
+      return;
+    }
+    if (await showIncomingCall(context, call)) await _join(incoming: call);
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _joinPresenceOnly(String roomId) async {
@@ -347,11 +417,27 @@ class _JoinPageState extends State<JoinPage> {
                       SignalingChoice.inMemory => _inMemoryFields(),
                       SignalingChoice.devServer => _devServerFields(),
                     },
+                    if (systemCallsAvailable)
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Start as system call'),
+                        subtitle: const Text(
+                          'In the phone\'s call UI and on the lock screen',
+                        ),
+                        value: _asSystemCall,
+                        onChanged: (on) => setState(() => _asSystemCall = on),
+                      ),
                     const SizedBox(height: 8),
                     FilledButton(
                       onPressed: _joining ? null : _join,
                       child: Text(_joining ? 'Connecting…' : 'Join'),
                     ),
+                    if (systemCallsAvailable)
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.ring_volume),
+                        label: const Text('Simulate incoming call'),
+                        onPressed: _joining ? null : _simulateIncomingCall,
+                      ),
                     if (_error != null)
                       Text(
                         _error!,

@@ -46,6 +46,13 @@ android {
     }
 }
 
+dependencies {
+    // System calls on Android (docs/design.md §4.8): Jetpack Core-Telecom
+    // (Apache-2.0) and the coroutines its API is built on.
+    implementation("androidx.core:core-telecom:1.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

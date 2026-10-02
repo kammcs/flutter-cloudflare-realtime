@@ -9,7 +9,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Foreground services: the call's (types microphone and camera, while
-         a call publishes them; docs/design.md §4.7) and the screen share's
+         a call publishes them, docs/design.md §4.7; phoneCall while a system
+         call exists, §4.8) and the screen share's
          (type mediaProjection, which Android 10+ requires while capturing
          the screen; §10). Their notifications need POST_NOTIFICATIONS (a
          runtime permission on Android 13+; without it the services still
@@ -22,12 +23,25 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- System calls through Core-Telecom (docs/design.md §4.8): the call's
+         service runs with the type phoneCall (its prerequisite is
+         MANAGE_OWN_CALLS, which Core-Telecom's manifest merges with its
+         ConnectionService), and an incoming call's notification opens the
+         app full screen (Android 14+ grants it by default only to calling
+         and alarm apps; README). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <application>
         <service
             android:name="dev.kammcs.cloudflare_realtime.CallService"
             android:exported="false"
-            android:foregroundServiceType="microphone|camera"
+            android:foregroundServiceType="microphone|camera|phoneCall"
             android:stopWithTask="true" />
+        <!-- Decline and Hang up in a system call's notification. -->
+        <receiver
+            android:name="dev.kammcs.cloudflare_realtime.SystemCallActionReceiver"
+            android:exported="false" />
         <service
             android:name="dev.kammcs.cloudflare_realtime.ScreenCaptureService"
             android:exported="false"

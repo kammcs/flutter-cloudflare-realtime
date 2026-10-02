@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'audio_routes_sheet.dart';
 import 'screen_share_dialog.dart';
+import 'system_call_demo.dart';
 
 /// What the join screen hands the call screen: how to reach the others
 /// (signaling) and the broker, independent of which signaling was chosen.
@@ -57,6 +58,7 @@ class CallPage extends StatefulWidget {
     required this.setup,
     this.mediaBackend = const FlutterWebrtcMediaBackend(),
     this.publishOnStart = true,
+    this.systemCall,
   });
 
   final Room room;
@@ -67,6 +69,10 @@ class CallPage extends StatefulWidget {
 
   /// Whether to publish the microphone and camera when the page opens.
   final bool publishOnStart;
+
+  /// The system call (CallKit, Android Telecom) this call is, if any: the
+  /// room follows it (mute, hold, ending), docs/design.md §4.8.
+  final SystemCall? systemCall;
 
   @override
   State<CallPage> createState() => _CallPageState();
@@ -90,6 +96,15 @@ class _CallPageState extends State<CallPage> {
   void initState() {
     super.initState();
     _events = _room.events.listen(_onEvent);
+    if (widget.systemCall case final call?) {
+      // Mute in step with the system's; the room leaves when the call ends
+      // (for example from the lock screen), and ends it when it leaves.
+      _room.attachSystemCall(call);
+      call.whenEnded.then((reason) {
+        _show('The system call ended (${reason.name}).');
+        _leave();
+      });
+    }
     if (widget.publishOnStart) {
       _run(() async {
         await _local.publishMicrophone();
@@ -315,6 +330,8 @@ class _CallPageState extends State<CallPage> {
               icon: Icon(_stageLayout ? Icons.grid_view : Icons.view_agenda),
               onPressed: () => setState(() => _stageLayout = !_stageLayout),
             ),
+            if (widget.systemCall case final call?)
+              SystemCallHoldButton(call: call),
             if (widget.setup.addSimulatedParticipant case final add?)
               IconButton(
                 tooltip: 'Add simulated participant',

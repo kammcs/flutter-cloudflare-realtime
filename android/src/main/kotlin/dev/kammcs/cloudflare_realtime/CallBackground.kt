@@ -1,7 +1,6 @@
 package dev.kammcs.cloudflare_realtime
 
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +20,9 @@ import io.flutter.plugin.common.MethodChannel
  *   stopped then). An error when Android refuses (a start from the
  *   background, Android 12+; a type from the background, Android 14+).
  * - `stopService`.
+ *
+ * A system call (§4.8) keeps the service running with the type `phoneCall`
+ * whatever is published; [CallService.sync] combines the two.
  *
  * The event channel reports nothing on Android: the service keeps the
  * camera running, so it is never paused by the system.
@@ -68,42 +70,16 @@ internal class CallBackground(private val context: Context) :
             result.success(false)
             return
         }
-        // Running: change its types in place. Starting it again from the
-        // background would be refused on Android 12+.
-        CallService.running?.let { service ->
-            try {
-                service.update(microphone, camera)
-                result.success(true)
-            } catch (e: Exception) {
-                Log.w(TAG, "Call service types not changed: $e")
-                result.error("call_background", "Could not change the call service: ${e.message}", null)
-            }
-            return
-        }
+        CallService.microphone = microphone
+        CallService.camera = camera
         pendingStart = result
-        CallService.onStarted = { error -> main.post { finishStart(error) } }
-        val timeout = Runnable {
-            CallService.onStarted = null
-            finishStart(IllegalStateException("The call service did not start."))
-        }
+        val timeout = Runnable { finishStart(IllegalStateException("The call service did not start.")) }
         startTimeout = timeout
         main.postDelayed(timeout, START_TIMEOUT_MS)
-        val intent = Intent(context, CallService::class.java)
-            .setAction(CallService.ACTION_START)
-            .putExtra(CallService.EXTRA_MICROPHONE, microphone)
-            .putExtra(CallService.EXTRA_CAMERA, camera)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        } catch (e: Exception) {
-            // ForegroundServiceStartNotAllowedException: the app is in the
-            // background (Android 12+). Dart tries again in the foreground.
-            CallService.onStarted = null
-            finishStart(e)
-        }
+        // Starts it, or changes its types when it runs (also for a system
+        // call, §4.8): starting it again from the background would be
+        // refused on Android 12+.
+        CallService.sync(context) { error -> main.post { finishStart(error) } }
     }
 
     private fun finishStart(error: Exception?) {
@@ -119,15 +95,12 @@ internal class CallBackground(private val context: Context) :
         }
     }
 
+    /** Nothing is published: the service stops, unless a system call keeps it. */
     private fun stop() {
-        CallService.onStarted = null
         finishStart(IllegalStateException("Stopped."))
-        CallService.running?.stopNow()
-        try {
-            context.stopService(Intent(context, CallService::class.java))
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not stop the call service: $e")
-        }
+        CallService.microphone = false
+        CallService.camera = false
+        CallService.sync(context)
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink) {}

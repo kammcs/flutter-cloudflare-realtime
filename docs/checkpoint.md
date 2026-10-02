@@ -308,6 +308,22 @@ The example has these integration tests in [`example/integration_test/`](../exam
   - **Interruptions (Android):** the example's `MainActivity` takes the audio focus as another app would (`example/test_support`), transiently and then for good; the call must report `CallInterruptedEvent` (`otherAudio`), resume when the focus comes back, and after the permanent loss resume with `Room.resumeAudio()`, with the subscriber hearing it again. `adb` has no reliable way to take the focus from another app (a media key starts whatever player was last used, if any), so the test does it in-process.
   - **Proximity sensor:** on for a voice call on the earpiece, off on the speaker and with video (skipped with a headset connected).
   - **By hand** (nothing automates these): hold the phone to your ear during a voice call on the earpiece and check that the screen goes dark, and comes back when you move it away; call the phone from another phone during a call, and invoke Siri or the assistant: the call must report the interruption (`phoneCall` on Android, `unknown` on iOS), go silent both ways, and resume after; and on Android, pull down the notification shade during a call: "Call in progress" is listed (with `POST_NOTIFICATIONS` granted).
+- `system_call_test.dart` (phones only; [design.md §4.8](design.md#48-system-calls-callkit-and-android-telecom-native)): system calls through Android's Telecom (Core-Telecom) or CallKit, with two rooms in one process.
+  - **Outgoing:** a call is started (`dialing`), reported connecting and connected (`active`) and attached to the publisher's room. The system's mute and the microphone publication must stay in step both ways: `SystemCall.setMuted` mutes the publication, muting the publication mutes the call, and on Android the global microphone mute (what Telecom, a car or a watch sets) is flipped behind the package's back and must reach both. Holding must interrupt the room's audio (`CallInterruptionReason.held`) and unholding resume it, with the subscriber hearing the publisher again. On Android the routes must be Telecom's endpoints (UUID IDs; the native `endpoints` method returns `null` on iOS), and the speaker and then the earpiece are selected through them. Ending the call must leave the room and, on Android, stop `CallService`.
+  - **Incoming:** reported (`ringing`), answered in code (one `SystemCallAnsweredEvent`), the same room checks, then leaving the room must end the call (`local`). A second incoming call declined while ringing ends with `declined`.
+  - **The notification (Android):** the incoming call's notification must be on the high-importance "Incoming calls" channel with a full-screen intent, Answer and Decline; the test presses them through the notification's own `PendingIntent`s (`example/test_support`), as a tap would: Answer must answer through the app's activity, the ongoing notification must then offer Hang up, which ends the call, and Decline must end a second one with `declined`.
+  - **From the background (Android, driver only):** an incoming call reported while the app is in the background (as an FCM handler would) must still ring with its full-screen notification.
+  - Run it with the driver, from `example/`; it passes `CF_REALTIME_SYSTEM_CALL_DRIVER=1`, presses Home and comes back at `BACKGROUND NOW` / `FOREGROUND NOW`, and at each `CHECK TELECOM` prints Telecom's calls (`dumpsys telecom`: `DIALING`, `RINGING`, `ACTIVE`, `ON_HOLD`, `self_mng`), the services (`CallService` with `types=0x4` phoneCall while ringing or dialing, `0x84` with the microphone; Telecom's own `PHONE_CALL` record) and the global microphone mute:
+
+    ```bash
+    ANDROID_SERIAL=<android-id> integration_test/system_call_test_driver.sh \
+      --dart-define=CF_REALTIME_BROKER_URL=http://<dev server>:8787 \
+      --dart-define=CF_REALTIME_BROKER_TOKEN=<dev token> \
+      --dart-define=CF_REALTIME_BROKER_USER=it-android
+    ```
+
+    Plain `flutter test integration_test/system_call_test.dart` runs everything but the background case. On an iPhone the same Dart runs without the Android-only parts.
+  - **By hand** (Android; the example's **Simulate incoming call** rings 5 s after the tap, time to lock the phone): with the phone locked, the call must ring full screen over the lock screen (the example's activity), with the ringtone if the ringer is on; Answer and Decline in the notification and in the heads-up banner; Hang up in the ongoing notification; the call chip in the status bar; a real phone call during the call must hold it (`held`, silent) and resume it after; a Bluetooth headset's button ends the call; a car or a watch where available. On Android 14+ the full-screen ring needs the "Full screen notifications" permission for the app (the example opens its settings page once).
 - `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 
 They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](../example/integration_test/broker_settings.dart)), as `--dart-define`s or, on desktop, environment variables:
@@ -320,6 +336,7 @@ They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](
 | `CF_REALTIME_ROOM` | optional; default `integration-test` |
 | `CF_REALTIME_CROSS_DEVICE` | `1` to run `cross_device_test.dart` (skipped otherwise) |
 | `CF_REALTIME_CROSS_DEVICE_SCREEN` | `--dart-define` only: `true` makes a phone side of `cross_device_test.dart` publish its microphone, then share its screen instead of its camera (answer Android's consent dialog, or tap "Start Broadcast" on the iPhone within 2 minutes) |
+| `CF_REALTIME_SYSTEM_CALL_DRIVER` | `--dart-define` only: `1` (set by `system_call_test_driver.sh`) runs `system_call_test.dart`'s background case, which needs Home pressed |
 | `CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP` | `--dart-define` only: `true` makes `screen_share_test.dart` also wait for a stop from outside the app |
 
 Run them on each platform, from `example/`:
