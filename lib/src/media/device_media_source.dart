@@ -425,8 +425,8 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
   ///
   /// - On phones and tablets, it flips between the front and back cameras.
   /// - Elsewhere (desktops, or a camera that doesn't say which way it
-  ///   faces), it moves to the next camera in [currentDevices], wrapping
-  ///   around.
+  ///   faces), it moves to the next camera in [currentDevices], in priority
+  ///   order (virtual cameras last; see [devicePriority]), wrapping around.
   ///
   /// The choice becomes the [currentPreferredDevice]. If the source is
   /// capturing, it captures from the new camera before releasing the old

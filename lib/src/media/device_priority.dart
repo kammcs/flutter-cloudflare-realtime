@@ -1,5 +1,21 @@
 import 'media_types.dart';
 
+/// Label fragments (lowercase) of well-known virtual camera apps whose
+/// cameras don't say "virtual", such as "Camera (NVIDIA Broadcast)". Left
+/// first, one could open by default instead of the real webcam.
+///
+/// Cameras only: the same apps' microphones (NVIDIA Broadcast's noise
+/// removal) are ones people choose on purpose, and keep their place. "obs"
+/// isn't listed: OBS's camera is "OBS Virtual Camera" already, and "obs"
+/// alone would also match OBSBOT, a brand of real webcams.
+const _virtualCameraLabels = [
+  'nvidia broadcast',
+  'snap camera',
+  'xsplit vcam',
+  'manycam',
+  'mmhmm',
+];
+
 /// Orders [devices] by how much a source should want them, ported from
 /// partytracks' `devicePriority$`.
 ///
@@ -7,7 +23,9 @@ import 'media_types.dart';
 ///
 /// 1. the [preferred] device, if present;
 /// 2. other devices, in the platform's order;
-/// 3. virtual devices (label contains "virtual") and the macOS Continuity
+/// 3. virtual devices (label contains "virtual"), cameras of well-known
+///    virtual camera apps whose labels don't say so (NVIDIA Broadcast, Snap
+///    Camera, XSplit VCam, ManyCam, mmhmm), and the macOS Continuity
 ///    "iPhone Microphone", which partytracks also pushes down because they
 ///    tend to become the OS default without the user meaning it;
 /// 4. devices in [deprioritized]: ones that recently failed to produce a
@@ -31,6 +49,10 @@ List<MediaDevice> prioritizeDevices(
     if (deprioritized.any(device.sameDeviceAs)) return 3;
     final label = device.label.toLowerCase();
     if (label.contains('virtual') || label.contains('iphone microphone')) {
+      return 2;
+    }
+    if (device.kind == MediaDeviceKind.videoInput &&
+        _virtualCameraLabels.any(label.contains)) {
       return 2;
     }
     return 1;
