@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The call notification's small icon: a microphone. Apps can override
+     it with a drawable of the same name. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9,6a3,3 0,0 1,6 0v5a3,3 0,0 1,-6 0z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M6,11a6,6 0,0 0,12 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11.25,17h1.5v3h-1.5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M8,19.5h8v1.5H8z" />
+</vector>

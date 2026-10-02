@@ -16,6 +16,8 @@ class _RoomAudio {
   // isn't attached again.
   final Map<String, MediaStreamTrack> _playing = {};
   bool _disposed = false;
+  // While set (a call interruption, §4.7), pulled audio doesn't play.
+  bool _silenced = false;
 
   /// [publication]'s pulled track is now [track] (or none).
   void trackChanged(
@@ -31,6 +33,24 @@ class _RoomAudio {
     if (identical(_playing[id], track)) return;
     _playing[id] = track;
     _sink.attach(id, track);
+    if (_silenced) _setEnabled(track, false);
+  }
+
+  /// Silences every pulled audio track ([silenced]), or plays them again.
+  void setSilenced(bool silenced) {
+    if (_disposed || _silenced == silenced) return;
+    _silenced = silenced;
+    for (final track in _playing.values) {
+      _setEnabled(track, !silenced);
+    }
+  }
+
+  static void _setEnabled(MediaStreamTrack track, bool enabled) {
+    try {
+      track.enabled = enabled;
+    } catch (_) {
+      // A track that has gone away plays nothing anyway.
+    }
   }
 
   Future<bool> start() {

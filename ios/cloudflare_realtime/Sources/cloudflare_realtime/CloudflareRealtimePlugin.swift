@@ -3,8 +3,9 @@ import Flutter
 import UIKit
 
 /// The package's iOS plugin: call audio routing (docs/design.md §4.6),
-/// here, and the screen share's Broadcast Upload Extension support
-/// (`ScreenBroadcast`, §10).
+/// interruptions and the proximity sensor (§4.7), here; the camera paused
+/// by the system (`CallBackground`, §4.7); and the screen share's Broadcast
+/// Upload Extension support (`ScreenBroadcast`, §10).
 ///
 /// Call audio routing:
 ///
@@ -18,10 +19,17 @@ import UIKit
 /// their input, and the output follows. Stereo-only Bluetooth and AirPlay
 /// can only be chosen in Apple's route picker: they are listed while they
 /// are the current route, but can't be selected here.
+///
+/// Interruptions: `AVAudioSession.interruptionNotification` is forwarded as
+/// `{event: interruption, type: began|ended, reason: unknown}` (iOS doesn't
+/// say what interrupted). WebRTC's `RTCAudioSession` re-activates the
+/// session itself after an interruption (and when the app becomes active
+/// during one); `resume` does the same, for Dart's policy.
 public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var sink: FlutterEventSink?
-  private var observer: NSObjectProtocol?
+  private var observers: [NSObjectProtocol] = []
   private let broadcast = ScreenBroadcast()
+  private let background = CallBackground()
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = CloudflareRealtimePlugin()
@@ -34,6 +42,15 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       name: "dev.kammcs.cloudflare_realtime/screen_broadcast_events",
       binaryMessenger: registrar.messenger()
     ).setStreamHandler(broadcast)
+    let background = instance.background
+    FlutterMethodChannel(
+      name: "dev.kammcs.cloudflare_realtime/call_background",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { call, result in background.handle(call, result: result) }
+    FlutterEventChannel(
+      name: "dev.kammcs.cloudflare_realtime/call_background_events",
+      binaryMessenger: registrar.messenger()
+    ).setStreamHandler(background)
     let methods = FlutterMethodChannel(
       name: "dev.kammcs.cloudflare_realtime/call_audio",
       binaryMessenger: registrar.messenger())
@@ -56,6 +73,13 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
     case "select":
       let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
       result(select(id))
+    case "resume":
+      result(resume())
+    case "proximity":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      // No-op on devices without the sensor (iPads): it reads back false.
+      UIDevice.current.isProximityMonitoringEnabled = enabled
+      result(UIDevice.current.isProximityMonitoringEnabled)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -151,6 +175,34 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
     }
   }
 
+  // MARK: Interruptions
+
+  /// Activates the audio session again after an interruption. Fails while
+  /// something with priority (a phone call) still holds the audio.
+  private func resume() -> Bool {
+    do {
+      try session.setActive(true)
+      return true
+    } catch {
+      NSLog("cloudflare_realtime: resuming the audio session failed: %@", "\(error)")
+      return false
+    }
+  }
+
+  private func interruption(_ notification: Notification) {
+    guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+      let type = AVAudioSession.InterruptionType(rawValue: raw)
+    else { return }
+    switch type {
+    case .began:
+      sink?(["event": "interruption", "type": "began", "reason": "unknown"])
+    case .ended:
+      sink?(["event": "interruption", "type": "ended"])
+    @unknown default:
+      break
+    }
+  }
+
   // MARK: Changes
 
   public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
@@ -158,17 +210,25 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
   {
     sink = events
     // Posted on a secondary thread; the sink must be used on the main one.
-    observer = NotificationCenter.default.addObserver(
-      forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      self?.sink?("changed")
-    }
+    let center = NotificationCenter.default
+    observers = [
+      center.addObserver(
+        forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+      ) { [weak self] _ in
+        self?.sink?("changed")
+      },
+      center.addObserver(
+        forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+      ) { [weak self] notification in
+        self?.interruption(notification)
+      },
+    ]
     return nil
   }
 
   public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    if let observer { NotificationCenter.default.removeObserver(observer) }
-    observer = nil
+    for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    observers = []
     sink = nil
     return nil
   }

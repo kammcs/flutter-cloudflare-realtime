@@ -1,5 +1,6 @@
 package dev.kammcs.cloudflare_realtime
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
@@ -9,6 +10,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -18,13 +20,22 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Call audio routing on Android (docs/design.md §4.6), and the screen
- * share's foreground service ([ScreenCapture], §10).
+ * Call audio routing on Android (docs/design.md §4.6), interruptions and
+ * the proximity sensor (§4.7), the call's foreground service
+ * ([CallBackground], §4.7), and the screen share's foreground service
+ * ([ScreenCapture], §10).
  *
  * Thin by design: it lists the routes, reports the current one and its
  * changes, selects one, and puts the device in call mode while a call has
  * audio. Which route to pick (the default, a user's choice sticking) is
  * decided in Dart.
+ *
+ * Interruptions are audio focus: losing it (for good or for a while) is
+ * reported as `{event: interruption, type: began, reason}`, getting it back
+ * as `type: ended`; a loss that only asks to duck is ignored (the call
+ * goes on). The reason is `phoneCall` while the audio mode says a phone
+ * call rings or runs, else `otherAudio`. Dart decides when to take the
+ * audio back (`resume`).
  *
  * flutter_webrtc's own audio management (Twilio's AudioSwitch) is turned
  * off when the plugin loads: it re-selects a route by its own priority on
@@ -43,6 +54,14 @@ class CloudflareRealtimePlugin :
     private var active = false
     private var savedMode = AudioManager.MODE_NORMAL
     private var focusRequest: AudioFocusRequest? = null
+    private var hasFocus = false
+    private var interrupted = false
+    private var modeListener: Any? = null
+    private lateinit var power: PowerManager
+    private var proximityLock: PowerManager.WakeLock? = null
+    private lateinit var backgroundMethods: MethodChannel
+    private lateinit var backgroundEvents: EventChannel
+    private lateinit var background: CallBackground
     private lateinit var screenMethods: MethodChannel
     private lateinit var screenEvents: EventChannel
     private lateinit var screen: ScreenCapture
@@ -55,6 +74,14 @@ class CloudflareRealtimePlugin :
         events = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/call_audio_events")
         events.setStreamHandler(this)
         disableFlutterWebrtcAudioManagement()
+        power = binding.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+        background = CallBackground(binding.applicationContext)
+        backgroundMethods = MethodChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/call_background")
+        backgroundMethods.setMethodCallHandler(background)
+        // Android reports no camera pauses (the service keeps the camera
+        // running); the channel exists so Dart's shape is the same.
+        backgroundEvents = EventChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/call_background_events")
+        backgroundEvents.setStreamHandler(background)
         screen = ScreenCapture(binding.applicationContext)
         screenMethods = MethodChannel(binding.binaryMessenger, "dev.kammcs.cloudflare_realtime/screen_capture")
         screenMethods.setMethodCallHandler(screen)
@@ -66,6 +93,10 @@ class CloudflareRealtimePlugin :
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
         if (active) deactivate()
+        setProximity(false)
+        backgroundMethods.setMethodCallHandler(null)
+        backgroundEvents.setStreamHandler(null)
+        background.dispose()
         screenMethods.setMethodCallHandler(null)
         screenEvents.setStreamHandler(null)
         screen.dispose()
@@ -98,6 +129,8 @@ class CloudflareRealtimePlugin :
                 "routes" -> result.success(routes().map { it.toMap() })
                 "current" -> result.success(current()?.toMap())
                 "select" -> result.success(select(call.argument<String>("id") ?: ""))
+                "resume" -> result.success(resume())
+                "proximity" -> result.success(setProximity(call.argument<Boolean>("enabled") == true))
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
@@ -110,19 +143,18 @@ class CloudflareRealtimePlugin :
     private fun activate() {
         if (active) return
         active = true
+        interrupted = false
         savedMode = audio.mode
         audio.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build(),
-                )
-                .build()
-            audio.requestAudioFocus(request)
-            focusRequest = request
+        requestFocus()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // A phone call can set its mode after taking the focus: refine
+            // the reason then.
+            val listener = AudioManager.OnModeChangedListener {
+                if (interrupted && inPhoneCall()) emitInterruption("began", "phoneCall")
+            }
+            audio.addOnModeChangedListener({ main.post(it) }, listener)
+            modeListener = listener
         }
     }
 
@@ -137,11 +169,115 @@ class CloudflareRealtimePlugin :
             @Suppress("DEPRECATION")
             audio.stopBluetoothSco()
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (modeListener as? AudioManager.OnModeChangedListener)?.let {
+                audio.removeOnModeChangedListener(it)
+            }
+        }
+        modeListener = null
+        abandonFocus()
+        interrupted = false
+        audio.mode = savedMode
+    }
+
+    // --- Interruptions (audio focus) ---------------------------------------
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (!active) return@OnAudioFocusChangeListener
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                hasFocus = false
+                interrupted = true
+                emitInterruption("began", if (inPhoneCall()) "phoneCall" else "otherAudio")
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                hasFocus = true
+                if (interrupted) emitInterruption("ended", null)
+            }
+            // AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK (a navigation prompt, a
+            // notification): the call goes on.
+        }
+    }
+
+    private fun requestFocus(): Boolean {
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build(),
+                )
+                .setOnAudioFocusChangeListener(focusListener, main)
+                .build()
+                .also { focusRequest = it }
+            audio.requestAudioFocus(request)
+        } else {
+            @Suppress("DEPRECATION")
+            audio.requestAudioFocus(focusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN)
+        }
+        hasFocus = granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        return hasFocus
+    }
+
+    private fun abandonFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let { audio.abandonAudioFocusRequest(it) }
             focusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            audio.abandonAudioFocus(focusListener)
         }
-        audio.mode = savedMode
+        hasFocus = false
+    }
+
+    /** Takes the call's audio back: the focus (unless held) and the call mode. */
+    private fun resume(): Boolean {
+        if (!active) return false
+        if (!hasFocus && !requestFocus()) return false
+        // Before Android 12 a phone call leaves the mode at NORMAL.
+        if (audio.mode != AudioManager.MODE_IN_COMMUNICATION) {
+            audio.mode = AudioManager.MODE_IN_COMMUNICATION
+        }
+        interrupted = false
+        return true
+    }
+
+    private fun inPhoneCall(): Boolean {
+        val mode = audio.mode
+        return mode == AudioManager.MODE_RINGTONE || mode == AudioManager.MODE_IN_CALL ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && mode == AudioManager.MODE_CALL_SCREENING) ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == AudioManager.MODE_CALL_REDIRECT)
+    }
+
+    private fun emitInterruption(type: String, reason: String?) {
+        Log.i("cloudflare_realtime", "Call audio interruption $type ${reason ?: ""}")
+        main.post {
+            sink?.success(mapOf("event" to "interruption", "type" to type, "reason" to reason))
+        }
+    }
+
+    // --- Proximity sensor ----------------------------------------------------
+
+    /** Turns the screen off near the ear while [enabled]. Returns whether it is on. */
+    @SuppressLint("WakelockTimeout")
+    private fun setProximity(enabled: Boolean): Boolean {
+        if (!enabled) {
+            proximityLock?.let {
+                if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+            }
+            return false
+        }
+        if (!power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return false
+        val lock = proximityLock
+            ?: power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "cloudflare_realtime:proximity")
+                .also {
+                    it.setReferenceCounted(false)
+                    proximityLock = it
+                }
+        // Held for the call; released when the route or the call changes.
+        if (!lock.isHeld) lock.acquire()
+        return lock.isHeld
     }
 
     // --- Routes ----------------------------------------------------------

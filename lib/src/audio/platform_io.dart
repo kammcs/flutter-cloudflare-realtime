@@ -5,3 +5,6 @@ bool get isPhone => Platform.isAndroid || Platform.isIOS;
 
 /// Whether this is iOS.
 bool get isIOS => Platform.isIOS;
+
+/// Whether this is Android.
+bool get isAndroid => Platform.isAndroid;

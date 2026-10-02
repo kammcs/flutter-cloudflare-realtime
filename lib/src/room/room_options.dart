@@ -186,6 +186,8 @@ class RoomOptions {
     this.activeSpeaker = const ActiveSpeakerConfig(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
     this.speakerphone,
+    this.foregroundService = true,
+    this.proximitySensor = true,
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -260,4 +262,26 @@ class RoomOptions {
   /// headset comes first either way, and the user can still pick a route
   /// with [Room.selectAudioRoute]. No effect on desktops and in browsers.
   final bool? speakerphone;
+
+  /// Whether the room keeps the call alive in the background on Android
+  /// with this package's foreground service (`docs/design.md` §4.7).
+  /// Default `true`.
+  ///
+  /// While the room publishes a microphone or a capturing camera, the
+  /// service runs with the type `microphone` (plus `camera` while the camera
+  /// captures) and shows an ongoing notification; without it, Android 11+
+  /// silences the microphone and stops the camera once the app is in the
+  /// background. Turn it off for an app that runs its own foreground service
+  /// (or Telecom's). No effect on other platforms: iOS keeps a call's audio
+  /// with the app's `UIBackgroundModes: audio`.
+  final bool foregroundService;
+
+  /// Whether the screen turns off when the phone is held to the ear
+  /// (`docs/design.md` §4.7). Default `true`.
+  ///
+  /// The proximity sensor is on only while call audio plays on the earpiece
+  /// and no room has video; never on the speaker or a headset. Any joined
+  /// room with `false` keeps it off. No effect on desktops, in browsers, and
+  /// on devices without the sensor. See [Room.proximitySensorActive].
+  final bool proximitySensor;
 }

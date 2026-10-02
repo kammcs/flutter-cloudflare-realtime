@@ -211,6 +211,66 @@ final class LocalScreenShareStalledEvent extends RoomEvent {
       'LocalScreenShareStalledEvent(${publication.trackName}, $error)';
 }
 
+/// Something took the call's audio away on a phone: a phone call, Siri, an
+/// alarm, another app's audio (`docs/design.md` §4.7).
+///
+/// Until [CallResumedEvent], [Room.audioInterruption] is set and the room
+/// keeps its audio silent: remote audio doesn't play and the microphone
+/// sends silence (its track stays published and isn't announced as muted).
+/// The call takes its audio back by itself when the platform ends the
+/// interruption, or when the app returns to the foreground; an app can also
+/// try with [Room.resumeAudio]. May come again with a more precise
+/// [reason] while interrupted.
+final class CallInterruptedEvent extends RoomEvent {
+  /// Creates the event.
+  const CallInterruptedEvent(this.reason);
+
+  /// What took the audio, as far as the platform says.
+  final CallInterruptionReason reason;
+
+  @override
+  String toString() => 'CallInterruptedEvent(${reason.name})';
+}
+
+/// The call has its audio back after a [CallInterruptedEvent]: remote audio
+/// plays and the microphone sends again.
+final class CallResumedEvent extends RoomEvent {
+  /// Creates the event.
+  const CallResumedEvent(this.reason);
+
+  /// What had interrupted the call.
+  final CallInterruptionReason reason;
+
+  @override
+  String toString() => 'CallResumedEvent(after ${reason.name})';
+}
+
+/// The system paused the published camera (iOS; `docs/design.md` §4.7),
+/// most often because the app went to the background.
+///
+/// The track stays published and sends no frames; others see its last
+/// frame or an empty tile. The camera runs again by itself
+/// ([LocalCameraResumedEvent]). See [Room.cameraPause].
+final class LocalCameraPausedEvent extends RoomEvent {
+  /// Creates the event.
+  const LocalCameraPausedEvent(this.reason);
+
+  /// Why the system paused it.
+  final CameraPauseReason reason;
+
+  @override
+  String toString() => 'LocalCameraPausedEvent(${reason.name})';
+}
+
+/// The camera runs again after a [LocalCameraPausedEvent].
+final class LocalCameraResumedEvent extends RoomEvent {
+  /// Creates the event.
+  const LocalCameraResumedEvent();
+
+  @override
+  String toString() => 'LocalCameraResumedEvent()';
+}
+
 /// [Room.connectionState] changed.
 final class RoomConnectionStateChangedEvent extends RoomEvent {
   /// Creates the event.

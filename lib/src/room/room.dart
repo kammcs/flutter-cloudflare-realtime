@@ -13,7 +13,10 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
 
 import '../audio/audio_route.dart';
 import '../audio/call_audio.dart';
+import '../audio/call_interruption.dart';
 import '../audio/remote_audio_sink.dart';
+import '../background/call_background.dart';
+import '../background/camera_pause.dart';
 import '../broker/broker_client.dart';
 import '../data/data_channel_manager.dart';
 import '../media/constraints.dart';
@@ -50,6 +53,7 @@ import 'simulcast_hint.dart';
 
 part 'local_participant.dart';
 part 'room_audio.dart';
+part 'room_background.dart';
 part 'remote_participant.dart';
 part 'remote_track_layers.dart';
 part 'room_data.dart';
@@ -157,6 +161,8 @@ class Room {
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   // Remote audio playback (the web's audio elements): room_audio.dart.
   late final _RoomAudio _audio = _RoomAudio();
+  // Background service, interruptions, camera pauses: room_background.dart.
+  late final _RoomBackground _background = _RoomBackground(this);
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -370,6 +376,58 @@ class Room {
     return CallAudio.instance.setSpeakerphone(on);
   }
 
+  /// Whether this platform reports call interruptions ([audioInterruption]):
+  /// on phones. Elsewhere [audioInterruption] stays `null`.
+  bool get canDetectAudioInterruptions => CallAudio.instance.supported;
+
+  /// What has taken the call's audio away (a phone call, Siri, another
+  /// app), or `null` while the call has it (`docs/design.md` §4.7). See
+  /// [CallInterruptedEvent]. App-wide, like the audio session.
+  CallInterruptionReason? get audioInterruption =>
+      CallAudio.instance.interruption.value;
+
+  /// [audioInterruption], replaying the current value, then its changes.
+  Stream<CallInterruptionReason?> get audioInterruptionChanges =>
+      CallAudio.instance.interruption.stream;
+
+  /// Takes the call's audio back after an interruption the platform didn't
+  /// end, for example after another app kept the audio focus on Android.
+  /// The call also does this by itself when the app returns to the
+  /// foreground. Completes with whether the call has its audio: `false`
+  /// while something with priority (a phone call) still holds it; `true`
+  /// when it wasn't interrupted, and on desktops and in browsers.
+  Future<bool> resumeAudio() {
+    _checkNotLeft();
+    return CallAudio.instance.resume();
+  }
+
+  /// Whether the proximity sensor is on now: the screen turns off near the
+  /// ear. Only while call audio plays on the earpiece and no room has video
+  /// ([RoomOptions.proximitySensor]); `false` on desktops, in browsers and
+  /// on devices without the sensor.
+  bool get proximitySensorActive => CallAudio.instance.proximity.value;
+
+  /// [proximitySensorActive], replaying the current value, then its
+  /// changes.
+  Stream<bool> get proximitySensorChanges =>
+      CallAudio.instance.proximity.stream;
+
+  /// Whether this platform reports a camera paused by the system
+  /// ([cameraPause]): iOS. Android keeps the camera running in the
+  /// background under the foreground service
+  /// ([RoomOptions.foregroundService]).
+  bool get canDetectCameraPause => CallBackground.instance.reportsCameraPause;
+
+  /// Why the system paused the device's camera (most often: the app is in
+  /// the background on iOS), or `null` while it runs (`docs/design.md`
+  /// §4.7). See [LocalCameraPausedEvent].
+  CameraPauseReason? get cameraPause =>
+      CallBackground.instance.cameraPause.value;
+
+  /// [cameraPause], replaying the current value, then its changes.
+  Stream<CameraPauseReason?> get cameraPauseChanges =>
+      CallBackground.instance.cameraPause.stream;
+
   /// Leaves the room and releases everything it holds.
   ///
   /// In order: stops listening to signaling and leaves it (so others stop
@@ -420,7 +478,11 @@ class Room {
     // Phones: route call audio the same way on Android and iOS (§4.6).
     // Best effort: a failure here must not fail the join.
     try {
-      await CallAudio.instance.join(this, speakerphone: options.speakerphone);
+      await CallAudio.instance.join(
+        this,
+        speakerphone: options.speakerphone,
+        proximitySensor: options.proximitySensor,
+      );
     } catch (error) {
       _emit(RoomErrorEvent('audioRouting', error));
     }
@@ -452,6 +514,7 @@ class Room {
       );
     }
     _speakers.start();
+    _background.start();
   }
 
   // ---------------------------------------------------------------------------
@@ -623,6 +686,7 @@ class Room {
     } catch (_) {
       // Best effort.
     }
+    await _background.dispose();
 
     // Remote tracks and DataChannel subscriptions: closing the session
     // releases them, so only the local state is torn down here.
