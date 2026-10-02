@@ -458,4 +458,142 @@ void main() {
       expect(stats.connection!.receiveBitrate, 4000);
     });
   });
+
+  group('Firefox', () {
+    // The fields Firefox 155 reports (M13): a transport with its selected
+    // pair, outbound layers with rid and mid but no encodingIndex, active,
+    // mediaSourceId or qualityLimitationReason, no availableOutgoingBitrate,
+    // no decoderImplementation, no media-source audioLevel; timestamps in
+    // milliseconds.
+    List<StatsReport> publisher({required double ts, required int bytes}) => [
+      for (final (rid, w, h, scale) in [
+        ('c', 320, 180, 4),
+        ('a', 1280, 720, 1),
+        ('b', 640, 360, 2),
+      ])
+        StatsReport('out-$rid', 'outbound-rtp', ts, {
+          'kind': 'video',
+          'mediaType': 'video',
+          'mid': '1',
+          'rid': rid,
+          'codecId': 'codec-vp8',
+          'ssrc': 1000 + scale,
+          'bytesSent': bytes ~/ scale,
+          'packetsSent': 394,
+          'frameWidth': w,
+          'frameHeight': h,
+          'framesEncoded': 156,
+          'framesPerSecond': 29,
+          'framesSent': 156,
+          'remoteId': 'ri-$rid',
+        }),
+      StatsReport('ri-a', 'remote-inbound-rtp', ts, {
+        'kind': 'video',
+        'localId': 'out-a',
+        'roundTripTime': 0.001999,
+        'packetsLost': 0,
+        'fractionLost': 0,
+        'jitter': 0.00036666666666666667,
+      }),
+      StatsReport('out-mic', 'outbound-rtp', ts, {
+        'kind': 'audio',
+        'mid': '2',
+        'codecId': 'codec-opus',
+        'bytesSent': bytes ~/ 10,
+        'remoteId': 'ri-mic',
+      }),
+      StatsReport('mediasource_audio_2{mic}', 'media-source', ts, {
+        'kind': 'audio',
+        'trackIdentifier': '{mic}',
+      }),
+      StatsReport('codec-vp8', 'codec', ts, {'mimeType': 'video/VP8'}),
+      StatsReport('codec-opus', 'codec', ts, {'mimeType': 'audio/opus'}),
+      StatsReport('cp-other', 'candidate-pair', ts, {
+        'currentRoundTripTime': 0.14,
+        'localCandidateId': 'lc',
+        'remoteCandidateId': 'rc',
+        'nominated': false,
+        'selected': false,
+        'state': 'in-progress',
+      }),
+      StatsReport('cp-sel', 'candidate-pair', ts, {
+        'currentRoundTripTime': 0.002,
+        'localCandidateId': 'lc-prflx',
+        'remoteCandidateId': 'rc',
+        'nominated': true,
+        'selected': true,
+        'state': 'succeeded',
+      }),
+      StatsReport('lc-prflx', 'local-candidate', ts, {
+        'candidateType': 'prflx',
+        'protocol': 'udp',
+      }),
+      StatsReport('rc', 'remote-candidate', ts, {
+        'candidateType': 'host',
+        'protocol': 'udp',
+      }),
+      StatsReport('tr', 'transport', ts, {
+        'selectedCandidatePairId': 'cp-sel',
+        'dtlsState': 'connected',
+      }),
+    ];
+
+    test('a simulcast publisher: layers ordered by rid, missing fields '
+        'null, rates over millisecond timestamps', () {
+      var now = Duration.zero;
+      final reader = CallStatsReader(
+        elapsed: () => now,
+        timestampsInMicroseconds: false,
+      );
+      const mic = (
+        trackName: 'mic',
+        kind: TrackKind.audio,
+        source: TrackSource.microphone,
+        mid: '2',
+        trackId: '{mic}',
+      );
+      const cam = (
+        trackName: 'camera-1',
+        kind: TrackKind.video,
+        source: TrackSource.camera,
+        mid: '1',
+        trackId: '{cam}',
+      );
+      reader.read(
+        publisher(ts: 1790981737837, bytes: 352048),
+        local: [cam, mic],
+      );
+      now = const Duration(milliseconds: 1000);
+      final stats = reader.read(
+        publisher(ts: 1790981738837, bytes: 423548),
+        local: [cam, mic],
+      );
+
+      final camStats = stats.local['camera-1']!;
+      expect([for (final l in camStats.layers) l.rid], ['a', 'b', 'c']);
+      expect(camStats.codec, 'video/VP8');
+      final a = camStats.layer('a')!;
+      expect((a.width, a.height), (1280, 720));
+      expect(camStats.layer('b')!.height, 360);
+      expect(camStats.layer('c')!.height, 180);
+      expect(a.framesPerSecond, 29);
+      expect(a.bitrate, 572000);
+      expect(a.roundTripTime, const Duration(microseconds: 1999));
+      expect(a.active, isNull);
+      expect(a.qualityLimitationReason, isNull);
+      expect(a.targetBitrate, isNull);
+      expect(a.encoderImplementation, isNull);
+
+      final micStats = stats.local['mic']!;
+      expect(micStats.codec, 'audio/opus');
+      expect(micStats.audioLevel, isNull);
+      expect(micStats.layers.single.rid, isNull);
+
+      final c = stats.connection!;
+      expect(c.roundTripTime, const Duration(milliseconds: 2));
+      expect(c.availableOutgoingBitrate, isNull);
+      expect(c.localCandidate!.type, IceCandidateType.prflx);
+      expect(c.remoteCandidate!.type, IceCandidateType.host);
+    });
+  });
 }
