@@ -27,6 +27,7 @@ The Cloudflare SFU is plain WebRTC media forwarding, controlled by an HTTPS sess
 - **Automatic reconnection**, including network changes and mobile background/foreground.
 - Screen share on every platform `flutter_webrtc` supports.
 - DataChannels (reliable and unreliable) for app messages, such as reactions or remote-control input.
+- **Every primitive for phone-style calls, video conferences and screen sharing** (decided October 2026): CallKit and Android Telecom, calls that keep running in the background, connection quality, screen share on phones, and the rest listed in the [roadmap](roadmap.md#scope-telecom-videoconferencing-and-screen-sharing) (M9–M15). Primitives only: the app builds its own structure on them.
 - **The same call behaves the same on every platform.** The basic camera and audio operations are one API with one behaviour: which camera opens (the front one), at what resolution, switching cameras, mirroring the self-view, muting, and choosing the microphone and speaker. The package absorbs `flutter_webrtc`'s per-platform differences (§4.5) so apps don't branch on the OS. Where a platform can't do something, the API says so (for example `canSelectAudioOutput`) instead of behaving differently.
 - The Cloudflare **App Secret never reaches the client.** Every SFU API call goes through a server-side broker (§5).
 
