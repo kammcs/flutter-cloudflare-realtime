@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Routing call audio (docs/design.md §4.6). BLUETOOTH_CONNECT is the
+         app's to declare and request: without it, Bluetooth routes are
+         missing on Android 12+. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+</manifest>

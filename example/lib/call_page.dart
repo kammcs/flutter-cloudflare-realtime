@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 
+import 'audio_routes_sheet.dart';
 import 'screen_share_dialog.dart';
 
 /// What the join screen hands the call screen: how to reach the others
@@ -205,9 +206,6 @@ class _CallPageState extends State<CallPage> {
       await camera.setMuted(!camera.muted);
     }
   });
-
-  Future<void> _toggleSpeakerphone() =>
-      _run(() => _room.setSpeakerphone(!_room.speakerphone));
 
   Future<void> _switchCamera() => _run(() async {
     await _local.switchCamera();
@@ -537,15 +535,15 @@ class _CallPageState extends State<CallPage> {
                 icon: const Icon(Icons.cameraswitch),
                 onPressed: _busy ? null : _switchCamera,
               ),
-            if (_room.canSetSpeakerphone)
-              IconButton.filledTonal(
-                tooltip: _room.speakerphone
-                    ? 'Use the earpiece'
-                    : 'Use the speakerphone',
-                icon: Icon(
-                  _room.speakerphone ? Icons.volume_up : Icons.phone_in_talk,
+            if (_room.canSelectAudioRoute)
+              StreamBuilder<AudioRoute?>(
+                stream: _room.audioRouteChanges,
+                initialData: _room.currentAudioRoute,
+                builder: (context, route) => IconButton.filledTonal(
+                  tooltip: 'Audio output',
+                  icon: Icon(audioRouteIcon(route.data?.kind)),
+                  onPressed: () => showAudioRoutesSheet(context, _room),
                 ),
-                onPressed: _busy ? null : _toggleSpeakerphone,
               ),
             IconButton.filledTonal(
               tooltip: sharing ? 'Stop sharing' : 'Share screen',

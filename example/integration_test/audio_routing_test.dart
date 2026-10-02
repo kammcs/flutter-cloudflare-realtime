@@ -1,16 +1,19 @@
-// Call audio routing, the same way on every platform, through a real
-// broker: a call starts on the speakerphone on phones (Android and iOS;
-// out of the box iOS would use the earpiece), Room.setSpeakerphone moves
-// it between the loudspeaker and the earpiece, and choosing a microphone
-// keeps the call sending audio. Desktops have no speakerphone switch, which
-// the room reports (canSetSpeakerphone) instead of doing something else.
+// Call audio routing on phones, the same way on Android and iOS
+// (docs/design.md §4.6), through a real broker:
 //
-// Two rooms in one process share in-memory signaling: Alice publishes her
-// microphone, Bob pulls it.
+// - a voice call starts on the earpiece (or a connected headset);
+// - publishing a camera moves it to the speaker;
+// - Room.selectAudioRoute picks a route, which sticks;
+// - Room.setSpeakerphone forces the speaker or the earpiece;
+// - choosing a microphone keeps the call sending audio.
 //
-// iOS reports its current route (the audio outputs list), so the test
-// checks it there. Android doesn't tell the app; the test logs each step
-// with the time, to compare with `adb shell dumpsys audio` ("Active
+// Desktops have no call audio routing, which the room reports
+// (canSelectAudioRoute) instead of doing something else.
+//
+// Two rooms in one process share in-memory signaling: Alice publishes, Bob
+// pulls. The route is read back from the platform; on iOS the test also
+// checks it against flutter_webrtc's list of outputs, and on Android its
+// log can be compared with `adb shell dumpsys audio` ("Active
 // communication device").
 //
 // Skipped unless CF_REALTIME_BROKER_URL is set; see broker_settings.dart
@@ -37,11 +40,16 @@ void main() {
   testWidgets(
     'call audio routing and microphone choice',
     (tester) async {
-      // Ask for the microphone before joining: the SFU drops a session left
+      // Ask for the microphone (and camera) before joining: the SFU drops a session left
       // unused while a first-run prompt waits.
       final permission = MicrophoneSource();
       await permission.enable();
       await permission.dispose();
+      if (Platform.isAndroid || Platform.isIOS) {
+        final camera = CameraSource();
+        await camera.enable();
+        await camera.dispose();
+      }
 
       final realtime = CloudflareRealtime(broker: settings.config());
       final hub = InMemorySignalingHub();
@@ -63,24 +71,53 @@ void main() {
       addTearDown(bob.leave);
 
       final phone = Platform.isAndroid || Platform.isIOS;
-      expect(alice.canSetSpeakerphone, phone);
-      expect(alice.speakerphone, isTrue, reason: 'RoomOptions default');
+      expect(alice.canSelectAudioRoute, phone);
       if (!phone) {
         await expectLater(alice.setSpeakerphone(false), throwsUnsupportedError);
+        expect(alice.currentAudioRoutes, isEmpty);
       }
 
       final published = await alice.localParticipant.publishMicrophone();
       await published.publication.whenSending().timeout(_timeout);
-      await _audioArriving(bob, 'with the default route');
+      await _audioArriving(bob, 'in a voice call');
 
       if (phone) {
-        await _expectRoute(speaker: true, 'at the start of the call');
-        await alice.setSpeakerphone(false);
-        expect(alice.speakerphone, isFalse);
-        await _expectRoute(speaker: false, 'after setSpeakerphone(false)');
-        await _audioArriving(bob, 'on the earpiece');
+        _log('routes: ${alice.currentAudioRoutes.join('; ')}');
+        // A connected headset comes first; then the default for the call.
+        final headset = alice.currentAudioRoutes
+            .where((r) => r.kind.isExternal)
+            .firstOrNull;
+        AudioRouteKind expected(AudioRouteKind kind) => headset?.kind ?? kind;
+
+        await _expectRoute(alice, expected(AudioRouteKind.earpiece), 'voice');
+
+        final camera = await alice.localParticipant.publishCamera(
+          options: const CameraOptions(preset: VideoPreset.h360),
+        );
+        await camera.publication.whenSending().timeout(_timeout);
+        await _expectRoute(alice, expected(AudioRouteKind.speaker), 'video');
+
+        final earpiece = alice.currentAudioRoutes
+            .where((r) => r.kind == AudioRouteKind.earpiece)
+            .firstOrNull;
+        if (earpiece != null) {
+          await alice.selectAudioRoute(earpiece);
+          await _expectRoute(alice, AudioRouteKind.earpiece, 'picked');
+          await _audioArriving(bob, 'on the earpiece');
+        }
         await alice.setSpeakerphone(true);
-        await _expectRoute(speaker: true, 'after setSpeakerphone(true)');
+        await _expectRoute(
+          alice,
+          expected(AudioRouteKind.speaker),
+          'setSpeakerphone(true)',
+        );
+        await alice.setSpeakerphone(false);
+        await _expectRoute(
+          alice,
+          expected(AudioRouteKind.earpiece),
+          'setSpeakerphone(false)',
+        );
+        await alice.setSpeakerphone(true);
       }
 
       // Each microphone in turn, then back to the first.
@@ -104,23 +141,25 @@ void _log(String message) => debugPrint(
   '[audio] ${DateTime.now().toIso8601String().substring(11, 19)} $message',
 );
 
-/// Waits for the route to settle, logs it, and on iOS checks it: the
-/// loudspeaker ([speaker]) or not. iOS lists the current route's outputs
-/// (plus a "Speaker" entry when the route isn't the speaker); Android
-/// doesn't say, so only the log is there to compare with `adb`.
-Future<void> _expectRoute(String when, {required bool speaker}) async {
-  await Future<void>.delayed(const Duration(milliseconds: 1500));
+/// Waits up to 5 s for [room]'s route to be of [kind], then logs it. On
+/// iOS it also checks flutter_webrtc's list of outputs, which shows the
+/// current route (plus a "Speaker" entry when the route isn't the speaker).
+Future<void> _expectRoute(Room room, AudioRouteKind kind, String when) async {
+  final route = await room.audioRouteChanges
+      .firstWhere((r) => r?.kind == kind)
+      .timeout(const Duration(seconds: 5), onTimeout: () => null);
   final outputs = [
     for (final d in await rtc.navigator.mediaDevices.enumerateDevices())
-      if (d.kind == 'audiooutput') d,
+      if (d.kind == 'audiooutput') '${d.deviceId}="${d.label}"',
   ];
   _log(
-    'route $when (want ${speaker ? 'speaker' : 'earpiece'}): '
-    '${outputs.map((d) => '${d.deviceId}="${d.label}"').join('; ')}',
+    'route $when: want ${kind.name}, got ${room.currentAudioRoute}'
+    '${outputs.isEmpty ? '' : '; flutter_webrtc outputs: ${outputs.join(', ')}'}',
   );
-  if (Platform.isIOS) {
-    final onSpeaker = outputs.every((d) => d.deviceId == 'Speaker');
-    expect(onSpeaker, speaker, reason: 'iOS route $when');
+  expect(route?.kind, kind, reason: 'route $when');
+  if (Platform.isIOS && kind != AudioRouteKind.other) {
+    final onSpeaker = outputs.every((o) => o.startsWith('Speaker='));
+    expect(onSpeaker, kind == AudioRouteKind.speaker, reason: 'iOS $when');
   }
 }
 

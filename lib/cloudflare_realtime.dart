@@ -10,6 +10,10 @@ export 'src/room/room.dart' hide joinRoom;
 export 'src/room/room_options.dart';
 export 'src/room/screen_share_presets.dart';
 
+// Call audio routing on phones (design.md §4.6).
+export 'src/audio/audio_route.dart' show AudioRoute, AudioRouteKind;
+export 'src/audio/call_audio.dart' show AudioRouteUnavailableException;
+
 // Rendering (design.md §4.3).
 export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
 export 'src/rendering/renderable_track.dart'

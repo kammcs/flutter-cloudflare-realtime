@@ -6,8 +6,7 @@ part of 'room.dart';
 /// the sink does nothing; on the web it attaches each track to a hidden
 /// `<audio>` element and reports the browser's autoplay policy.
 class _RoomAudio {
-  _RoomAudio({required bool speakerphone})
-    : speakerphone = StateStream(speakerphone, distinct: true) {
+  _RoomAudio() {
     _sink = createRemoteAudioSink(_onBlockedChanged);
   }
 
@@ -41,23 +40,6 @@ class _RoomAudio {
 
   bool get canSelectOutput => _sink.supportsOutputSelection;
 
-  bool get canSetSpeakerphone => _sink.supportsSpeakerphone;
-
-  final StateStream<bool> speakerphone;
-
-  /// Applies [on] where phones have a speakerphone; elsewhere only records
-  /// it (for the room's options) unless [require] asks for the error.
-  Future<void> setSpeakerphone(bool on, {bool require = true}) async {
-    if (!_sink.supportsSpeakerphone) {
-      if (require) {
-        throw UnsupportedError('Only phones have a speakerphone switch.');
-      }
-      return;
-    }
-    await _sink.setSpeakerphone(on);
-    if (!_disposed && !speakerphone.isClosed) speakerphone.set(on);
-  }
-
   Future<void> setOutput(String deviceId) {
     if (!_sink.supportsOutputSelection) {
       throw UnsupportedError('This platform cannot choose the audio output.');
@@ -81,6 +63,5 @@ class _RoomAudio {
     }
     if (!blocked.isClosed) blocked.set(false);
     await blocked.close();
-    await speakerphone.close();
   }
 }

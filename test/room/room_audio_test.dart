@@ -56,15 +56,6 @@ class _FakeAudioSink implements RemoteAudioSink {
   @override
   bool get supportsOutputSelection => true;
 
-  bool speakerphoneSupported = true;
-  final List<bool> speakerphoneCalls = [];
-
-  @override
-  bool get supportsSpeakerphone => speakerphoneSupported;
-
-  @override
-  Future<void> setSpeakerphone(bool on) async => speakerphoneCalls.add(on);
-
   @override
   Future<void> setOutputDevice(String deviceId) async =>
       outputDevice = deviceId;
@@ -236,57 +227,5 @@ void main() {
     expect(await alice.startAudio(), isTrue);
     await alice.leave();
     dave.dispose();
-  });
-
-  group('speakerphone', () {
-    test(
-      'a phone starts on the speakerphone, and it can be switched',
-      () async {
-        final alice = await h.join('alice');
-        final sink = sinks.single;
-        expect(sink.speakerphoneCalls, [true], reason: 'applied at join');
-        expect(alice.canSetSpeakerphone, isTrue);
-        expect(alice.speakerphone, isTrue);
-        final changes = <bool>[];
-        alice.speakerphoneChanges.listen(changes.add);
-
-        await alice.setSpeakerphone(false);
-        await _settle();
-        expect(sink.speakerphoneCalls, [true, false]);
-        expect(alice.speakerphone, isFalse);
-        expect(changes, [true, false]);
-
-        await alice.leave();
-        expect(() => alice.setSpeakerphone(true), throwsStateError);
-      },
-    );
-
-    test('RoomOptions.speakerphone false starts on the earpiece', () async {
-      final alice = await h.join(
-        'alice',
-        options: const RoomOptions(speakerphone: false),
-      );
-      expect(sinks.single.speakerphoneCalls, [false]);
-      expect(alice.speakerphone, isFalse);
-      await alice.leave();
-    });
-
-    test(
-      'desktops and browsers: nothing to apply, and the switch throws',
-      () async {
-        debugRemoteAudioSinkFactory = (onBlockedChanged) {
-          final sink = _FakeAudioSink(onBlockedChanged)
-            ..speakerphoneSupported = false;
-          sinks.add(sink);
-          return sink;
-        };
-        final alice = await h.join('alice');
-        expect(sinks.single.speakerphoneCalls, isEmpty);
-        expect(alice.canSetSpeakerphone, isFalse);
-        expect(alice.speakerphone, isTrue, reason: 'the option, as given');
-        expect(() => alice.setSpeakerphone(false), throwsUnsupportedError);
-        await alice.leave();
-      },
-    );
   });
 }

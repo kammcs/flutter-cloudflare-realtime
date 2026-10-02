@@ -11,6 +11,8 @@ import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
 
+import '../audio/audio_route.dart';
+import '../audio/call_audio.dart';
 import '../audio/remote_audio_sink.dart';
 import '../broker/broker_client.dart';
 import '../data/data_channel_manager.dart';
@@ -154,7 +156,7 @@ class Room {
   late final _RoomLayers _layers = _RoomLayers(this);
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   // Remote audio playback (the web's audio elements): room_audio.dart.
-  late final _RoomAudio _audio = _RoomAudio(speakerphone: options.speakerphone);
+  late final _RoomAudio _audio = _RoomAudio();
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -308,28 +310,64 @@ class Room {
     return _audio.setOutput(deviceId);
   }
 
-  /// Whether [setSpeakerphone] works here: on phones (Android and iOS).
-  bool get canSetSpeakerphone => _audio.canSetSpeakerphone;
+  /// Whether this platform routes call audio ([audioRoutes],
+  /// [selectAudioRoute], [setSpeakerphone]): on phones (Android and iOS).
+  /// Desktops and browsers choose a device with [setAudioOutputDevice].
+  bool get canSelectAudioRoute => CallAudio.instance.supported;
 
-  /// Whether call audio goes to the loudspeaker (`true`) or the earpiece,
-  /// on phones; either way a connected headset comes first. Starts as
-  /// [RoomOptions.speakerphone].
-  bool get speakerphone => _audio.speakerphone.value;
-
-  /// [speakerphone], replaying the current value to each new listener and
-  /// then emitting its changes. Completes after [leave].
-  Stream<bool> get speakerphoneChanges => _audio.speakerphone.stream;
-
-  /// Routes call audio to the loudspeaker ([on]) or the earpiece, the same
-  /// way on Android and iOS; a connected wired or Bluetooth headset comes
-  /// first either way. Like the platforms' own switches, it applies to the
-  /// whole app, not just this room.
+  /// The places the phone can play call audio now: its speaker, its
+  /// earpiece, connected headsets. Only routes the platform will honour are
+  /// listed: no earpiece while a Bluetooth headset is connected. On iOS,
+  /// stereo-only Bluetooth and AirPlay appear only while they are the route
+  /// (Apple's route picker chooses them).
   ///
-  /// Throws an [UnsupportedError] where [canSetSpeakerphone] is `false`
-  /// (desktops and browsers: choose a device with [setAudioOutputDevice]).
+  /// App-wide, like the route itself; empty where [canSelectAudioRoute] is
+  /// `false`. Replays the current list.
+  Stream<List<AudioRoute>> get audioRoutes => CallAudio.instance.routes.stream;
+
+  /// The current [audioRoutes].
+  List<AudioRoute> get currentAudioRoutes => CallAudio.instance.routes.value;
+
+  /// The route call audio plays on now, as the platform reports it.
+  AudioRoute? get currentAudioRoute => CallAudio.instance.current.value;
+
+  /// [currentAudioRoute], replaying the current value, then its changes.
+  Stream<AudioRoute?> get audioRouteChanges =>
+      CallAudio.instance.current.stream;
+
+  /// Plays call audio on [route], one of [audioRoutes]. The choice sticks
+  /// until a new headset connects or the route goes away; then the route is
+  /// chosen automatically again ([RoomOptions.speakerphone]).
+  ///
+  /// It is a request: [audioRouteChanges] reports when it takes effect.
+  /// Throws an [AudioRouteUnavailableException] if the platform refuses
+  /// it, and an [UnsupportedError] where [canSelectAudioRoute] is `false`.
+  Future<void> selectAudioRoute(AudioRoute route) {
+    _checkNotLeft();
+    return CallAudio.instance.select(route);
+  }
+
+  /// Whether [setSpeakerphone] works here; the same as
+  /// [canSelectAudioRoute].
+  bool get canSetSpeakerphone => canSelectAudioRoute;
+
+  /// Whether call audio plays on the speaker now.
+  bool get speakerphone => currentAudioRoute?.kind == AudioRouteKind.speaker;
+
+  /// [speakerphone], replaying the current value, then its changes.
+  Stream<bool> get speakerphoneChanges => audioRouteChanges
+      .map((route) => route?.kind == AudioRouteKind.speaker)
+      .distinct();
+
+  /// Plays call audio on the speaker ([on]) or the earpiece, the same way
+  /// on Android and iOS. A connected headset comes first either way, and a
+  /// route picked with [selectAudioRoute] is dropped. App-wide, like the
+  /// platforms' own switches.
+  ///
+  /// Throws an [UnsupportedError] where [canSetSpeakerphone] is `false`.
   Future<void> setSpeakerphone(bool on) {
     _checkNotLeft();
-    return _audio.setSpeakerphone(on);
+    return CallAudio.instance.setSpeakerphone(on);
   }
 
   /// Leaves the room and releases everything it holds.
@@ -356,15 +394,35 @@ class Room {
 
   void _emit(RoomEvent event) {
     if (!_events.isClosed) _events.add(event);
+    _noteVideo();
+  }
+
+  // Tells call audio routing once this room has video, sent or received:
+  // a voice call moves from the earpiece to the speaker then (§4.6).
+  bool _hasVideo = false;
+  void _noteVideo() {
+    if (_hasVideo || _left) return;
+    final video =
+        localParticipant.trackPublications.any(
+          (p) => p.kind == TrackKind.video,
+        ) ||
+        _remotes.values.any(
+          (r) => r.trackPublications.any(
+            (p) => p.kind == TrackKind.video && p.isSubscribed,
+          ),
+        );
+    if (!video) return;
+    _hasVideo = true;
+    CallAudio.instance.videoStarted(this);
   }
 
   Future<void> _join() async {
-    // Phones: start on the speakerphone (or not) the same way on Android
-    // and iOS. Best effort: a failure here must not fail the join.
+    // Phones: route call audio the same way on Android and iOS (§4.6).
+    // Best effort: a failure here must not fail the join.
     try {
-      await _audio.setSpeakerphone(options.speakerphone, require: false);
+      await CallAudio.instance.join(this, speakerphone: options.speakerphone);
     } catch (error) {
-      _emit(RoomErrorEvent('speakerphone', error));
+      _emit(RoomErrorEvent('audioRouting', error));
     }
     final self = localParticipant.state;
     await signaling.join(roomId, self);
@@ -560,6 +618,11 @@ class Room {
     await _speakers.dispose();
     // Stop remote audio first: nothing should play once leave() starts.
     await _audio.dispose();
+    try {
+      await CallAudio.instance.leave(this);
+    } catch (_) {
+      // Best effort.
+    }
 
     // Remote tracks and DataChannel subscriptions: closing the session
     // releases them, so only the local state is torn down here.

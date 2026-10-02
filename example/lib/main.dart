@@ -1,6 +1,7 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 
+import 'audio_routes_sheet.dart';
 import 'call_page.dart';
 import 'dev_config.dart';
 import 'local_media_page.dart';
@@ -157,6 +158,8 @@ class _JoinPageState extends State<JoinPage> {
           : _devServerSetup();
       final Room room;
       try {
+        // Android 12+: Bluetooth headsets are audio routes only with this.
+        await requestBluetoothPermission();
         room =
             await CloudflareRealtime(
               broker: setup.broker,

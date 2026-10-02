@@ -74,14 +74,6 @@ class WebRemoteAudioSink implements RemoteAudioSink {
   );
 
   @override
-  bool get supportsSpeakerphone => false;
-
-  @override
-  Future<void> setSpeakerphone(bool on) async => throw UnsupportedError(
-    'Browsers have no speakerphone switch; use setOutputDevice.',
-  );
-
-  @override
   Future<void> setOutputDevice(String deviceId) async {
     if (!supportsOutputSelection) {
       throw UnsupportedError(

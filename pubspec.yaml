@@ -32,3 +32,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+flutter:
+  # Native code for call audio routing on phones (docs/design.md §4.6).
+  # Other platforms use the Dart code only.
+  plugin:
+    platforms:
+      android:
+        package: dev.kammcs.cloudflare_realtime
+        pluginClass: CloudflareRealtimePlugin
+      ios:
+        pluginClass: CloudflareRealtimePlugin

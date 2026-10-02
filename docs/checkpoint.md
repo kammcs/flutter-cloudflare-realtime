@@ -171,7 +171,7 @@ Each device publishes its microphone and camera as soon as the call screen opens
 What you'll use, from [`example/lib/call_page.dart`](../example/lib/call_page.dart):
 
 - **App bar** (left to right): the room ID; a **status chip** `media: <state> · signaling: <state>` (green cloud when both are `connected`); the **layout toggle** (tooltip *Stage layout* / *Gallery layout*); **Simulate network drop (debug)** (Wi-Fi-off icon); **Leave**.
-- **Bottom bar:** microphone, camera, **Switch camera**, the **speakerphone** (on phones: loudspeaker ↔ earpiece; calls start on the loudspeaker) (while the camera is on: front ↔ back on a phone, the next camera on a desktop), **Share screen** / **Stop sharing**, and the red **Leave call**.
+- **Bottom bar:** microphone, camera, **Switch camera**, the **audio output** (on phones: a sheet of the speaker, the phone's earpiece and connected headsets; a voice call starts on the earpiece and moves to the speaker when there is video) (while the camera is on: front ↔ back on a phone, the next camera on a desktop), **Share screen** / **Stop sharing**, and the red **Leave call**.
 - **Tiles:** yours (labelled *(you)*), then each remote camera and screen share. A green outline means speaking; a star marks the dominant speaker.
 - **Layer overlay** (top right of every remote video tile): `rid <rid> (<mode>) · <width>×<height> <fps>fps`, for example `rid b (auto) · 640×360 30fps`.
   - `rid` is the simulcast layer this device asks the SFU for: `a` = full (1280×720 for the default camera), `b` = half (640×360), `c` = quarter (320×180).
@@ -290,7 +290,7 @@ The example has these integration tests in [`example/integration_test/`](../exam
 - `sfu_loopback_test.dart`: publishes a camera (or microphone) track on one SFU session and pulls it on another, switching the pulled layer.
 - `datachannel_echo_test.dart`: a DataChannel echoed both ways.
 - `reconnect_test.dart`: two rooms in one process; the publisher's session is dropped and replaced, then the subscriber's, and the track must arrive again each time (criterion 3, automated).
-- `audio_routing_test.dart`: on phones, the call starts on the loudspeaker and `setSpeakerphone` moves it to the earpiece and back (iOS reports its route, so the test checks it there; on Android compare its log with `adb shell dumpsys audio`, "Active communication device"); on desktops, the room reports it has no speakerphone switch. Then each microphone in turn, with the subscriber still receiving audio.
+- `audio_routing_test.dart`: on phones, a voice call starts on the earpiece (or a connected headset), publishing a camera moves it to the speaker, `selectAudioRoute` and `setSpeakerphone` move it as asked (compare the Android log with `adb shell dumpsys audio`, "Active communication device"); on desktops, the room reports it has no audio routes. Then each microphone in turn, with the subscriber still receiving audio.
 - `camera_switch_test.dart`: two rooms in one process; the publisher switches its camera twice during the call (`switchCamera()`), and the subscriber must keep decoding frames each time. It also checks that a phone opens its front camera and that the capture is near the requested preset. With one camera, it only checks the call.
 - `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 

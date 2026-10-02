@@ -449,6 +449,7 @@ class LocalParticipant {
 
   void _changed() {
     if (_room._left) return;
+    _room._noteVideo();
     if (!_changes.isClosed) _changes.add(this);
     unawaited(_room._announcer.run());
   }
