@@ -317,30 +317,33 @@ void main() {
       });
     });
 
-    test('Windows never pauses, says so once, and still reports demand', () {
-      _run((async, h, alice, bob, pump) {
-        final events = <RoomEvent>[];
-        alice.events.listen(events.add);
-        final published = _publishCamera(alice, pump);
-        _publishCamera(alice, pump);
-        final cam = bob.participant('alice')!.camera!;
-        cam.setPreferredLayer(SimulcastLayer.low);
-        cam.subscribe();
-        pump();
-        expect(h.announced('bob')!.layerDemand, {published.trackName: 'c'});
-        async.elapse(const Duration(seconds: 10));
-        pump();
-        expect(published.pausedLayers, isEmpty);
-        expect(_active(h, alice), {'a', 'b', 'c'});
-        expect(h.pcOf(alice).log, isNot(contains('setEncodings')));
-        expect(
-          events.whereType<RoomErrorEvent>().where(
-            (e) => e.operation == 'layerPausing',
-          ),
-          hasLength(1),
-        );
-      }, platform: MediaPlatform.windows);
-    });
+    for (final platform in [MediaPlatform.windows, MediaPlatform.linux]) {
+      test('${platform.name} never pauses, says so once, and still reports '
+          'demand', () {
+        _run((async, h, alice, bob, pump) {
+          final events = <RoomEvent>[];
+          alice.events.listen(events.add);
+          final published = _publishCamera(alice, pump);
+          _publishCamera(alice, pump);
+          final cam = bob.participant('alice')!.camera!;
+          cam.setPreferredLayer(SimulcastLayer.low);
+          cam.subscribe();
+          pump();
+          expect(h.announced('bob')!.layerDemand, {published.trackName: 'c'});
+          async.elapse(const Duration(seconds: 10));
+          pump();
+          expect(published.pausedLayers, isEmpty);
+          expect(_active(h, alice), {'a', 'b', 'c'});
+          expect(h.pcOf(alice).log, isNot(contains('setEncodings')));
+          expect(
+            events.whereType<RoomErrorEvent>().where(
+              (e) => e.operation == 'layerPausing',
+            ),
+            hasLength(1),
+          );
+        }, platform: platform);
+      });
+    }
   });
 
   group('captured size', () {

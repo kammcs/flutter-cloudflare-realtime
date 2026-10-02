@@ -53,18 +53,21 @@ class _RoomLayerPausing {
         _pausers.containsKey(publication)) {
       return;
     }
-    // flutter_webrtc's Windows plugin ignores encoding changes in
-    // setParameters (it edits copies and reports success), so a paused
-    // layer would keep sending while pausedLayers said otherwise.
-    if (_room._mediaBackend.platform == MediaPlatform.windows) {
+    // flutter_webrtc's Windows and Linux plugin (its common C++) ignores
+    // encoding changes in setParameters (it edits copies and reports
+    // success), so a paused layer would keep sending while pausedLayers
+    // said otherwise.
+    final platform = _room._mediaBackend.platform;
+    if (platform == MediaPlatform.windows || platform == MediaPlatform.linux) {
       if (!_unsupportedReported) {
         _unsupportedReported = true;
         _room._emit(
           RoomErrorEvent(
             'layerPausing',
             UnsupportedError(
-              'Layer pausing does not work on Windows (flutter_webrtc '
-              'ignores encoding changes there); every layer stays on.',
+              'Layer pausing does not work on Windows or Linux '
+              '(flutter_webrtc ignores encoding changes there); every layer '
+              'stays on.',
             ),
           ),
         );
