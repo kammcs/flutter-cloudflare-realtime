@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/src/media/constraints.dart';
 import 'package:cloudflare_realtime/src/media/device_priority.dart';
 import 'package:cloudflare_realtime/src/media/flutter_webrtc_media_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -165,5 +166,40 @@ void main() {
       label: 'Camera 0, Facing back',
     );
     expect(orderBuiltInCameras([a, b]), [a, b]);
+  });
+
+  test('audioInputToSelect: only Android, only a named microphone', () {
+    final mic = microphoneConstraints(
+      const MicrophoneOptions(),
+      platform: MediaPlatform.android,
+      device: const MediaDevice(
+        deviceId: 'microphone-back',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Built-in Microphone (back)',
+      ),
+    );
+    expect(audioInputToSelect(mic, MediaPlatform.android), 'microphone-back');
+    for (final other in [
+      MediaPlatform.ios,
+      MediaPlatform.macos,
+      MediaPlatform.windows,
+      MediaPlatform.web,
+    ]) {
+      expect(audioInputToSelect(mic, other), isNull, reason: other.name);
+    }
+    final anyMic = microphoneConstraints(
+      const MicrophoneOptions(),
+      platform: MediaPlatform.android,
+    );
+    expect(audioInputToSelect(anyMic, MediaPlatform.android), isNull);
+    final camera = cameraConstraints(
+      const CameraOptions(),
+      platform: MediaPlatform.android,
+      device: const MediaDevice(
+        deviceId: '1',
+        kind: MediaDeviceKind.videoInput,
+      ),
+    );
+    expect(audioInputToSelect(camera, MediaPlatform.android), isNull);
   });
 }

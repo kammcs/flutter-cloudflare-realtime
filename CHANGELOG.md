@@ -9,6 +9,11 @@
   - `ParticipantVideoView` no longer mirrors a back camera's self-view by default.
   - On iOS, the plain cameras come first: iOS lists its virtual multi-camera devices ("Back Triple Camera") first, and `flutter_webrtc` gets no frames from them, so switching to the back camera sent nothing. Apple's built-in cameras are now ordered by the index in their ID.
   - Example: a **Switch camera** button on the call screen, and `integration_test/camera_switch_test.dart`.
+- The same call audio on every platform:
+  - **Calls start on the loudspeaker on both phones.** iOS played calls from the earpiece, even with video, while Android used the loudspeaker. `RoomOptions.speakerphone` (default `true`) is applied when the room joins; a connected headset comes first.
+  - **`Room.setSpeakerphone(on)`**, with `speakerphone`, `speakerphoneChanges` and `canSetSpeakerphone`: loudspeaker ↔ earpiece the same way on Android and iOS. On desktops and the web it throws (`canSetSpeakerphone` is `false`); choose a device with `setAudioOutputDevice` there.
+  - **Choosing a microphone works on Android.** The Android plugin ignored the microphone named in `getUserMedia` (it only reported it back), so `MicrophoneSource.setPreferredDevice` changed nothing; the backend now selects it first.
+  - Example: a speakerphone button on the call screen (phones), and `integration_test/audio_routing_test.dart`.
 - Example on iOS: an optional, git-ignored `ios/Flutter/Signing.xcconfig` for your signing team, and `NSLocalNetworkUsageDescription` for the dev server. `docs/checkpoint.md` covers running on an iPhone, and `--no-uninstall` for integration tests on phones (so permissions survive between runs).
 - Fixes from the first runs against the real SFU (Windows):
   - Offers and answers no longer carry stray receive-only audio and video m-lines: native `flutter_webrtc` adds them unless `createOffer`/`createAnswer` get explicit empty constraints.

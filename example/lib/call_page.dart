@@ -206,6 +206,9 @@ class _CallPageState extends State<CallPage> {
     }
   });
 
+  Future<void> _toggleSpeakerphone() =>
+      _run(() => _room.setSpeakerphone(!_room.speakerphone));
+
   Future<void> _switchCamera() => _run(() async {
     await _local.switchCamera();
   });
@@ -533,6 +536,16 @@ class _CallPageState extends State<CallPage> {
                 tooltip: 'Switch camera',
                 icon: const Icon(Icons.cameraswitch),
                 onPressed: _busy ? null : _switchCamera,
+              ),
+            if (_room.canSetSpeakerphone)
+              IconButton.filledTonal(
+                tooltip: _room.speakerphone
+                    ? 'Use the earpiece'
+                    : 'Use the speakerphone',
+                icon: Icon(
+                  _room.speakerphone ? Icons.volume_up : Icons.phone_in_talk,
+                ),
+                onPressed: _busy ? null : _toggleSpeakerphone,
               ),
             IconButton.filledTonal(
               tooltip: sharing ? 'Stop sharing' : 'Share screen',

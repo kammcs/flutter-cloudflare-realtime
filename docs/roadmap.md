@@ -39,10 +39,13 @@ A goal for the whole package ([design.md §2](design.md#2-goals-and-non-goals)):
   - the self-view is mirrored except for a back camera.
   
   `example/integration_test/camera_switch_test.dart` checks this on each device.
-- **Audio (to check on devices):** the API is already one call per operation; what's left is making sure each platform does the same thing with it.
-  - **Speaker routing on phones.** Android's `flutter_webrtc` prefers Bluetooth, then wired, then the speakerphone, then the earpiece. iOS uses the speaker in video-chat mode but the earpiece in voice-chat mode (no video). A call should start on the speaker (or a headset) on both.
-  - **Choosing the speaker.** `Room.setAudioOutputDevice` lists earpiece/speaker/Bluetooth/wired on Android, but on iOS it can only switch between the speaker and the current route. Decide on one model, for example a `speakerphone` switch plus the device list.
-  - **Choosing the microphone on phones.** `MicrophoneSource` selects a device through `getUserMedia`'s `sourceId`; on Android and iOS the input follows the audio route (`Helper.selectAudioInput`) instead. Check that choosing a headset microphone works.
+- **Audio (done, verified on Android, iOS and macOS):**
+  - calls start on the loudspeaker on both phones (`RoomOptions.speakerphone`; iOS used the earpiece, even with video), a headset first;
+  - `Room.setSpeakerphone` switches loudspeaker ↔ earpiece the same way on both, and says it can't on desktops (`canSetSpeakerphone`);
+  - choosing a microphone works on Android (it was silently ignored there).
+  
+  `example/integration_test/audio_routing_test.dart` checks this on each device.
+- **Still to do for audio:** a model for choosing a specific output on phones (Android lists earpiece/speaker/Bluetooth/wired; iOS can only override to the speaker, the rest follows the route), and Bluetooth and wired headsets on a device.
 - **Still to do for the camera:** the web (labels decide which way a camera faces there).
 - **A publish that waits on a permission prompt.** If the first publish waits long enough on the camera or microphone prompt (about a minute, seen on iOS), the SFU drops the still-unused session and the publish throws `SessionGoneException` (410). The Room re-sessions, but doesn't retry that publish. On phones, where the prompt comes with the first publish, the publish should survive this: retry it on the new session, or capture before the session's first use.
 

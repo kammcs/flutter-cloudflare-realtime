@@ -35,6 +35,14 @@ abstract interface class RemoteAudioSink {
   /// [supportsOutputSelection] is false.
   Future<void> setOutputDevice(String deviceId);
 
+  /// Whether [setSpeakerphone] can work here: on phones (Android, iOS).
+  bool get supportsSpeakerphone;
+
+  /// Routes call audio to the loudspeaker ([on]) or the earpiece, either
+  /// way to a connected headset (wired or Bluetooth) first. App-wide.
+  /// Throws an [UnsupportedError] where [supportsSpeakerphone] is false.
+  Future<void> setSpeakerphone(bool on);
+
   /// Stops everything and releases the elements.
   void dispose();
 }

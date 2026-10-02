@@ -20,8 +20,12 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
   MediaPlatform get platform => currentMediaPlatform();
 
   @override
-  Future<rtc.MediaStream> getUserMedia(Map<String, dynamic> constraints) =>
-      rtc.navigator.mediaDevices.getUserMedia(constraints);
+  Future<rtc.MediaStream> getUserMedia(Map<String, dynamic> constraints) async {
+    if (audioInputToSelect(constraints, platform) case final input?) {
+      await rtc.Helper.selectAudioInput(input);
+    }
+    return rtc.navigator.mediaDevices.getUserMedia(constraints);
+  }
 
   @override
   Future<rtc.MediaStream> getDisplayMedia(Map<String, dynamic> constraints) =>
@@ -67,6 +71,31 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
   @override
   DesktopCapturerBackend? get desktopCapturer =>
       platform.isDesktop ? const _FlutterWebrtcDesktopCapturer() : null;
+}
+
+/// The microphone to select before `getUserMedia` with [constraints] on
+/// [platform], or `null` when the request picks it by itself.
+///
+/// The Android plugin reads the microphone named in the constraints
+/// (`optional: [{sourceId: id}]`) only to report it back in the track's
+/// settings: it captures from whichever input was selected last. Only
+/// `Helper.selectAudioInput` changes it. Darwin, Windows and browsers
+/// select it from the constraints.
+@visibleForTesting
+String? audioInputToSelect(
+  Map<String, dynamic> constraints,
+  MediaPlatform platform,
+) {
+  if (platform != MediaPlatform.android) return null;
+  final audio = constraints['audio'];
+  if (audio is! Map) return null;
+  final optional = audio['optional'];
+  if (optional is! List) return null;
+  for (final entry in optional) {
+    final id = entry is Map ? entry['sourceId'] : null;
+    if (id is String && id.isNotEmpty) return id;
+  }
+  return null;
 }
 
 /// A [MediaDevice] from one entry of `flutter_webrtc`'s device list, or

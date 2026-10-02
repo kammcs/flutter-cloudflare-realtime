@@ -185,6 +185,7 @@ class RoomOptions {
     this.leaseReleaseGrace = const Duration(milliseconds: 500),
     this.activeSpeaker = const ActiveSpeakerConfig(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
+    this.speakerphone = true,
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -250,4 +251,12 @@ class RoomOptions {
   /// `getStats()` while a share captures. Default 8 s; `null` turns the
   /// check off.
   final Duration? screenShareStallTimeout;
+
+  /// Whether call audio starts on the loudspeaker, on phones. Default
+  /// `true`, as video calls expect, on Android and iOS alike (out of the
+  /// box iOS would use the earpiece). `false` starts on the earpiece.
+  /// Either way a connected headset (wired or Bluetooth) comes first.
+  /// Applied when the room joins; change it with [Room.setSpeakerphone].
+  /// No effect on desktops and in browsers.
+  final bool speakerphone;
 }

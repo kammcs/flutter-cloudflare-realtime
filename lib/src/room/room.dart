@@ -154,7 +154,7 @@ class Room {
   late final _RoomLayers _layers = _RoomLayers(this);
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   // Remote audio playback (the web's audio elements): room_audio.dart.
-  late final _RoomAudio _audio = _RoomAudio();
+  late final _RoomAudio _audio = _RoomAudio(speakerphone: options.speakerphone);
   ParticipantState? _announced;
   // While set, [_announce] does nothing: a re-session announces the new
   // session itself, once its tracks are on it.
@@ -308,6 +308,30 @@ class Room {
     return _audio.setOutput(deviceId);
   }
 
+  /// Whether [setSpeakerphone] works here: on phones (Android and iOS).
+  bool get canSetSpeakerphone => _audio.canSetSpeakerphone;
+
+  /// Whether call audio goes to the loudspeaker (`true`) or the earpiece,
+  /// on phones; either way a connected headset comes first. Starts as
+  /// [RoomOptions.speakerphone].
+  bool get speakerphone => _audio.speakerphone.value;
+
+  /// [speakerphone], replaying the current value to each new listener and
+  /// then emitting its changes. Completes after [leave].
+  Stream<bool> get speakerphoneChanges => _audio.speakerphone.stream;
+
+  /// Routes call audio to the loudspeaker ([on]) or the earpiece, the same
+  /// way on Android and iOS; a connected wired or Bluetooth headset comes
+  /// first either way. Like the platforms' own switches, it applies to the
+  /// whole app, not just this room.
+  ///
+  /// Throws an [UnsupportedError] where [canSetSpeakerphone] is `false`
+  /// (desktops and browsers: choose a device with [setAudioOutputDevice]).
+  Future<void> setSpeakerphone(bool on) {
+    _checkNotLeft();
+    return _audio.setSpeakerphone(on);
+  }
+
   /// Leaves the room and releases everything it holds.
   ///
   /// In order: stops listening to signaling and leaves it (so others stop
@@ -335,6 +359,13 @@ class Room {
   }
 
   Future<void> _join() async {
+    // Phones: start on the speakerphone (or not) the same way on Android
+    // and iOS. Best effort: a failure here must not fail the join.
+    try {
+      await _audio.setSpeakerphone(options.speakerphone, require: false);
+    } catch (error) {
+      _emit(RoomErrorEvent('speakerphone', error));
+    }
     final self = localParticipant.state;
     await signaling.join(roomId, self);
     _announced = self;
