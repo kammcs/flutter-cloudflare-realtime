@@ -136,6 +136,14 @@ void main() {
       expect(b.height, closeTo(a.height! / 2, 2));
       expect(c.height, closeTo(a.height! / 4, 2));
       expect(b.width, closeTo(a.width! / 2, 2));
+      final reportsLimitation = sent.reports.any(
+        (r) =>
+            r.type == 'outbound-rtp' &&
+            r.values['qualityLimitationReason'] != null,
+      );
+      if (!reportsLimitation) {
+        _log('No qualityLimitationReason in the reports (as in Firefox)');
+      }
       for (final layer in [a, b, c]) {
         expect(
           layer.bitrate,
@@ -144,7 +152,11 @@ void main() {
         );
         expect(layer.framesPerSecond, greaterThan(0), reason: '$layer');
         expect(layer.packetsSent, greaterThan(0));
-        expect(layer.qualityLimitationReason, isNotNull);
+        // Parsed wherever the platform reports it; Firefox doesn't, and
+        // the typed value is then null (unknown), not "none".
+        if (reportsLimitation) {
+          expect(layer.qualityLimitationReason, isNotNull, reason: '$layer');
+        }
       }
       expect(sent.connection!.roundTripTime, greaterThan(Duration.zero));
       expect(sent.connection!.localCandidate?.type, isNotNull);
