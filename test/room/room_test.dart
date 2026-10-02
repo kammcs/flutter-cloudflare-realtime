@@ -104,6 +104,9 @@ void main() {
           participantId: 'alice',
           sessionId: 'session-1',
           metadata: const {'displayName': 'Alice'},
+          // It reports what it pulls (nothing yet), so publishers can pause
+          // the layers no one pulls.
+          layerDemand: const {},
         ),
       );
       expect(room.currentConnectionState, RoomConnectionState.connected);

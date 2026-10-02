@@ -181,6 +181,9 @@ class FakeMediaBackend implements MediaBackend {
   /// native Windows falling back to the first camera.
   final Map<String, String> redirects = {};
 
+  /// Extra settings for captured video tracks, such as a width and height.
+  Map<String, dynamic> videoSettings = const {};
+
   /// Called after each successful getUserMedia.
   void Function()? afterUserMedia;
 
@@ -223,7 +226,7 @@ class FakeMediaBackend implements MediaBackend {
       FakeTrack(
         kind: isAudio ? 'audio' : 'video',
         label: device.label,
-        settings: {'deviceId': device.deviceId},
+        settings: {'deviceId': device.deviceId, if (!isAudio) ...videoSettings},
       ),
     ]);
     streams.add(stream);

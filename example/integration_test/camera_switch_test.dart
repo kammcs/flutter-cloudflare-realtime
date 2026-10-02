@@ -115,6 +115,11 @@ void main() {
 
       // Same pull throughout: the subscriber never had to pull again.
       expect(await _remoteCamera(bob, alice), same(pulled));
+      // The announced layer size follows the capture (M12; checked every
+      // 3 s and after each switch).
+      await Future<void>.delayed(const Duration(seconds: 4));
+      _log('announced ${published.simulcast}, Bob sees ${pulled.simulcast}');
+      expect(pulled.simulcast, published.simulcast);
     },
     skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),

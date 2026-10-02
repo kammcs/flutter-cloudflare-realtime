@@ -11,7 +11,8 @@ This project isn't affiliated with or endorsed by Cloudflare.
 - Rooms on top of the SFU, with presence supplied by your own signaling (for example, Supabase Realtime, Firebase or your own WebSocket).
 - Camera, microphone and screen publishing, and selective subscription.
 - The same calls behave the same on every platform: the front camera by default, `switchCamera()` that flips front and back on phones and cycles cameras on desktops, presets honoured, and a self-view mirrored only when it should be.
-- Simulcast with per-tile layer selection.
+- Simulcast with per-tile layer selection, layers announced at the size the camera captures, and (opt-in) pausing the layers no one pulls.
+- VP8 by default; H.264, VP9 or AV1 per room or per publication (`RoomOptions.videoCodec`).
 - Active-speaker detection.
 - Automatic reconnection.
 - Calls that keep going in the background on phones, pause for a phone call and resume after it, and turn the screen off at the ear.

@@ -6,7 +6,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
-import 'package:flutter/foundation.dart' show debugPrint, immutable;
+import 'package:flutter/foundation.dart'
+    show debugPrint, immutable, kIsWeb, mapEquals;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState;
@@ -33,6 +34,7 @@ import '../quality/active_speaker_monitor.dart';
 import '../quality/call_stats.dart';
 import '../quality/call_stats_reader.dart';
 import '../quality/connection_quality.dart';
+import '../quality/layer_pausing.dart';
 import '../quality/layer_selection.dart';
 import '../quality/layer_selection_controller.dart';
 import '../quality/simulcast_ladder.dart';
@@ -58,6 +60,7 @@ import 'simulcast_hint.dart';
 part 'local_participant.dart';
 part 'participant.dart';
 part 'room_audio.dart';
+part 'room_publish_quality.dart';
 part 'room_background.dart';
 part 'remote_participant.dart';
 part 'remote_track_layers.dart';
@@ -168,6 +171,8 @@ class Room {
   late final _RoomSpeakers _speakers = _RoomSpeakers(this);
   // Typed stats and connection quality (M12): room_stats.dart.
   late final _RoomStats _stats = _RoomStats(this);
+  // Pausing the local layers no one pulls (M12): room_publish_quality.dart.
+  late final _RoomLayerPausing _pausing = _RoomLayerPausing(this);
   // Remote audio playback (the web's audio elements): room_audio.dart.
   late final _RoomAudio _audio = _RoomAudio();
   // Background service, interruptions, camera pauses: room_background.dart.
@@ -782,6 +787,8 @@ class Room {
     ];
     final diff = diffParticipants(_signaled, others);
     _signaled = others;
+    // Layer demand changes aren't part of the diff.
+    _pausing.onParticipants(others);
     if (diff.isEmpty) return;
     for (final state in [
       ...diff.joined,
@@ -831,6 +838,7 @@ class Room {
     _speakers.stop();
     _stats.stop();
     _layers.dispose();
+    _pausing.dispose();
     // A reconnection in progress notices [_left] and stops; a session it
     // was connecting is closed by it.
     _reconnection.dispose();

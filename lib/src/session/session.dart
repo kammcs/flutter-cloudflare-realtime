@@ -5,6 +5,7 @@ export 'publish_options.dart'
         SendEncoding,
         SfuSessionDefaults,
         SimulcastPresets,
+        VideoCodec,
         defaultVideoCodecPreferences;
 export 'sfu_session.dart'
     show

@@ -97,7 +97,10 @@ class LocalParticipant implements Participant {
       _room._stats.local.stream;
 
   /// The state announced through signaling: the session, every published
-  /// track with its mute flag and simulcast layers, and [metadata].
+  /// track with its mute flag and simulcast layers, [metadata], and the
+  /// layer this client pulls of each remote simulcast video
+  /// ([ParticipantState.layerDemand], unless
+  /// [LayerPausingOptions.reportDemand] is off).
   ///
   /// A track the SFU rejected when the room moved it to a new session
   /// (its [LocalMediaPublication.publication] is [SfuTrackState.failed]) is
@@ -110,6 +113,9 @@ class LocalParticipant implements Participant {
         if (p.publication.state != SfuTrackState.failed) p.trackName: p.info,
     },
     metadata: _metadata,
+    layerDemand: _room.options.layerPausing.reportDemand
+        ? _room._layers.demand()
+        : null,
   );
 
   LocalMediaPublication? _first(TrackSource source) {
@@ -138,6 +144,11 @@ class LocalParticipant implements Participant {
   /// With [muted], the track is published without capturing (the camera
   /// light stays off) until [LocalMediaPublication.unmute].
   ///
+  /// The announced layer size is the size the camera captures (from the
+  /// track, then from `getStats()`: portrait on a phone held upright), not
+  /// the preset, and it is announced again when it changes
+  /// (`docs/design.md` §6.3). [codec] overrides [RoomOptions.videoCodec].
+  ///
   /// Throws the capture's [MediaException] if the camera can't start (the
   /// source is disposed then), or the session's exception if the SFU
   /// rejects the track.
@@ -146,6 +157,7 @@ class LocalParticipant implements Participant {
     MediaDevice? device,
     List<SendEncoding>? encodings,
     bool muted = false,
+    VideoCodec? codec,
   }) async {
     _room._checkNotLeft();
     final camera = CameraSource(
@@ -157,16 +169,18 @@ class LocalParticipant implements Participant {
     if (!muted) await _startCapture(camera, camera.startBroadcasting);
     final effective =
         encodings ?? _room._session.options.defaults.videoEncodings;
+    final captured = _settingsSize(camera.currentTrack?.track);
     return _publish(
       camera,
       source: TrackSource.camera,
       kind: TrackKind.video,
       ownsSource: true,
       encodings: encodings,
+      codec: codec,
       simulcast: simulcastInfoFor(
         effective,
-        width: options.preset.width,
-        height: options.preset.height,
+        width: captured?.$1 ?? options.preset.width,
+        height: captured?.$2 ?? options.preset.height,
       ),
     );
   }
@@ -240,8 +254,9 @@ class LocalParticipant implements Participant {
   /// 15 fps by the default [options]; `docs/design.md` §12, question 2).
   /// Pass [ScreenSharePresets.motion] (with `frameRate: 30`) for video, or
   /// [ScreenSharePresets.simulcast] to add a thumbnail layer, whose layers
-  /// are then announced in [TrackInfo.simulcast]. On Windows the video is
-  /// sent as VP8, like every video track (the session default).
+  /// are then announced in [TrackInfo.simulcast] with the captured size.
+  /// The video is sent with [codec], else [RoomOptions.videoCodec], else
+  /// the session default (VP8); never H.264 from Windows.
   ///
   /// When the share ends outside the app (the shared window closes, the
   /// browser's "Stop sharing" button, Android's stop control or
@@ -264,6 +279,7 @@ class LocalParticipant implements Participant {
     ScreenSource? source,
     ScreenShareOptions options = const ScreenShareOptions(),
     List<SendEncoding>? encodings,
+    VideoCodec? codec,
   }) async {
     _room._checkNotLeft();
     final share = ScreenShareSource(
@@ -286,6 +302,7 @@ class LocalParticipant implements Participant {
         kind: TrackKind.video,
         ownsSource: true,
         encodings: effective,
+        codec: codec,
         simulcast: simulcastInfoFor(effective),
       );
     } finally {
@@ -328,14 +345,15 @@ class LocalParticipant implements Participant {
   ///
   /// The room sends whatever the source broadcasts (nothing while it isn't
   /// broadcasting, which is announced as muted) and never disposes it; the
-  /// app starts and stops it. [encodings] and [simulcast] are as for
-  /// [publishCamera]; pass [simulcast] to announce the layers of a
-  /// simulcast video.
+  /// app starts and stops it. [encodings], [simulcast] and [codec] are as
+  /// for [publishCamera]; pass [simulcast] to announce the layers of a
+  /// simulcast video (its size is then corrected to the captured size).
   Future<LocalMediaPublication> publishMediaSource(
     LocalMediaSource mediaSource, {
     TrackSource? source,
     List<SendEncoding>? encodings,
     SimulcastInfo? simulcast,
+    VideoCodec? codec,
   }) {
     _room._checkNotLeft();
     return _publish(
@@ -345,6 +363,7 @@ class LocalParticipant implements Participant {
       ownsSource: false,
       encodings: encodings,
       simulcast: simulcast,
+      codec: codec,
     );
   }
 
@@ -419,10 +438,14 @@ class LocalParticipant implements Participant {
     List<SendEncoding>? encodings,
     SimulcastInfo? simulcast,
     Stream<CapturedTrack?>? tracks,
+    VideoCodec? codec,
   }) async {
     // Readable and unique; kept for the publication's lifetime, so a
     // republish on a new session (docs/design.md §8) keeps the name.
     final trackName = '${source.name}-${generateTrackName()}';
+    final videoCodec = kind == TrackKind.video
+        ? _effectiveVideoCodec(_room, codec)
+        : null;
     final LocalTrackPublication publication;
     try {
       // While the room replaces its session, push to the new one. A push
@@ -435,6 +458,7 @@ class LocalParticipant implements Participant {
           options: PublishOptions(
             trackName: trackName,
             sendEncodings: encodings,
+            codecPreferences: videoCodec?.codecPreferences,
           ),
         ),
       );
@@ -455,6 +479,7 @@ class LocalParticipant implements Participant {
       publication: publication,
       ownsMediaSource: ownsSource,
       simulcast: kind == TrackKind.video ? simulcast : null,
+      videoCodec: videoCodec,
     );
     _publications.add(local);
     // Mute changes are announced; the stream replays the current value,
@@ -462,6 +487,11 @@ class LocalParticipant implements Participant {
     local._broadcastingListener = mediaSource.broadcasting.listen(
       (_) => _changed(),
     );
+    _room._pausing.add(local);
+    if (local._simulcast != null) {
+      local._captureSize = _CaptureSizeWatcher(_room, local)
+        ..start(tracks ?? mediaSource.broadcastTrack);
+    }
     _changed();
     await _room._announcer.run();
     _room._emit(LocalTrackPublishedEvent(local));
@@ -525,7 +555,8 @@ class LocalMediaPublication {
     required this.kind,
     required this.publication,
     required this.ownsMediaSource,
-    this.simulcast,
+    this._simulcast,
+    this.videoCodec,
   });
 
   /// The participant that published it.
@@ -548,9 +579,33 @@ class LocalMediaPublication {
   /// Whether the room created [mediaSource] and disposes it on unpublish.
   final bool ownsMediaSource;
 
-  /// The simulcast layers announced for the track, or `null`.
-  final SimulcastInfo? simulcast;
+  SimulcastInfo? _simulcast;
 
+  /// The simulcast layers announced for the track, or `null`. Their size is
+  /// the size the source captures, updated when it changes
+  /// (`docs/design.md` §6.3).
+  SimulcastInfo? get simulcast => _simulcast;
+
+  /// The codec the video is sent with, as requested (the platform falls
+  /// back to VP8 when it can't encode it), or `null` for the session's
+  /// codec preferences (VP8 by default) and for audio.
+  final VideoCodec? videoCodec;
+
+  final StateStream<Set<String>> _pausedLayers = StateStream(
+    const {},
+    distinct: true,
+  );
+
+  /// The simulcast layers (RIDs) not sent now because no one in the room
+  /// pulls them ([RoomOptions.layerPausing], `docs/design.md` §6.2). Empty
+  /// when every layer is sent.
+  Set<String> get pausedLayers => _pausedLayers.value;
+
+  /// [pausedLayers], replaying the current value to each new listener, then
+  /// its changes. Completes when the track is unpublished.
+  Stream<Set<String>> get pausedLayersChanges => _pausedLayers.stream;
+
+  _CaptureSizeWatcher? _captureSize;
   bool _unpublished = false;
   LocalMediaPublication? _companion;
   StreamSubscription<bool>? _broadcastingListener;
@@ -619,9 +674,13 @@ class LocalMediaPublication {
     unawaited(_broadcastingListener?.cancel());
     unawaited(_endedListener?.cancel());
     _watchdog?.dispose();
+    _captureSize?.stop();
+    participant._room._pausing.remove(this);
     _broadcastingListener = null;
     _endedListener = null;
     _watchdog = null;
+    _captureSize = null;
+    unawaited(_pausedLayers.close());
   }
 
   @override

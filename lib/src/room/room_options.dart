@@ -5,9 +5,11 @@ import 'package:flutter/foundation.dart';
 
 import '../quality/active_speaker_config.dart';
 import '../quality/connection_quality.dart';
+import '../quality/layer_pausing.dart';
 import '../quality/layer_selection.dart';
 import '../reconnect/backoff.dart';
 import '../reconnect/reconnect_trigger.dart';
+import '../session/publish_options.dart';
 import '../session/sfu_session.dart';
 
 /// Which remote tracks a [Room] pulls without being asked.
@@ -191,6 +193,8 @@ class RoomOptions {
     this.connectEarly = true,
     this.foregroundService = true,
     this.proximitySensor = true,
+    this.layerPausing = const LayerPausingOptions(),
+    this.videoCodec,
   });
 
   /// Which remote tracks to pull without being asked. Default: audio only.
@@ -310,4 +314,24 @@ class RoomOptions {
   /// room with `false` keeps it off. No effect on desktops, in browsers, and
   /// on devices without the sensor. See [Room.proximitySensorActive].
   final bool proximitySensor;
+
+  /// Pausing the simulcast layers of this room's video that no one pulls,
+  /// and reporting which layers this room pulls of others' video
+  /// (`docs/design.md` §6.2). Default: reporting on, pausing off (the SFU
+  /// doesn't reliably switch a subscriber up to a layer that was paused);
+  /// [LayerPausingOptions.on] turns pausing on.
+  final LayerPausingOptions layerPausing;
+
+  /// The codec this room's video (camera, screen share, app sources) is
+  /// sent with, unless a publish names its own (`codec:`). `null` (the
+  /// default) uses the session's codec preferences
+  /// ([SfuSessionDefaults.videoCodecPreferences]), which are VP8 unless
+  /// changed (`docs/design.md` §6, Codec).
+  ///
+  /// [VideoCodec.h264] saves battery on phones with a hardware encoder,
+  /// but mind Windows: a Windows publisher sends VP8 instead (with a
+  /// [RoomErrorEvent] `videoCodec`), and a Windows subscriber may crash
+  /// decoding H.264 (flutter-webrtc #982), so keep VP8 in rooms with
+  /// Windows participants.
+  final VideoCodec? videoCodec;
 }

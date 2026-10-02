@@ -221,6 +221,8 @@ Notes:
 - The SFU switches layers at a keyframe of the new layer, so the resolution follows the `rid` (which changes at once) after a delay. Against the real SFU (October 2026, Windows ↔ Android, Windows ↔ macOS, Android ↔ macOS and iOS ↔ macOS, `cross_device_test.dart`), a switch usually took **8–13 s**, sometimes 1–4 s. The delay was strikingly regular (about 8.3 s for the first two switches and 12.4 s for the third, in both directions and with either device publishing; macOS, Android and iOS receivers saw the same: 8.1–8.8 s, then 12.2–12.7 s), and the `tracks/update` call itself answers at once, which points at the SFU rather than either client. Wait about 15 s before failing a switch.
 - A publisher only sends `a` when its uplink allows about 1.2 Mbps more than `b` and `c`. On a weak uplink the receiver can ask for `a` and get `b` (the SFU falls back to the next layer: `ridNotAvailable: asciibetical`). Check the publisher's network before failing this.
 - A camera that captures below 960×540 (some Windows webcams give 640×480) sends only two layers, `a` and `b`; asking for `c` then gets the nearest layer that exists.
+- Since M12 publishers announce the size they capture, so a phone held upright shows as portrait (720×1280 for `a`) and its layers are picked for portrait tiles.
+- Sometimes the SFU never switches up: the overlay says `rid a` and the resolution stays at `b` (seen in M12 runs on a Pixel 10, with every layer on, [design.md §6.2](design.md#62-publisher-side-layer-pausing-m12)). Note it in the results. Switching to another layer and back didn't help in those runs; a new pull of the track (close the tile long enough to release it, then reopen it) got the layer.
 
 ### Criterion 3: recovery from a network drop
 
@@ -325,6 +327,11 @@ The example has these integration tests in [`example/integration_test/`](../exam
 
     Plain `flutter test integration_test/system_call_test.dart` runs everything but the background case. On an iPhone the same Dart runs without the Android-only parts.
   - **By hand** (Android; the example's **Simulate incoming call** rings 5 s after the tap, time to lock the phone): with the phone locked, the call must ring full screen over the lock screen (the example's activity), with the ringtone if the ringer is on; Answer and Decline in the notification and in the heads-up banner; Hang up in the ongoing notification; the call chip in the status bar; a real phone call during the call must hold it (`held`, silent) and resume it after; a Bluetooth headset's button ends the call; a car or a watch where available. On Android 14+ the full-screen ring needs the "Full screen notifications" permission for the app (the example opens its settings page once).
+- `publish_quality_test.dart` (M12; [design.md §6.2, §6.3](design.md#62-publisher-side-layer-pausing-m12)): two rooms in one process.
+  - **Layer pausing** (turned on for the publisher): the subscriber pulls only `c`, so the publisher must pause `a` and `b` (`outbound-rtp` `active: false`) while `c` keeps sending; the subscriber then switches up to `a`: the publisher must resume at once and the subscriber keep decoding (whether the SFU moves it up within 20 s is logged, not asserted); then a new pull of the paused `a` must decode it within 10 s. `--dart-define=CF_QUALITY_PAUSING=false` runs the same without pausing, as a baseline.
+  - **The announced size** must match the camera's `media-source` size (portrait on a phone held upright).
+  - **The codec:** with `RoomOptions.videoCodec`, the subscriber must decode that codec (VP8 where the platform lacks the encoder); the encoders and decoders in use are logged. `--dart-define=CF_QUALITY_CODECS=h264,vp9,av1` (default `h264`).
+  - Pixel 10, October 2, 2026: paused after the 3 s delay, resumed 0.11–0.25 s after the request; switching up reached `a` in 6.5 s and 6.6 s and stayed on `b` once (2 of 3 runs; the baseline without pausing: 3 of 3, in 6.4–10.5 s); a new pull of the paused layer decoded it in 0.54–0.56 s; captured and announced 720×1280 (the camera's settings said 1280×720); H.264 on the hardware `c2.google.avc.encoder`, three layers, decoded by `c2.google.avc.decoder`; VP9 (libvpx) and AV1 (`c2.google.av1.encoder`) sent one layer.
 - `cross_device_test.dart`: a call between **two devices**, such as Windows and an Android phone (criteria 1 and 2, automated). See [Cross-device test](#cross-device-test).
 
 They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](../example/integration_test/broker_settings.dart)), as `--dart-define`s or, on desktop, environment variables:
@@ -339,6 +346,8 @@ They are skipped unless a broker URL is set. Settings ([`broker_settings.dart`](
 | `CF_REALTIME_CROSS_DEVICE_SCREEN` | `--dart-define` only: `true` makes a phone side of `cross_device_test.dart` publish its microphone, then share its screen instead of its camera (answer Android's consent dialog, or tap "Start Broadcast" on the iPhone within 2 minutes) |
 | `CF_REALTIME_SYSTEM_CALL_DRIVER` | `--dart-define` only: `1` (set by `system_call_test_driver.sh`) runs `system_call_test.dart`'s background case, which needs Home pressed |
 | `CF_REALTIME_SCREEN_SHARE_EXTERNAL_STOP` | `--dart-define` only: `true` makes `screen_share_test.dart` also wait for a stop from outside the app |
+| `CF_QUALITY_PAUSING` | `--dart-define` only: `false` runs `publish_quality_test.dart`'s layer test without pausing (a baseline) |
+| `CF_QUALITY_CODECS` | `--dart-define` only: the codecs `publish_quality_test.dart` checks, comma-separated (`h264,vp9,av1`; default `h264`) |
 
 Run them on each platform, from `example/`:
 
@@ -410,7 +419,7 @@ Android blocks cleartext `http://` and `ws://` by default. The example allows it
 
 ### Windows H.264 crash
 
-`flutter_webrtc` on Windows has crashed with H.264 video (flutter-webrtc #982). The package sends VP8 from every platform by default (and so does the example: its `VIDEO_CODEC` define defaults to `video/VP8`), because the SFU forwards each publisher's codec unchanged, so a Windows receiver would otherwise decode a Mac's or phone's H.264. If a Windows device crashes when another participant joins, check that no device was started with `--dart-define=VIDEO_CODEC=default` or `video/H264`.
+`flutter_webrtc` on Windows has crashed with H.264 video (flutter-webrtc #982). The package sends VP8 from every platform by default (and so does the example: its `VIDEO_CODEC` define defaults to `video/VP8`), because the SFU forwards each publisher's codec unchanged, so a Windows receiver would otherwise decode a Mac's or phone's H.264. If a Windows device crashes when another participant joins, check that no device was started with `--dart-define=VIDEO_CODEC=default` or `video/H264`, and that no app joined with `RoomOptions.videoCodec: VideoCodec.h264` (M12). A Windows *publisher* asked for H.264 sends VP8 instead and reports `RoomErrorEvent('videoCodec', …)`; a Windows *subscriber* has no such protection, so keep rooms with Windows participants on VP8 ([design.md §6](design.md#6-simulcast), Codec).
 
 ### TURN and different networks
 

@@ -126,6 +126,29 @@ class _RoomLayers implements LayerDemandReporter {
     if (_disposed || !identical(_byId[publication.id], publication)) return;
     _byId.remove(publication.id);
     _controller.removeSubscription(publication.id);
+    demandMayHaveChanged();
+  }
+
+  Map<String, String> _lastDemand = const {};
+
+  /// The layer this room pulls (or is about to pull) of each remote video:
+  /// `trackName` to the target RID, for [ParticipantState.layerDemand]
+  /// (`docs/design.md` §6.2). Lists only tracks that are subscribed and
+  /// asked for with a RID.
+  Map<String, String> demand() => {
+    for (final publication in _byId.values)
+      if (publication.isSubscribed)
+        publication.trackName: ?publication._layers.targetRid(),
+  };
+
+  /// Re-announces the local state when [demand] changed. Called whenever a
+  /// publication's layer state is published.
+  void demandMayHaveChanged() {
+    if (_disposed || !_room.options.layerPausing.reportDemand) return;
+    final next = demand();
+    if (mapEquals(next, _lastDemand)) return;
+    _lastDemand = next;
+    unawaited(_room._announcer.run());
   }
 
   @override
@@ -323,6 +346,7 @@ class _TrackLayers {
         released: released,
       ),
     );
+    _room._layers.demandMayHaveChanged();
   }
 
   void cancelTimers() {
