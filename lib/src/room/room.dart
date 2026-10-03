@@ -388,7 +388,7 @@ class Room {
   /// playing now and for audio pulled later. Its
   /// [AudioOutputException.reason] is
   /// [AudioOutputFailure.needsUserGesture] when the browser wants a user
-  /// gesture (Safari, for any device but the default; a browser's
+  /// gesture (Safari, for any change of output; a browser's
   /// `NotAllowedError`), [AudioOutputFailure.notFound] for a device that
   /// isn't there, [AudioOutputFailure.permissionDenied] when the page may
   /// not use it (Chrome's `SecurityError` before the microphone is

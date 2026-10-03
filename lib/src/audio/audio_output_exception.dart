@@ -6,7 +6,7 @@ library;
 /// Why the platform refused an audio output device ([AudioOutputException]).
 enum AudioOutputFailure {
   /// The browser didn't allow the switch (`NotAllowedError`). Safari
-  /// accepts any device but the default only from a user gesture: call
+  /// changes the output (even to `default`) only from a user gesture: call
   /// [Room.setAudioOutputDevice] again from a button's or menu item's
   /// `onPressed`, with nothing awaited before it. A permissions policy that
   /// forbids choosing the speaker is refused with the same name, and there

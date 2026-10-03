@@ -11,7 +11,7 @@ typedef AudioOutputFailureOf = AudioOutputFailure Function(Object error);
 /// `<audio>` elements (`docs/design.md` §4.3, Remote audio).
 ///
 /// A choice is kept only once the browser accepted it. A refused one (Safari
-/// switches to a non-default device only from a user gesture) throws an
+/// changes the output only from a user gesture) throws an
 /// [AudioOutputException], and leaves [deviceId] and the elements as they
 /// were, like a failed `Helper.selectAudioOutput` on native platforms.
 /// Otherwise every element created later would retry the refused device,

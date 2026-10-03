@@ -104,7 +104,7 @@ class WebRemoteAudioSink implements RemoteAudioSink {
       );
     }
     // Kept only once the browser accepted it (see OutputDeviceChoice):
-    // Safari refuses a non-default device outside a user gesture.
+    // Safari refuses any change of output outside a user gesture.
     final ids = _elements.keys.toSet();
     await _output.choose(deviceId, [
       for (final id in ids) _elements[id]!,
