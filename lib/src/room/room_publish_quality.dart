@@ -186,8 +186,9 @@ class _Paused {
 /// (docs/design.md §6.3), so that subscribers' layer selection builds its
 /// ladder (§6.1) from the sizes the layers are sent at: the sending layers
 /// in `getStats()` scaled back up, else the `media-source` report of its
-/// track. It follows rotation (a phone held upright captures portrait),
-/// camera switches, constraint changes and libwebrtc's CPU adaptation.
+/// track (in the layers' orientation). It follows rotation (a phone held
+/// upright captures portrait), camera switches, constraint changes and
+/// libwebrtc's CPU adaptation.
 class _SentSizeWatcher {
   _SentSizeWatcher(this._room, this._publication);
 
@@ -256,10 +257,15 @@ class _SentSizeWatcher {
         }
         // The layers first: the media-source has the camera's size, from
         // before the CPU adaptation (a Pixel 10 encoding VP8 in software
-        // captured 720x1280 and sent 540x960), and none on Windows.
+        // captured 720x1280 and sent 540x960), and none on Windows. Its
+        // orientation can differ from the layers' too: an iPhone held
+        // upright reports a landscape media-source and sends portrait.
         final size =
             _fromLayers(reports, report.id) ??
-            _size(values['width'], values['height']);
+            _oriented(
+              _size(values['width'], values['height']),
+              _layerShape(reports, report.id),
+            );
         if (size != null) return size;
       }
     } catch (_) {
@@ -306,6 +312,50 @@ class _SentSizeWatcher {
       best = ((size.$1 * scale).round(), (size.$2 * scale).round());
     }
     return best;
+  }
+
+  /// The frame size of the lowest sending layer of the media source
+  /// [sourceId], whatever limits it, for its orientation only: the floor
+  /// layer is never paused (§6.2) and is the last one the bandwidth
+  /// estimate suspends, so its size is the current one. `null` before a
+  /// layer reports a size.
+  (int, int)? _layerShape(List<StatsReport> reports, String sourceId) {
+    final info = _publication._simulcast;
+    final scales = info?.scaleDownBy;
+    if (info == null || scales == null) return null;
+    (int, int)? shape;
+    var shapeScale = 0.0;
+    for (final report in reports) {
+      final values = report.values;
+      if (report.type != 'outbound-rtp' ||
+          values['mediaSourceId'] != sourceId ||
+          values['active'] == false) {
+        continue;
+      }
+      final index = info.rids.indexOf('${values['rid']}');
+      if (index < 0) continue;
+      final scale = scales[index];
+      final size = _size(values['frameWidth'], values['frameHeight']);
+      if (size == null || scale <= shapeScale) continue;
+      shapeScale = scale;
+      shape = size;
+    }
+    return shape;
+  }
+
+  /// [size] turned to [shape]'s orientation (portrait or landscape), when
+  /// both have one and they differ. Only the orientation is taken from
+  /// [shape]: a layer limited by `bandwidth` may be scaled down by the
+  /// quality scaler, whose size must not be announced (see [_fromLayers]),
+  /// while the rotation doesn't depend on the bandwidth.
+  static (int, int)? _oriented((int, int)? size, (int, int)? shape) {
+    if (size == null || shape == null) return size;
+    final (width, height) = size;
+    final (shapeWidth, shapeHeight) = shape;
+    if (width == height || shapeWidth == shapeHeight) return size;
+    return (width > height) == (shapeWidth > shapeHeight)
+        ? size
+        : (height, width);
   }
 
   static (int, int)? _size(Object? width, Object? height) {
