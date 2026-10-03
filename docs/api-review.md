@@ -181,8 +181,8 @@ Every `RoomEvent` subtype ends in `Event` and starts with what it is about: `Par
 ## dartdoc and pana
 
 - **`dart doc` in the SDK crashes locally.** The `dart doc` of Dart 3.13 (dartdoc 9.0.6) stops before writing anything, in `_stripDocImports`, on four library comments of `package:platform` 3.2.0 (a transitive dependency through `flutter_webrtc` → `path_provider`); on Windows with a CRLF checkout of the Flutter SDK it also trips on Flutter's own comments. A copy patched to skip those comments documented the package with the 16 warnings above, then with none after the fixes.
-- **The dartdoc that pana activates from pub.dev works:** in pana (Flutter 3.47.3, Linux) it documented the package with **0 warnings and 0 errors**, and 1436 of 1437 API elements had doc comments (the missing one, `InMemorySignalingHub`'s implicit constructor, is now documented). pub.dev builds the API reference the same way.
-- **pana: 135 / 160** on the working copy (Flutter 3.47.3, Linux, `publish_to` removed in a copy):
+- **The dartdoc that pana activates from pub.dev works:** in pana (Flutter 3.47.3, Linux) it documented the package with **0 warnings and 0 errors**, and 1436 of 1437 API elements had doc comments (the missing one, `InMemorySignalingHub`'s implicit constructor, is now documented). pub.dev builds the API reference the same way. After the 0.1.0 cleanup it documented the three libraries with **0 warnings and 0 errors**, and 1463 of 1463 API elements have doc comments.
+- **pana: 135 / 160** on the working copy (Flutter 3.47.3, Linux, `publish_to` removed in a copy), the same before and after the 0.1.0 cleanup:
 
   | Section | Points | Notes |
   |---|---|---|
