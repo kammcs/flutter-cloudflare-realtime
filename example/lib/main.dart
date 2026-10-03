@@ -162,6 +162,12 @@ class _JoinPageState extends State<JoinPage> {
       _error = null;
     });
     var call = incoming;
+    // iOS: a call answered from the lock screen joins with the app in the
+    // background; this keeps it running until the microphone is published
+    // (the call's audio keeps it running from then on).
+    final endBackgroundTask = incoming == null
+        ? null
+        : await beginBackgroundTask('join answered call');
     try {
       if (_choice == SignalingChoice.inMemory &&
           _brokerUrlController.text.trim().isEmpty) {
@@ -210,6 +216,8 @@ class _JoinPageState extends State<JoinPage> {
         // The room is the other side here: it "answered".
         await call.reportConnected();
       }
+      if (call != null) await _followSystemCall(room, call);
+      await endBackgroundTask?.call();
       if (!mounted) {
         await room.leave();
         await setup.disposeSignaling();
@@ -236,7 +244,27 @@ class _JoinPageState extends State<JoinPage> {
     } finally {
       // A system call whose room never opened.
       await call?.end(SystemCallEndReason.failed);
+      await endBackgroundTask?.call();
       if (mounted) setState(() => _joining = false);
+    }
+  }
+
+  /// Ties [room] to [call] and publishes the microphone before the call
+  /// page opens. Answered from a locked iPhone's lock screen, the app stays
+  /// in the background, where Flutter builds no widgets until it comes back:
+  /// the page (which publishes the camera, and the microphone if it isn't
+  /// yet) is only built then, but the call has its audio, and follows the
+  /// system's mute and End, at once.
+  Future<void> _followSystemCall(Room room, SystemCall call) async {
+    if (call.isEnded || room.hasLeft) return; // The page leaves at once.
+    room.attachSystemCall(call);
+    try {
+      await room.localParticipant.publishMicrophone();
+    } on Exception catch (e) {
+      // The page tries again.
+      logDiagnostic('systemCall', 'could not publish the microphone: $e');
+    } on StateError {
+      // The call ended meanwhile, and the room left with it.
     }
   }
 
@@ -250,9 +278,14 @@ class _JoinPageState extends State<JoinPage> {
       _showSnack('System calls are not supported here: in-app only.');
     }
     _showSnack('An incoming call rings in 5 s.');
-    await Future<void>.delayed(const Duration(seconds: 5));
+    // iOS suspends the app soon after the phone locks, so this delay would
+    // only end once it's unlocked: a background task keeps it running until
+    // the call is reported. (A real app is woken by a VoIP push, reported
+    // natively: docs/design.md §4.8.) Android keeps the app running.
+    final endBackgroundTask = await beginBackgroundTask('incoming call');
     final SystemCall call;
     try {
+      await Future<void>.delayed(const Duration(seconds: 5));
       call = await SystemCalls.instance.reportIncomingCall(
         handle: const CallHandle('demo-caller'),
         displayName: 'Demo caller',
@@ -261,12 +294,22 @@ class _JoinPageState extends State<JoinPage> {
     } on Exception catch (e) {
       _showSnack('Could not report the call: $e');
       return;
+    } finally {
+      // From here CallKit wakes the app for Answer or Decline.
+      await endBackgroundTask();
     }
     if (!mounted) {
       await call.end();
       return;
     }
-    if (await showIncomingCall(context, call)) await _join(incoming: call);
+    if (await showIncomingCall(context, call)) {
+      await _join(incoming: call);
+    } else {
+      // Declined (or ended) before it was answered: no room.
+      final reason = call.endReason?.name ?? 'ended';
+      logDiagnostic('systemCall', 'the incoming call ended: $reason');
+      _showSnack('The incoming call ended ($reason).');
+    }
   }
 
   void _showSnack(String message) {
@@ -441,10 +484,15 @@ class _JoinPageState extends State<JoinPage> {
                       child: Text(_joining ? 'Connecting…' : 'Join'),
                     ),
                     if (systemCallsAvailable)
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.ring_volume),
-                        label: const Text('Simulate incoming call'),
-                        onPressed: _joining ? null : _simulateIncomingCall,
+                      Tooltip(
+                        message:
+                            'Rings in 5 s: lock the phone meanwhile to see '
+                            'the lock-screen ring',
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.ring_volume),
+                          label: const Text('Simulate incoming call'),
+                          onPressed: _joining ? null : _simulateIncomingCall,
+                        ),
                       ),
                     if (_error != null)
                       Text(

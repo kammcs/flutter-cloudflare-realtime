@@ -81,6 +81,7 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
 - **`Info.plist`:** add `voip` next to `audio` in `UIBackgroundModes` (above).
 - **Call audio:** CallKit activates the audio session when a call starts or is answered. Once `configure` has run, the package switches WebRTC to manual audio, so a call's audio starts only after CallKit activated the session. Don't activate the session yourself during a system call.
 - **Attach the call to the room** with `Room.attachSystemCall(call)`: the system's mute and the microphone stay in step, the room leaves when the call ends, and the call ends when the room is left.
+- **Answered from the lock screen,** the app stays in the background, where Flutter builds no widgets until the user opens it. So join the room, attach the call and publish the microphone from the answer itself (for example `SystemCall.stateChanges`), not from a widget's `initState` or a dialog, or the call has no audio until then. The camera can wait for the foreground. The example's join screen does this.
 - **Optional:** `SystemCallsOptions.iconTemplateImageName` (a 40×40 pt template image in your asset catalog) and `ringtoneSound` (a sound file in your bundle).
 - **China mainland:** apps on the China mainland App Store must not use CallKit. There, don't call `configure`.
 
