@@ -47,6 +47,8 @@ Capturing the screen needs the user's permission: System Settings → Privacy & 
 
 The example app shows how to point the user to the setting (`example/lib/screen_share_dialog.dart`).
 
+**Display and window geometry:** each listed `ScreenSource` has a `geometry` (`ScreenGeometry`): its `bounds` in points in Core Graphics' global display space (origin at the primary display's top-left, y down; displays left of or above it have negative coordinates; AppKit's `NSScreen` frames are the same with y flipped), its `scaleFactor` (2.0 on Retina) and, for a screen, `isPrimary`. A window's bounds include its title bar. While sharing, `ScreenShareSource.sourceGeometry` and `sourceGeometryChanges` follow the shared window as it moves. These are read from Core Graphics; they need no entitlement and no Screen Recording permission, and work in the App Sandbox.
+
 **Limits:** screen audio isn't captured on macOS. macOS thumbnails are TIFF, which Flutter's image codecs may not decode, so give `Image.memory` an `errorBuilder`.
 
 ## Audio

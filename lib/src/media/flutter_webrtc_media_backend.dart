@@ -6,6 +6,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import 'media_backend.dart';
 import 'media_types.dart';
+import 'screen_geometry.dart';
+import 'screen_geometry_native.dart';
 import 'windows_audio_defaults.dart';
 
 /// The production [MediaBackend]: delegates to `flutter_webrtc`'s
@@ -489,6 +491,10 @@ abstract final class _DeviceChangeHub {
 class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
   const _FlutterWebrtcDesktopCapturer();
 
+  /// Display and window geometry from the operating system (macOS and
+  /// Windows; `null` answers elsewhere).
+  static final _geometry = ScreenGeometryLookup(createNativeScreenGeometry());
+
   static ScreenSource _snapshot(rtc.DesktopCapturerSource source) =>
       ScreenSource(
         id: source.id,
@@ -498,6 +504,9 @@ class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
             : ScreenSourceType.screen,
         thumbnail: source.thumbnail,
       );
+
+  static ScreenSource _snapshotWithGeometry(rtc.DesktopCapturerSource source) =>
+      _geometry.withGeometryOf(_snapshot(source));
 
   static List<rtc.SourceType> _types(Set<ScreenSourceType> types) => [
     for (final type in types)
@@ -518,7 +527,9 @@ class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
           ? null
           : rtc.ThumbnailSize(thumbnailSize.width, thumbnailSize.height),
     );
-    return [for (final source in sources) _snapshot(source)];
+    return _geometry.withGeometry([
+      for (final source in sources) _snapshot(source),
+    ]);
   }
 
   @override
@@ -527,7 +538,7 @@ class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
 
   @override
   Stream<ScreenSource> get onAdded =>
-      rtc.desktopCapturer.onAdded.stream.map(_snapshot);
+      rtc.desktopCapturer.onAdded.stream.map(_snapshotWithGeometry);
 
   @override
   Stream<ScreenSource> get onRemoved =>
@@ -535,9 +546,13 @@ class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
 
   @override
   Stream<ScreenSource> get onNameChanged =>
-      rtc.desktopCapturer.onNameChanged.stream.map(_snapshot);
+      rtc.desktopCapturer.onNameChanged.stream.map(_snapshotWithGeometry);
 
   @override
   Stream<ScreenSource> get onThumbnailChanged =>
-      rtc.desktopCapturer.onThumbnailChanged.stream.map(_snapshot);
+      rtc.desktopCapturer.onThumbnailChanged.stream.map(_snapshotWithGeometry);
+
+  @override
+  Future<ScreenGeometry?> geometryOf(ScreenSource source) async =>
+      _geometry.geometryOf(source.type, source.id);
 }

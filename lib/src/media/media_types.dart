@@ -2,6 +2,8 @@
 /// @docImport 'screen_source_picker.dart';
 library;
 
+import 'dart:ui' show Rect;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -206,6 +208,73 @@ enum ScreenSourceType {
   window,
 }
 
+/// Where a shared display or window is on the desktop, and its scale.
+///
+/// Coordinates are the operating system's own desktop coordinates, the ones
+/// its input and window APIs take, so an app can map a point in the shared
+/// picture to a point on the sharer's desktop (remote pointers, annotation,
+/// remote control):
+///
+/// - **macOS:** points in Core Graphics' global display space
+///   (`CGDisplayBounds`, `CGWindowListCopyWindowInfo`, `CGEvent`
+///   locations). The origin is the top-left corner of the primary display
+///   ([isPrimary]), y grows downwards, and displays left of or above it
+///   have negative coordinates. AppKit's `NSScreen` frames use the same
+///   units with y flipped (origin at the primary display's bottom-left, y
+///   upwards). A display's pixels are `bounds.size * scaleFactor`.
+/// - **Windows:** physical pixels in the virtual screen (`GetMonitorInfo`,
+///   `SetCursorPos`), as a per-monitor DPI-aware app (Flutter's default
+///   runner) sees them. The origin is the top-left corner of the primary
+///   monitor, y grows downwards, and monitors left of or above it have
+///   negative coordinates. With mixed scale factors the virtual screen has
+///   no common logical unit, so [bounds] stays in pixels.
+///
+/// Elsewhere (the web, Android, iOS, Linux) sources have no geometry.
+@immutable
+final class ScreenGeometry {
+  /// Creates a geometry.
+  const ScreenGeometry({
+    required this.bounds,
+    required this.scaleFactor,
+    this.isPrimary = false,
+  });
+
+  /// A display's bounds, or a window's frame, in the desktop coordinates
+  /// described on [ScreenGeometry].
+  ///
+  /// A window's frame is the one the user sees: on macOS the window
+  /// server's bounds (title bar included), on Windows the frame without
+  /// the invisible resize borders (`DWMWA_EXTENDED_FRAME_BOUNDS`).
+  final Rect bounds;
+
+  /// Physical pixels per logical point: the display's backing scale on
+  /// macOS (2.0 on a Retina display), its effective DPI over 96 on Windows
+  /// (1.5 at 150 %). For a window, the scale of the display that shows most
+  /// of it.
+  final double scaleFactor;
+
+  /// Whether this is the primary display: on macOS the one at the origin of
+  /// the global display space (`CGMainDisplayID`), on Windows the primary
+  /// monitor (`MONITORINFOF_PRIMARY`). Always `false` for a window.
+  final bool isPrimary;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ScreenGeometry &&
+      other.bounds == bounds &&
+      other.scaleFactor == scaleFactor &&
+      other.isPrimary == isPrimary;
+
+  @override
+  int get hashCode => Object.hash(bounds, scaleFactor, isPrimary);
+
+  @override
+  String toString() =>
+      'ScreenGeometry(${bounds.left}, ${bounds.top}, '
+      '${bounds.width} x ${bounds.height}, scale: $scaleFactor'
+      '${isPrimary ? ', primary' : ''})';
+}
+
 /// A screen or window that can be shared on desktop, as listed by
 /// `desktopCapturer.getSources`.
 ///
@@ -219,6 +288,7 @@ final class ScreenSource {
     required this.name,
     required this.type,
     this.thumbnail,
+    this.geometry,
   });
 
   /// The platform's identifier for the source. Screen shares pass it as
@@ -237,12 +307,26 @@ final class ScreenSource {
   /// after, through the picker's live updates.
   final Uint8List? thumbnail;
 
+  /// Where the display or window was on the desktop when the source was
+  /// listed, and its scale; `null` where that isn't known.
+  ///
+  /// Read on macOS and Windows (see [ScreenGeometry] for the coordinates);
+  /// `null` on other platforms, and for a source the operating system no
+  /// longer knows (or, on Windows, a minimized window). Windows move: while
+  /// a source is shared, `ScreenShareSource.sourceGeometry` follows it.
+  final ScreenGeometry? geometry;
+
   /// Returns a copy with the given fields replaced.
-  ScreenSource copyWith({String? name, Uint8List? thumbnail}) => ScreenSource(
+  ScreenSource copyWith({
+    String? name,
+    Uint8List? thumbnail,
+    ScreenGeometry? geometry,
+  }) => ScreenSource(
     id: id,
     name: name ?? this.name,
     type: type,
     thumbnail: thumbnail ?? this.thumbnail,
+    geometry: geometry ?? this.geometry,
   );
 
   @override
@@ -251,10 +335,12 @@ final class ScreenSource {
       other.id == id &&
       other.name == name &&
       other.type == type &&
-      identical(other.thumbnail, thumbnail);
+      identical(other.thumbnail, thumbnail) &&
+      other.geometry == geometry;
 
   @override
-  int get hashCode => Object.hash(id, name, type, identityHashCode(thumbnail));
+  int get hashCode =>
+      Object.hash(id, name, type, identityHashCode(thumbnail), geometry);
 
   @override
   String toString() => 'ScreenSource(${type.name}, "$name", $id)';

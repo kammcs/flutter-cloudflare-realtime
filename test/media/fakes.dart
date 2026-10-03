@@ -418,6 +418,21 @@ class FakeDesktopCapturer implements DesktopCapturerBackend {
 
   @override
   Stream<ScreenSource> get onThumbnailChanged => thumbnailChanged.stream;
+
+  /// What [geometryOf] answers, by source ID; `null` for the rest.
+  final Map<String, ScreenGeometry?> geometries = {};
+
+  /// The next [geometryOf] calls throw these, in order.
+  final List<Object> geometryErrors = [];
+
+  int geometryCalls = 0;
+
+  @override
+  Future<ScreenGeometry?> geometryOf(ScreenSource source) async {
+    geometryCalls++;
+    if (geometryErrors.isNotEmpty) throw geometryErrors.removeAt(0);
+    return geometries[source.id];
+  }
 }
 
 const cam1 = MediaDevice(

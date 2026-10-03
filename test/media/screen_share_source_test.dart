@@ -136,6 +136,112 @@ void main() {
       });
     });
 
+    group('sourceGeometry', () {
+      const listed = ScreenGeometry(
+        bounds: Rect.fromLTWH(100, 100, 800, 600),
+        scaleFactor: 2,
+      );
+      const moved = ScreenGeometry(
+        bounds: Rect.fromLTWH(-1500, 40, 800, 600),
+        scaleFactor: 1,
+      );
+
+      test('follows a moving window while sharing', () {
+        fakeAsync((async) {
+          final share = ScreenShareSource(
+            backend: backend,
+            geometryWatchInterval: const Duration(milliseconds: 500),
+          );
+          final seen = <ScreenGeometry?>[];
+          share.sourceGeometryChanges.listen(seen.add);
+          expect(share.sourceGeometry, isNull);
+
+          desktop.geometries['window-1'] = listed;
+          share.start(source: window1);
+          async.flushMicrotasks();
+          expect(share.sourceGeometry, listed);
+
+          desktop.geometries['window-1'] = moved;
+          async.elapse(const Duration(milliseconds: 500));
+          expect(share.sourceGeometry, moved);
+          final calls = desktop.geometryCalls;
+          async.elapse(const Duration(seconds: 1));
+          expect(desktop.geometryCalls, calls + 2);
+          expect(seen, [null, listed, moved], reason: 'distinct');
+
+          // Minimized (Windows) or gone: null until it is back.
+          desktop.geometries.remove('window-1');
+          async.elapse(const Duration(milliseconds: 500));
+          expect(share.sourceGeometry, isNull);
+          desktop.geometries['window-1'] = listed;
+          async.elapse(const Duration(milliseconds: 500));
+          expect(share.sourceGeometry, listed);
+
+          share.stop();
+          async.flushMicrotasks();
+          expect(share.sourceGeometry, isNull);
+          final stoppedAt = desktop.geometryCalls;
+          async.elapse(const Duration(seconds: 5));
+          expect(desktop.geometryCalls, stoppedAt, reason: 'stops polling');
+          share.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('reads the OS, not the listing, and follows a switch', () {
+        fakeAsync((async) {
+          final share = ScreenShareSource(backend: backend);
+          desktop.geometries['screen-1'] = const ScreenGeometry(
+            bounds: Rect.fromLTWH(0, 0, 1512, 982),
+            scaleFactor: 2,
+            isPrimary: true,
+          );
+          // Listed with a geometry, but the OS has none now (minimized on
+          // Windows): null, and polled until it is back.
+          share.start(source: window1.copyWith(geometry: listed));
+          async.flushMicrotasks();
+          expect(share.sourceGeometry, isNull);
+          desktop.geometries['window-1'] = moved;
+          async.elapse(const Duration(milliseconds: 500));
+          expect(share.sourceGeometry, moved);
+
+          share.select(screen1);
+          async.flushMicrotasks();
+          expect(share.sourceGeometry?.isPrimary, isTrue);
+          expect(share.sourceGeometry?.scaleFactor, 2);
+          share.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('is null, without polling, where the platform has none', () {
+        fakeAsync((async) {
+          final share = ScreenShareSource(backend: backend);
+          share.start(source: screen1);
+          async.flushMicrotasks();
+          expect(share.isEnabled, isTrue);
+          expect(share.sourceGeometry, isNull);
+          expect(desktop.geometryCalls, 1);
+          async.elapse(const Duration(seconds: 5));
+          expect(desktop.geometryCalls, 1);
+          share.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('a failing reading is null, not an error', () async {
+        final share = ScreenShareSource(backend: backend);
+        final errors = <Object>[];
+        share.errors.listen(errors.add);
+        desktop.geometryErrors.add(StateError('no CoreGraphics'));
+        expect(await share.start(source: screen1), isTrue);
+        await pumpEventQueue();
+        expect(share.sourceGeometry, isNull);
+        expect(errors, isEmpty);
+        await share.dispose();
+      });
+    });
+
     test('stop ends with the stopped reason', () async {
       final share = ScreenShareSource(backend: backend);
       final reasons = <ScreenShareEndReason>[];
