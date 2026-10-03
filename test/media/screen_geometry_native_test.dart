@@ -19,8 +19,12 @@ void main() {
 
   test('lists displays: at most one primary, at the origin, with a scale', () {
     final displays = native!.displays();
-    // A headless Windows runner may have no active display.
-    if (Platform.isMacOS) expect(displays, isNotEmpty);
+    // No active display: a headless runner, or a Mac whose display sleeps
+    // or is locked (Core Graphics then lists none).
+    if (displays.isEmpty) {
+      markTestSkipped('no active display');
+      return;
+    }
     final primaries = displays.where((d) => d.isPrimary).toList();
     expect(primaries.length, lessThanOrEqualTo(1));
     if (Platform.isMacOS) expect(primaries, hasLength(1));
