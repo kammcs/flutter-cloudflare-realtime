@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import 'media_backend.dart';
 import 'media_types.dart';
+import 'windows_audio_defaults.dart';
 
 /// The production [MediaBackend]: delegates to `flutter_webrtc`'s
 /// `navigator.mediaDevices` and `desktopCapturer`.
@@ -49,11 +50,20 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
       // facing up: "front" for the second camera, "back" for the others.
       final pluginFacing =
           platform != MediaPlatform.windows && platform != MediaPlatform.linux;
-      return orderBuiltInCameras([
+      final devices = orderBuiltInCameras([
         for (final source in sources)
           if (source is Map)
             ?mediaDeviceFromSource(source, pluginFacing: pluginFacing),
       ]);
+      if (platform != MediaPlatform.windows) return devices;
+      // The Windows plugin lists audio devices by endpoint ID and opens
+      // the first one unless told otherwise: ask Windows for its defaults.
+      final defaults = readWindowsDefaultAudioEndpoints();
+      return markDefaultAudioDevices(
+        devices,
+        input: defaults?.input,
+        output: defaults?.output,
+      );
     }
     return _enumerate();
   }
@@ -225,6 +235,9 @@ String? audioInputToSelect(
 /// the label decides there ([cameraFacingFromLabel]). With [pluginFacing]
 /// `false` (Windows and Linux, whose plugin calls the second camera
 /// `front` and every other one `back`), the label decides too.
+///
+/// Chromium's `default` and `communications` audio entries ("Default -
+/// Headset Microphone") are marked [MediaDevice.isDefault].
 @visibleForTesting
 MediaDevice? mediaDeviceFromSource(
   Map<Object?, Object?> source, {
@@ -234,11 +247,15 @@ MediaDevice? mediaDeviceFromSource(
   if (kind == null) return null;
   final label = '${source['label'] ?? ''}';
   final groupId = source['groupId'];
+  final deviceId = '${source['deviceId'] ?? ''}';
   return MediaDevice(
-    deviceId: '${source['deviceId'] ?? ''}',
+    deviceId: deviceId,
     kind: kind,
     label: label,
     groupId: groupId is String ? groupId : null,
+    isDefault:
+        kind != MediaDeviceKind.videoInput &&
+        _browserDefaultIds.contains(deviceId),
     facing: kind == MediaDeviceKind.videoInput
         ? switch (pluginFacing ? source['facing'] : null) {
             'front' || 'user' => CameraFacing.user,
@@ -248,6 +265,49 @@ MediaDevice? mediaDeviceFromSource(
         : null,
   );
 }
+
+/// [devices] with the microphone whose ID is [input] and the speaker whose
+/// ID is [output] marked [MediaDevice.isDefault] (and no others), in the
+/// same order.
+///
+/// On Windows, `flutter_webrtc` lists audio devices in Core Audio's
+/// enumeration order (by endpoint ID, unrelated to the user's choice) and
+/// doesn't say which is the default, so the backend reads the defaults
+/// from the OS ([readWindowsDefaultAudioEndpoints]) and marks them here.
+@visibleForTesting
+List<MediaDevice> markDefaultAudioDevices(
+  List<MediaDevice> devices, {
+  String? input,
+  String? output,
+}) => [
+  for (final device in devices)
+    switch (device.kind) {
+      MediaDeviceKind.audioInput => _withDefault(
+        device,
+        input != null && device.deviceId == input,
+      ),
+      MediaDeviceKind.audioOutput => _withDefault(
+        device,
+        output != null && device.deviceId == output,
+      ),
+      MediaDeviceKind.videoInput => device,
+    },
+];
+
+MediaDevice _withDefault(MediaDevice device, bool isDefault) =>
+    device.isDefault == isDefault
+    ? device
+    : MediaDevice(
+        deviceId: device.deviceId,
+        kind: device.kind,
+        label: device.label,
+        groupId: device.groupId,
+        facing: device.facing,
+        isDefault: isDefault,
+      );
+
+/// Chromium's alias entries for the system's default devices.
+const _browserDefaultIds = {'default', 'communications'};
 
 final _builtInCamera = RegExp(
   r'^com\.apple\.avfoundation\.avcapturedevice\.built-in_video:(\d+)$',

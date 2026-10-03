@@ -4,6 +4,8 @@ import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'device_settings.dart';
+
 /// A local preview of the media layer: camera and microphone toggles with
 /// device dropdowns, and a screen-share picker with thumbnails.
 ///
@@ -176,7 +178,10 @@ class _DeviceSourceControls extends StatelessWidget {
             onChanged: source.setBroadcasting,
           ),
         ),
-        _DeviceDropdown(source: source),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: DeviceDropdown(source: source),
+        ),
         if (preview != null)
           StreamBuilder<CapturedTrack?>(
             stream: source.track,
@@ -184,51 +189,6 @@ class _DeviceSourceControls extends StatelessWidget {
             builder: (context, snapshot) => preview!(snapshot.data),
           ),
       ],
-    );
-  }
-}
-
-class _DeviceDropdown extends StatelessWidget {
-  const _DeviceDropdown({required this.source});
-
-  final DeviceMediaSource source;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<MediaDevice>>(
-      stream: source.devices,
-      initialData: source.currentDevices,
-      builder: (context, devices) => StreamBuilder<MediaDevice?>(
-        stream: source.activeDevice,
-        initialData: source.currentActiveDevice,
-        builder: (context, active) {
-          final list = devices.data ?? const [];
-          final selected = list
-              .where((d) => active.data != null && d.sameDeviceAs(active.data!))
-              .firstOrNull;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: DropdownButtonFormField<MediaDevice>(
-              key: ValueKey(selected),
-              initialValue: selected,
-              decoration: const InputDecoration(labelText: 'Device'),
-              items: [
-                for (final (index, device) in list.indexed)
-                  DropdownMenuItem(
-                    value: device,
-                    child: Text(
-                      device.label.isEmpty
-                          ? 'Device ${index + 1}'
-                          : device.label,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: list.isEmpty ? null : source.setPreferredDevice,
-            ),
-          );
-        },
-      ),
     );
   }
 }
@@ -250,13 +210,11 @@ class _AudioOutputs extends StatelessWidget {
         }
         return Column(
           children: [
-            for (final output in outputs)
+            for (final (index, output) in outputs.indexed)
               ListTile(
                 dense: true,
                 leading: const Icon(Icons.speaker),
-                title: Text(
-                  output.label.isEmpty ? output.deviceId : output.label,
-                ),
+                title: Text(deviceLabel(output, index)),
               ),
           ],
         );

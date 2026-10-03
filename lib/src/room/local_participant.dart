@@ -64,6 +64,20 @@ class LocalParticipant implements Participant {
       .map((speakers) => speakers.contains(participantId))
       .distinct();
 
+  /// The smoothed level of this client's microphone as it is sent, `0..1`,
+  /// for a level meter. 0 while the microphone is muted or not published
+  /// (a muted sender has no level to read; see
+  /// [canDetectSpeakingWhileMuted]). Updated every
+  /// [ActiveSpeakerConfig.pollInterval].
+  double get audioLevel =>
+      _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
+
+  /// [audioLevel], replaying the current value to each new listener and
+  /// then emitting its changes.
+  Stream<double> get audioLevels => _room._speakers.monitor.snapshots
+      .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
+      .distinct();
+
   /// Whether the room can tell that this participant speaks while their
   /// microphone is muted ([isSpeakingWhileMuted]).
   ///

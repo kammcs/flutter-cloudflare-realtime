@@ -1,7 +1,10 @@
+import 'dart:io' show Platform;
+
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/media/constraints.dart';
 import 'package:cloudflare_realtime/src/media/device_priority.dart';
 import 'package:cloudflare_realtime/src/media/flutter_webrtc_media_backend.dart';
+import 'package:cloudflare_realtime/src/media/windows_audio_defaults.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -173,6 +176,85 @@ void main() {
         mediaDeviceFromSource({'kind': 'audiooutput'}),
         const MediaDevice(deviceId: '', kind: MediaDeviceKind.audioOutput),
       );
+    });
+  });
+
+  group('system defaults', () {
+    test("marks Chromium's default and communications audio entries", () {
+      for (final kind in ['audioinput', 'audiooutput']) {
+        for (final id in ['default', 'communications']) {
+          expect(
+            mediaDeviceFromSource({
+              'deviceId': id,
+              'kind': kind,
+              'label': 'Default - Headset',
+            })!.isDefault,
+            isTrue,
+          );
+        }
+        expect(
+          mediaDeviceFromSource({
+            'deviceId': 'abc',
+            'kind': kind,
+            'label': 'Headset',
+          })!.isDefault,
+          isFalse,
+        );
+      }
+      expect(
+        mediaDeviceFromSource({'deviceId': 'default', 'kind': 'videoinput'})!
+            .isDefault,
+        isFalse,
+      );
+    });
+
+    test('markDefaultAudioDevices marks the default input and output', () {
+      const input = '{0.0.1.00000000}.{b}';
+      const output = '{0.0.0.00000000}.{b}';
+      const devices = [
+        MediaDevice(
+          deviceId: '{0.0.1.00000000}.{a}',
+          kind: MediaDeviceKind.audioInput,
+        ),
+        MediaDevice(deviceId: input, kind: MediaDeviceKind.audioInput),
+        MediaDevice(
+          deviceId: '{0.0.0.00000000}.{a}',
+          kind: MediaDeviceKind.audioOutput,
+        ),
+        MediaDevice(deviceId: output, kind: MediaDeviceKind.audioOutput),
+        // Same ID as the default input, but a camera: never marked.
+        MediaDevice(deviceId: input, kind: MediaDeviceKind.videoInput),
+      ];
+      final marked = markDefaultAudioDevices(
+        devices,
+        input: input,
+        output: output,
+      );
+      expect(marked.map((d) => d.isDefault), [false, true, false, true, false]);
+      expect(marked.map((d) => d.deviceId), devices.map((d) => d.deviceId));
+
+      // The default moved: the old one is unmarked.
+      final moved = markDefaultAudioDevices(marked, input: devices[0].deviceId);
+      expect(moved.map((d) => d.isDefault), [true, false, false, false, false]);
+    });
+
+    test('reads the defaults from Core Audio on Windows', () {
+      final defaults = readWindowsDefaultAudioEndpoints();
+      if (!Platform.isWindows) {
+        expect(defaults, isNull);
+        return;
+      }
+      // A machine without audio devices (a CI runner) has none.
+      expect(defaults, isNotNull);
+      final endpoint = RegExp(r'^\{0\.0\.[01]\.00000000\}\.\{[0-9a-f-]{36}\}$');
+      if (defaults!.input case final input?) {
+        expect(input, matches(endpoint));
+        expect(input, startsWith('{0.0.1.'));
+      }
+      if (defaults.output case final output?) {
+        expect(output, matches(endpoint));
+        expect(output, startsWith('{0.0.0.'));
+      }
     });
   });
 

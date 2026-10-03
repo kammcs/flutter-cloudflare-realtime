@@ -32,6 +32,16 @@ import 'video_renderer.dart';
 /// nothing is subscribed. Tests can replace it through [rendererFactory] or
 /// [defaultRendererFactory].
 ///
+/// **Keep it in place.** The renderer is bound once per track: rebuilding
+/// the view, even as a new widget with other settings, never sets its
+/// stream again. But a view that Flutter re-creates gets a new renderer,
+/// which shows nothing until the next frame arrives, so the video blinks.
+/// Keep the widgets above it the same shape whatever else changes: for
+/// example, a `Container` whose `foregroundDecoration` (a speaking
+/// highlight) is set only some of the time adds and removes a widget above
+/// the view on each change; use a transparent decoration instead. To move
+/// a view between layouts, give it (or its tile) a `GlobalKey`.
+///
 /// **Layer selection.** A remote video view reports its on-screen size and
 /// [visible] to the room ([Room.layerReporter]), keyed by
 /// [RemoteTrackPublication.id], through a [SimulcastLayerReporter]; the room

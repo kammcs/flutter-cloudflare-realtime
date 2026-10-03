@@ -177,6 +177,42 @@ void main() {
       await _drive(tester, camera.dispose());
     });
 
+    testWidgets(
+      'binds the renderer once: rebuilds never set the stream again',
+      (tester) async {
+        final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+        await _drive(tester, camera.enable());
+        final stream = camera.currentTrack!.stream;
+
+        // A parent that rebuilds for unrelated reasons (speaking highlights,
+        // stats, audio levels), each time with a new view widget for the
+        // same source, and new settings.
+        Widget build(int n) => _frame(
+          Opacity(
+            opacity: n.isEven ? 1 : 0.9,
+            child: ParticipantVideoView.local(
+              camera,
+              fit: n.isEven ? VideoViewFit.cover : VideoViewFit.contain,
+              mirror: n.isEven,
+              rendererFactory: () => _FakeRenderer(log),
+            ),
+          ),
+        );
+        for (var n = 0; n < 10; n++) {
+          await tester.pumpWidget(build(n));
+          await _step(tester);
+        }
+        await _settle(tester);
+        expect(log, ['initialize', 'setStream(${stream.id})']);
+        expect(find.text('video ${stream.id} contain'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox());
+        await _settle(tester);
+        expect(log.last, 'dispose');
+        await _drive(tester, camera.dispose());
+      },
+    );
+
     testWidgets('mirror and fit can be set; defaultRendererFactory is used', (
       tester,
     ) async {
@@ -293,6 +329,52 @@ void main() {
       expect(h.closesOf(bob), hasLength(1));
       expect(log.last, 'dispose');
       expect(reporter.removed, ['ann/c']);
+      await tearDownRoom(tester);
+    });
+
+    testWidgets('binds the renderer once: rebuilds and mutes never set the '
+        'stream again', (tester) async {
+      final cam = await setUpRoom(tester);
+      Widget build(int n) => _frame(
+        Padding(
+          padding: EdgeInsets.all(n.isEven ? 0 : 1),
+          child: ParticipantVideoView.remote(
+            cam,
+            rendererFactory: factory,
+            fit: n.isEven ? VideoViewFit.cover : VideoViewFit.contain,
+            layerReporter: _RecordingReporter(),
+          ),
+        ),
+      );
+      await tester.pumpWidget(build(0));
+      await _settle(tester);
+      final stream = cam.currentTrack!.stream;
+      expect(log, ['initialize', 'setStream(${stream.id})']);
+
+      for (var n = 1; n <= 10; n++) {
+        await tester.pumpWidget(build(n));
+        await _step(tester);
+      }
+      // The publisher mutes and unmutes: the placeholder shows meanwhile,
+      // and the same stream shows again without being set again.
+      for (final muted in [true, false]) {
+        await _drive(
+          tester,
+          ann.update(
+            ParticipantState(
+              participantId: 'ann',
+              sessionId: 'ann-1',
+              tracks: {'c': _cam.copyWith(muted: muted)},
+            ),
+          ),
+        );
+        await _settle(tester);
+      }
+      expect(find.text('video ${stream.id} cover'), findsOneWidget);
+      expect(log, ['initialize', 'setStream(${stream.id})']);
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
       await tearDownRoom(tester);
     });
 
