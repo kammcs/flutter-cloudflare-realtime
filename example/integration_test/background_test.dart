@@ -24,7 +24,8 @@
 //    permanent loss, Room.resumeAudio() takes it back. Bob must hear Alice
 //    again afterwards. A phone call or Siri needs a person (checkpoint.md).
 // 3. The proximity sensor (phones): on for a voice call on the earpiece,
-//    off on the speaker and with video. Whether the screen really turns off
+//    off on the speaker and with video (off throughout with a headset, or
+//    on a device without an earpiece). Whether the screen really turns off
 //    needs a hand over the sensor; on Android, `adb shell dumpsys power`
 //    lists the PROXIMITY_SCREEN_OFF_WAKE_LOCK while it is on.
 //
@@ -254,6 +255,15 @@ void main() {
       if (headset) {
         _log('a headset is connected: the sensor stays off');
         expect(alice.proximitySensorActive, isFalse);
+        return;
+      }
+      // A tablet or an emulator has no earpiece: its voice calls play on
+      // the speaker, where the sensor stays off.
+      if (!alice.currentAudioRoutes.any(
+        (r) => r.kind == AudioRouteKind.earpiece,
+      )) {
+        _log('no earpiece: the sensor stays off');
+        await _expectProximity(alice, false, 'a voice call on the speaker');
         return;
       }
       await _expectProximity(alice, true, 'a voice call on the earpiece');
