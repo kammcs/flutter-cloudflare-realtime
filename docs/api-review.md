@@ -1,10 +1,10 @@
 # API review for the first pub.dev release (M8)
 
-October 2026, before 0.1.0. The public API is three libraries, **219 symbols**, none exported twice:
+October 2026, before 0.1.0. The public API is three libraries, **220 symbols**, none exported twice:
 
 | Library | Symbols | For |
 |---|---|---|
-| `package:cloudflare_realtime/cloudflare_realtime.dart` | 167 | What apps use (165 after the cleanup, plus `AudioOutputException` and `AudioOutputFailure`) |
+| `package:cloudflare_realtime/cloudflare_realtime.dart` | 168 | What apps use (165 after the cleanup, plus `AudioOutputException`, `AudioOutputFailure` and `ScreenGeometry`) |
 | `package:cloudflare_realtime/broker.dart` | 36 | The plumbing under `Room`: a custom `BrokerClient`, the SFU API's wire models, direct use of `SfuSession` |
 | `package:cloudflare_realtime/testing.dart` | 16 | Seams for testing an app without native WebRTC, and for single-process demos |
 
@@ -66,7 +66,7 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 
 - Sources: `LocalMediaSource` (abstract; `@protected` hooks for subclasses), `DeviceMediaSource` (abstract), `CameraSource`, `MicrophoneSource`, `ScreenShareSource`, `ScreenSourcePicker`, `MediaDeviceList`; `ScreenPickerState` (final), `MutePolicy`.
 - Options: `CameraOptions`, `MicrophoneOptions`, `ScreenShareOptions`, `VideoPreset` (final).
-- Types: `MediaDevice`, `CapturedTrack`, `ScreenSource` (final); `MediaDeviceKind`, `CameraFacing`, `MediaPlatform`, `ScreenSourceType`, `ScreenShareEndReason`, `BroadcastSetupProblem` (enums).
+- Types: `MediaDevice`, `CapturedTrack`, `ScreenSource`, `ScreenGeometry` (final; `ScreenGeometry` added after the cleanup); `MediaDeviceKind`, `CameraFacing`, `MediaPlatform`, `ScreenSourceType`, `ScreenShareEndReason`, `BroadcastSetupProblem` (enums).
 - Exceptions: `MediaException` (sealed) → `MediaPermissionDeniedException` (→ `ScreenCapturePermissionException`), `ScreenShareSetupException`, `DevicesExhaustedException`, `MediaCaptureException`, `ScreenSourcesException`, `ScreenSourceNotFoundException`, all final.
 - **(testing):** `MediaBackend`, `DesktopCapturerBackend`, `ScreenCaptureServiceBackend`, `BroadcastExtensionBackend` (interfaces), `FlutterWebrtcMediaBackend`, `BroadcastExtensionStatus` (final), `BroadcastExtensionEvent`.
 
@@ -123,7 +123,7 @@ Every `RoomEvent` subtype ends in `Event` and starts with what it is about: `Par
 
 ### 4. Class modifiers
 
-- **`final`:** the options (21 classes), the value types (`ParticipantState`, `TrackInfo`, `SimulcastInfo`, `MediaDevice`, `ScreenSource`, `CapturedTrack`, `RenderableTrack`, `AudioRoute`, `CallHandle`, `ScreenPickerState`, `RemoteTrackLayerState`, `TileDemand`, `BroadcastExtensionStatus`, `RoomDataMessage`; `DataChannelMessage` already was), the six stats classes and the 23 wire models. All have public constructors, so tests build them instead of subclassing; `RoomDataMessage` got one (it only had a private one). Nothing in the tests, the example or the integration tests extended or implemented them.
+- **`final`:** the options (21 classes), the value types (`ParticipantState`, `TrackInfo`, `SimulcastInfo`, `MediaDevice`, `ScreenSource`, `ScreenGeometry` (added after the cleanup), `CapturedTrack`, `RenderableTrack`, `AudioRoute`, `CallHandle`, `ScreenPickerState`, `RemoteTrackLayerState`, `TileDemand`, `BroadcastExtensionStatus`, `RoomDataMessage`; `DataChannelMessage` already was), the six stats classes and the 23 wire models. All have public constructors, so tests build them instead of subclassing; `RoomDataMessage` got one (it only had a private one). Nothing in the tests, the example or the integration tests extended or implemented them.
 - **`sealed`:** `BrokerException` and `SfuSessionException`, like `MediaException`, `RoomEvent`, `SystemCallEvent`, `SfuSessionFailure`, `SfuDataChannel` and `Participant` already were, so apps can `switch` over them exhaustively (`test/api_shape_test.dart` pins it). Every subtype is `final`. Both roots used to be thrown directly, so each got a final subtype for those cases: `BrokerResponseException` (any other error response: a non-2xx status other than 401/403/410, or an SFU error in a 2xx `sessions/new` body), `SfuInterruptedException` (unpublished, closed, interrupted or moved before the operation completed) and `SfuProtocolException` (an unusable answer from the SFU). `sealed` needs every subtype in the root's library: `SfuDataChannelException` lived in the DataChannel library (`data_channel_manager.dart` and its parts) and moved to `sfu_session_events.dart`, next to the other session exceptions; it only holds strings, so no `part` restructuring was needed. `AudioRouteUnavailableException` and `SystemCallException` are `final`, and so is `AudioOutputException`, added after the cleanup for a refused output device (`docs/design.md` §4.3; not a `MediaException`, which is the capture side's family).
 - **Events** are `final` under their sealed roots (they already were).
 - **Left open, for mocks** (`class MockRoom extends Mock implements Room`): `CloudflareRealtime`, `Room`, `LocalParticipant`, `RemoteParticipant`, `LocalMediaPublication`, `RemoteTrackPublication`, `RemoteTrackLease`, `RoomData`, `RemoteDataSubscription`, the media sources, `MediaDeviceList`, `ScreenSourcePicker`, `SystemCalls`, `SystemCall`, `VoipPush`, `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription`. Mocks implement them, which `final`, `base` or `sealed` would forbid outside the package; most also have private constructors, so they can't be extended anyway. The interfaces apps implement are `abstract interface` (`Signaling`, `BrokerClient`, `MediaBackend` and its parts, `VideoRenderer`, `NetworkChangeSource`, `AppLifecycleSource`, `LayerDemandReporter`).

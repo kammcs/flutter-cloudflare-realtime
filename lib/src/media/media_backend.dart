@@ -223,4 +223,14 @@ abstract interface class DesktopCapturerBackend {
 
   /// A source has a new thumbnail. Carries the new thumbnail.
   Stream<ScreenSource> get onThumbnailChanged;
+
+  /// Where [source] is on the desktop now, and its scale, or `null` where
+  /// that isn't known (see [ScreenGeometry]).
+  ///
+  /// The production backend reads it from the operating system on macOS
+  /// and Windows (and fills [ScreenSource.geometry] of the sources it
+  /// lists the same way); elsewhere it answers `null`. A share polls it
+  /// while running (`ScreenShareSource.sourceGeometry`), so it should be
+  /// cheap. A fake that has no geometry can answer `null`.
+  Future<ScreenGeometry?> geometryOf(ScreenSource source);
 }

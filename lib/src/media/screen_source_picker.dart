@@ -303,7 +303,12 @@ class ScreenSourcePicker {
       return source;
     }
     _thumbnails.remove(source.id);
-    return ScreenSource(id: source.id, name: source.name, type: source.type);
+    return ScreenSource(
+      id: source.id,
+      name: source.name,
+      type: source.type,
+      geometry: source.geometry,
+    );
   }
 
   void _onAdded(ScreenSource source) {
@@ -352,6 +357,7 @@ class ScreenSourcePicker {
                 name: changed.name,
                 type: s.type,
                 thumbnail: changed.thumbnail,
+                geometry: changed.geometry ?? s.geometry,
               )
             else
               s,

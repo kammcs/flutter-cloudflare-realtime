@@ -84,12 +84,14 @@ class ScreenShareSource extends LocalMediaSource {
   /// Creates a screen share source. It captures nothing until [start].
   ///
   /// On desktop, [sourceWatchInterval] is how often the source list is
-  /// re-scanned while sharing, to notice the shared window closing.
+  /// re-scanned while sharing, to notice the shared window closing, and
+  /// [geometryWatchInterval] how often [sourceGeometry] is read again.
   ScreenShareSource({
     MediaBackend backend = const FlutterWebrtcMediaBackend(),
     ScreenShareOptions options = const ScreenShareOptions(),
     super.mutePolicy = MutePolicy.releaseCapture,
     this.sourceWatchInterval = const Duration(seconds: 3),
+    this.geometryWatchInterval = const Duration(milliseconds: 500),
   }) : _media = backend,
        _wantedOptions = options,
        super(kind: TrackKind.video, source: TrackSource.screen);
@@ -102,6 +104,10 @@ class ScreenShareSource extends LocalMediaSource {
 
   /// How often the desktop source list is re-scanned while sharing.
   final Duration sourceWatchInterval;
+
+  /// How often [sourceGeometry] is read again while sharing (desktop, where
+  /// the platform reports geometry).
+  final Duration geometryWatchInterval;
 
   /// How long a release waits on iOS for the extension to report the end
   /// of the broadcast, so the next share doesn't find it still running.
@@ -119,6 +125,13 @@ class ScreenShareSource extends LocalMediaSource {
   bool _broadcastFinished = false;
   Completer<void>? _wake;
   Timer? _watchTimer;
+  Timer? _geometryTimer;
+  int _geometryGeneration = 0;
+  bool _readingGeometry = false;
+  final StateStream<ScreenGeometry?> _sourceGeometry = StateStream(
+    null,
+    distinct: true,
+  );
   final StateStream<CapturedTrack?> _audioTrack = StateStream(
     null,
     distinct: true,
@@ -186,6 +199,22 @@ class ScreenShareSource extends LocalMediaSource {
 
   /// Emits once each time a running share ends, with the reason.
   Stream<ScreenShareEndReason> get ended => _ended.stream;
+
+  /// Where the shared display or window is on the desktop, and its scale,
+  /// while a desktop share runs on macOS or Windows; `null` otherwise, and
+  /// while the operating system can't say (on Windows, a minimized window).
+  ///
+  /// Read when the share starts, then every [geometryWatchInterval], so it
+  /// follows a window that moves or is resized and a display whose
+  /// resolution or arrangement changes. Use it to map a point in the shared
+  /// picture to the sharer's desktop; [ScreenGeometry] describes the
+  /// coordinates. [ScreenSource.geometry] is the same, as it was when the
+  /// source was listed.
+  ScreenGeometry? get sourceGeometry => _sourceGeometry.value;
+
+  /// [sourceGeometry], replaying the current value to each new listener,
+  /// then each change.
+  Stream<ScreenGeometry?> get sourceGeometryChanges => _sourceGeometry.stream;
 
   /// Sets the source (desktop) and options for the next capture. If a share
   /// is running, it switches to the new source and waits for that.
@@ -357,7 +386,50 @@ class ScreenShareSource extends LocalMediaSource {
           : CapturedTrack(track: audioTracks.first, stream: stream),
     );
     setTrack(video);
+    _watchGeometry();
     await _watchForEnd(video, wantedId);
+  }
+
+  /// Follows the shared desktop source's geometry ([sourceGeometry]): reads
+  /// it at once, then every [geometryWatchInterval], unless the platform
+  /// has none for it.
+  void _watchGeometry() {
+    final capturer = _media.desktopCapturer;
+    final source = _selected;
+    if (usesSystemPicker || capturer == null || source == null) return;
+    final generation = ++_geometryGeneration;
+
+    Future<bool> read() async {
+      if (_readingGeometry) return true;
+      _readingGeometry = true;
+      try {
+        final geometry = await capturer.geometryOf(source);
+        if (generation != _geometryGeneration || _sourceGeometry.isClosed) {
+          return false;
+        }
+        _sourceGeometry.set(geometry);
+        return geometry != null;
+      } catch (error) {
+        debugPrint('cloudflare_realtime: reading the screen geometry: $error');
+        return false;
+      } finally {
+        _readingGeometry = false;
+      }
+    }
+
+    unawaited(
+      read().then((known) {
+        if (generation != _geometryGeneration) return;
+        // Nothing to follow where the platform has no geometry. A listed
+        // source that has none now (a window minimized on Windows) may get
+        // it back.
+        if (!known && source.geometry == null) return;
+        _geometryTimer?.cancel();
+        _geometryTimer = Timer.periodic(geometryWatchInterval, (_) {
+          unawaited(read());
+        });
+      }),
+    );
   }
 
   /// Captures through the iOS Broadcast Upload Extension: checks the
@@ -575,6 +647,10 @@ class ScreenShareSource extends LocalMediaSource {
   Future<void> _release(ScreenShareEndReason? reason) async {
     _watchTimer?.cancel();
     _watchTimer = null;
+    _geometryTimer?.cancel();
+    _geometryTimer = null;
+    _geometryGeneration++;
+    if (!_sourceGeometry.isClosed) _sourceGeometry.set(null);
     // Not awaited: cancelling a broadcast subscription takes effect at once,
     // and its future (the root zone's null future) never completes under
     // fake_async, which would stall the release in tests.
@@ -622,6 +698,7 @@ class ScreenShareSource extends LocalMediaSource {
   Future<void> onDispose() async {
     await _audioTrack.close();
     await _broadcastAudioTrack.close();
+    await _sourceGeometry.close();
     await _ended.close();
   }
 }

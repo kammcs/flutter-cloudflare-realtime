@@ -106,6 +106,7 @@ export 'src/media/media_types.dart'
         MediaDevice,
         MediaDeviceKind,
         MediaPlatform,
+        ScreenGeometry,
         ScreenSource,
         ScreenSourceType;
 export 'src/media/screen_share_source.dart'

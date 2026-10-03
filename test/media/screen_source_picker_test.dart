@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' show Rect;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:fake_async/fake_async.dart';
@@ -171,6 +172,35 @@ void main() {
       await pumpEventQueue();
       expect(picker.state.screens.last.thumbnail, same(thumbnail));
       expect(picker.state.screens.last.name, 'Display 2');
+    });
+
+    test('keep the geometry the backend gave, and take a newer one', () async {
+      const listed = ScreenGeometry(
+        bounds: Rect.fromLTWH(100, 100, 800, 600),
+        scaleFactor: 2,
+      );
+      const moved = ScreenGeometry(
+        bounds: Rect.fromLTWH(-500, 100, 800, 600),
+        scaleFactor: 1,
+      );
+      desktop.added.add(browser.copyWith(geometry: listed));
+      await pumpEventQueue();
+      expect(picker.state.windows.last.geometry, listed);
+
+      // A thumbnail event without geometry keeps it; an empty thumbnail
+      // too.
+      desktop.thumbnailChanged.add(
+        browser.copyWith(thumbnail: Uint8List.fromList([1])),
+      );
+      desktop.thumbnailChanged.add(browser.copyWith(thumbnail: Uint8List(0)));
+      await pumpEventQueue();
+      expect(picker.state.windows.last.geometry, listed);
+
+      desktop.nameChanged.add(
+        browser.copyWith(name: 'Browser - docs', geometry: moved),
+      );
+      await pumpEventQueue();
+      expect(picker.state.windows.last.geometry, moved);
     });
   });
 
