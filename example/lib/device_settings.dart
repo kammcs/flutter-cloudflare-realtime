@@ -274,14 +274,21 @@ class AudioOutputDropdown extends StatelessWidget {
     try {
       await room.setAudioOutputDevice(deviceId);
       output.value = deviceId;
-      // Not only `Exception`s: a browser refuses with a JS `DOMException`
-      // (Safari, outside a user gesture: `NotAllowedError`).
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Could not change the speaker: $e')),
-      );
+    } on AudioOutputException catch (e) {
+      // The room kept the previous speaker.
+      debugPrint('Speaker refused: $e');
+      messenger.showSnackBar(SnackBar(content: Text(_refusal(e.reason))));
     }
   }
+
+  static String _refusal(AudioOutputFailure reason) => switch (reason) {
+    AudioOutputFailure.needsUserGesture =>
+      'The browser changes the speaker only right after a click or tap. '
+          'Choose it again.',
+    AudioOutputFailure.notFound =>
+      'That speaker is no longer available. Choose another one.',
+    AudioOutputFailure.other => 'Could not change the speaker.',
+  };
 
   @override
   Widget build(BuildContext context) {

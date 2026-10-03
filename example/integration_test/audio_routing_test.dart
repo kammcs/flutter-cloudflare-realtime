@@ -203,8 +203,9 @@ Future<void> _webAudioPlays(Room bob, String when, {String? sinkId}) async {
 
 /// In a browser: each audio output in turn through `setSinkId`, where the
 /// browser supports it; [Room.setAudioOutputDevice] throws where it doesn't.
-/// WebKit may refuse an output (`NotAllowedError`: no user gesture); the
-/// room must then keep the previous one.
+/// WebKit may refuse an output (an [AudioOutputException] with
+/// [AudioOutputFailure.needsUserGesture]: no user gesture); the room must
+/// then keep the previous one.
 Future<void> _webOutputs(Room bob) async {
   final outputs = [
     for (final d in await rtc.navigator.mediaDevices.enumerateDevices())
@@ -226,9 +227,10 @@ Future<void> _webOutputs(Room bob) async {
   for (final output in [...outputs.skip(1), ...outputs.take(1)]) {
     try {
       await bob.setAudioOutputDevice(output.deviceId);
-    } catch (error) {
+    } on AudioOutputException catch (error) {
       // Chrome and Firefox accept every output: anything thrown there fails.
-      if (!isWebKitBrowser() || !'$error'.contains('NotAllowedError')) {
+      if (!isWebKitBrowser() ||
+          error.reason != AudioOutputFailure.needsUserGesture) {
         rethrow;
       }
       _log(

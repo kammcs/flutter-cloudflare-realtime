@@ -6,6 +6,7 @@ import 'package:dart_webrtc/dart_webrtc.dart' show MediaStreamTrackWeb;
 import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaStreamTrack;
 import 'package:web/web.dart' as web;
 
+import 'audio_output_exception.dart';
 import 'output_device_choice.dart';
 import 'remote_audio_sink.dart';
 
@@ -13,6 +14,24 @@ import 'remote_audio_sink.dart';
 RemoteAudioSink createPlatformRemoteAudioSink(
   AudioBlockedListener onBlockedChanged,
 ) => WebRemoteAudioSink(onBlockedChanged);
+
+/// Why the browser refused an output device, from the error `setSinkId`
+/// rejected with: the `DOMException`'s `name`, or its text when the error
+/// can't be read as one.
+///
+/// A rejected promise completes with the JS value itself, under JavaScript
+/// and WebAssembly alike; under WebAssembly it has no Dart type, so the
+/// check goes through `dart:js_interop`.
+AudioOutputFailure webAudioOutputFailure(Object error) {
+  // `is JSObject` means "a JS object" under dart2js, DDC and dart2wasm,
+  // which is all this asks; `isA` then checks for a DOMException
+  // (test/audio/web_audio_output_failure_test.dart runs it in a browser).
+  // ignore: invalid_runtime_check_with_js_interop_types
+  if (error is JSObject && error.isA<web.DOMException>()) {
+    return audioOutputFailureForName((error as web.DOMException).name);
+  }
+  return audioOutputFailureFromText(error);
+}
 
 /// Plays each remote audio track in its own hidden `<audio>` element.
 ///
@@ -33,6 +52,7 @@ class WebRemoteAudioSink implements RemoteAudioSink {
   web.HTMLDivElement? _container;
   final OutputDeviceChoice<web.HTMLAudioElement> _output = OutputDeviceChoice(
     (element, deviceId) => element.setSinkId(deviceId).toDart,
+    failureOf: webAudioOutputFailure,
   );
   bool _blocked = false;
   bool _disposed = false;

@@ -1,23 +1,35 @@
+import 'audio_output_exception.dart';
+
 /// Sets one element's output device (`HTMLMediaElement.setSinkId` on the
 /// web); completes with an error when the browser refuses it.
 typedef SetSinkId<E> = Future<void> Function(E element, String deviceId);
+
+/// Tells why the browser refused a device, from the error it threw.
+typedef AudioOutputFailureOf = AudioOutputFailure Function(Object error);
 
 /// The audio output chosen for a set of media elements: the web sink's
 /// `<audio>` elements (`docs/design.md` §4.3, Remote audio).
 ///
 /// A choice is kept only once the browser accepted it. A refused one (Safari
-/// switches to a non-default device only from a user gesture) throws, and
-/// leaves [deviceId] and the elements as they were, like a failed
-/// `Helper.selectAudioOutput` on native platforms. Otherwise every element
-/// created later would retry the refused device, and fail out of sight.
+/// switches to a non-default device only from a user gesture) throws an
+/// [AudioOutputException], and leaves [deviceId] and the elements as they
+/// were, like a failed `Helper.selectAudioOutput` on native platforms.
+/// Otherwise every element created later would retry the refused device,
+/// and fail out of sight.
 ///
 /// Generic over the element so unit tests can check it without a browser.
 /// Internal: not exported.
 class OutputDeviceChoice<E> {
-  /// Creates the choice; [_setSinkId] switches one element.
-  OutputDeviceChoice(this._setSinkId);
+  /// Creates the choice; [_setSinkId] switches one element, and
+  /// [failureOf] reads the reason from a refusal (by default from the
+  /// error's text).
+  OutputDeviceChoice(
+    this._setSinkId, {
+    AudioOutputFailureOf failureOf = audioOutputFailureFromText,
+  }) : _failureOf = failureOf;
 
   final SetSinkId<E> _setSinkId;
+  final AudioOutputFailureOf _failureOf;
   String? _deviceId;
 
   /// The device the browser last accepted, or `null` (its default) before
@@ -32,7 +44,8 @@ class OutputDeviceChoice<E> {
   ///
   /// If the browser refuses any element, the ones it already moved go back
   /// to the previous device (best effort), the previous choice is kept and
-  /// the browser's error is rethrown.
+  /// an [AudioOutputException] is thrown, with the browser's error as its
+  /// cause and the stack trace of that error.
   Future<void> choose(
     String deviceId,
     List<E> elements, {
@@ -59,8 +72,24 @@ class OutputDeviceChoice<E> {
             () => _setSinkId(element, previous),
           ).then<void>((_) {}, onError: (Object _) {}),
       ]);
-      Error.throwWithStackTrace(error, stack);
+      Error.throwWithStackTrace(
+        AudioOutputException(
+          _reasonFor(error),
+          deviceId: deviceId,
+          cause: error,
+        ),
+        stack,
+      );
     }
     _deviceId = deviceId;
+  }
+
+  AudioOutputFailure _reasonFor(Object error) {
+    try {
+      return _failureOf(error);
+    } catch (_) {
+      // Reading a foreign JS value can throw; the refusal still counts.
+      return AudioOutputFailure.other;
+    }
   }
 }
