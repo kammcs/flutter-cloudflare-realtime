@@ -33,15 +33,20 @@ Joining from a button press usually avoids the block. On native platforms `isAud
 
 The browser asks for the camera and microphone when a capture starts. Before that, devices have no IDs or labels, so pick a device after the first capture.
 
-`Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`). **Call it from a user gesture** (a button's or menu item's `onPressed`, with nothing awaited before it): Safari refuses any device but the default outside one. A refused device throws an `AudioOutputException`, and the output stays as it was, for the audio playing now and for audio pulled later. Its `reason` is `AudioOutputFailure.needsUserGesture` for the browser's `NotAllowedError` (Safari outside a gesture: ask the user to choose again), `notFound` for `NotFoundError`, and `other` for the rest, such as Chrome's `SecurityError` while the page has no microphone permission; `cause` holds the browser's `DOMException`, for logs.
+`Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`). **Call it from a user gesture** (a button's or menu item's `onPressed`, with nothing awaited before it): Safari refuses any device but the default outside one. A refused device throws an `AudioOutputException`, and the output stays as it was, for the audio playing now and for audio pulled later. Its `reason` is `AudioOutputFailure.needsUserGesture` for the browser's `NotAllowedError` (Safari outside a gesture: ask the user to choose again), `notFound` for `NotFoundError`, `permissionDenied` for `SecurityError` (Chrome, while the page has no microphone permission: ask the user to allow the microphone), and `other` for the rest; `cause` holds the browser's `DOMException`, for logs.
 
 ```dart
 try {
   await room.setAudioOutputDevice(device.deviceId);
 } on AudioOutputException catch (e) {
-  if (e.reason == AudioOutputFailure.needsUserGesture) {
-    // Safari: show "Choose the speaker again" and call it from that tap.
-  }
+  showMessage(switch (e.reason) {
+    // Safari: the next attempt must come from that tap.
+    AudioOutputFailure.needsUserGesture => 'Choose the speaker again.',
+    AudioOutputFailure.permissionDenied =>
+      'Allow microphone access to choose a speaker.',
+    AudioOutputFailure.notFound => 'That speaker is gone. Choose another one.',
+    AudioOutputFailure.other => 'Could not change the speaker.',
+  });
 }
 ```
 

@@ -39,6 +39,10 @@ void main() {
       AudioOutputFailure.notFound,
     );
     expect(
+      webAudioOutputFailure(await _rejection('SecurityError')),
+      AudioOutputFailure.permissionDenied,
+    );
+    expect(
       webAudioOutputFailure(await _rejection('AbortError')),
       AudioOutputFailure.other,
     );
@@ -78,13 +82,21 @@ void main() {
     }
     // An unknown device. Headless Chrome, with no microphone permission,
     // rejects with `SecurityError` ("No permission to use requested
-    // device"), which is `other`; Firefox would say `NotFoundError`.
+    // device"); with one, or in Firefox, it is `NotFoundError`.
     await expectLater(
       choice.choose('no-such-device', [element], probe: () => element),
       throwsA(
         isA<AudioOutputException>()
             .having((e) => e.deviceId, 'deviceId', 'no-such-device')
-            .having((e) => e.cause, 'cause', isNotNull),
+            .having((e) => e.cause, 'cause', isNotNull)
+            .having(
+              (e) => e.reason,
+              'reason',
+              isIn([
+                AudioOutputFailure.permissionDenied,
+                AudioOutputFailure.notFound,
+              ]),
+            ),
       ),
     );
     expect(choice.deviceId, isNull);

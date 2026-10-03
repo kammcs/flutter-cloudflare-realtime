@@ -38,6 +38,7 @@ String _mediaCase(MediaException e) => switch (e) {
 String _outputCase(AudioOutputFailure reason) => switch (reason) {
   AudioOutputFailure.needsUserGesture => 'gesture',
   AudioOutputFailure.notFound => 'notFound',
+  AudioOutputFailure.permissionDenied => 'permission',
   AudioOutputFailure.other => 'other',
 };
 
@@ -79,13 +80,13 @@ void main() {
     );
   });
 
-  test('AudioOutputException: a const exception with one of three reasons', () {
+  test('AudioOutputException: a const exception with one of four reasons', () {
     const e = AudioOutputException(
       AudioOutputFailure.needsUserGesture,
       deviceId: 'speaker-2',
     );
     expect(e, isA<Exception>());
     expect(_outputCase(e.reason), 'gesture');
-    expect(AudioOutputFailure.values, hasLength(3));
+    expect(AudioOutputFailure.values, hasLength(4));
   });
 }
