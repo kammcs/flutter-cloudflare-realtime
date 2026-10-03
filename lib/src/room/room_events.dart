@@ -332,6 +332,43 @@ final class RoomReconnectingEvent extends RoomEvent {
   String toString() => 'RoomReconnectingEvent(${reason.name})';
 }
 
+/// One attempt of a reconnection is starting: the room is about to create a
+/// new SFU session. For diagnostics and progress displays.
+///
+/// It follows the attempt's backoff wait. The attempt then fails (a
+/// [RoomErrorEvent] with the operation `reconnect`, and the next attempt
+/// follows) or succeeds ([RoomReconnectedEvent]); when the backoff runs out
+/// a [RoomReconnectFailedEvent] ends the reconnection.
+final class RoomReconnectAttemptEvent extends RoomEvent {
+  /// Creates the event.
+  const RoomReconnectAttemptEvent({
+    required this.reason,
+    required this.attempt,
+    required this.delay,
+    required this.waited,
+  });
+
+  /// Why the session is being replaced.
+  final ReconnectReason reason;
+
+  /// The attempt's number in this reconnection, from 1.
+  final int attempt;
+
+  /// The backoff delay drawn for this attempt ([ReconnectOptions.backoff]).
+  /// Zero when the attempt didn't wait ([Room.reconnect]'s first attempt).
+  final Duration delay;
+
+  /// How long the attempt actually waited. Shorter than [delay] when a
+  /// network change, a return to the foreground or [Room.reconnect] cut the
+  /// wait short.
+  final Duration waited;
+
+  @override
+  String toString() =>
+      'RoomReconnectAttemptEvent(${reason.name}, attempt: $attempt, '
+      'delay: ${delay.inMilliseconds} ms, waited: ${waited.inMilliseconds} ms)';
+}
+
 /// The room is on a new SFU session: its tracks and DataChannels were moved
 /// onto it under the same names, the new session was announced, and its
 /// subscriptions were pulled again. The room is

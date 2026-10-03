@@ -88,9 +88,32 @@ describe("broker mounting", () => {
     running = await start();
     await fetch(`${running.base}/sessions/new`, { method: "POST", headers: headers() });
     const all = running.logs.join("\n");
-    expect(all).toContain("POST /sessions/new -> 201 (alice)");
+    expect(all).toMatch(/POST \/sessions\/new -> 201 in \d+ ms \(alice\)/);
     expect(all).not.toContain(DEV_TOKEN);
     expect(all).not.toContain(APP_SECRET);
+  });
+
+  it("logs why an upstream call failed, by error code only", async () => {
+    // What Node's fetch throws when the SFU can't be reached; the messages
+    // carry the URL (with the App ID), which must never be logged.
+    const upstreamFailure = () => {
+      const cause = Object.assign(new Error(`Connect Timeout Error (attempted address: ${SFU}, ${APP_SECRET})`), {
+        name: "ConnectTimeoutError",
+        code: "UND_ERR_CONNECT_TIMEOUT",
+      });
+      return Promise.reject(new TypeError(`fetch failed for ${SFU}`, { cause }));
+    };
+    running = await start({ fetch: upstreamFailure as typeof fetch });
+    const res = await fetch(`${running.base}/sessions/new`, { method: "POST", headers: headers() });
+    expect(res.status).toBe(502);
+    const all = running.logs.join("\n");
+    expect(all).toMatch(
+      /\[broker\] sessions\/new: SFU request failed \(TypeError: UND_ERR_CONNECT_TIMEOUT, after \d+ ms\)/,
+    );
+    expect(all).toMatch(/POST \/sessions\/new -> 502 in \d+ ms \(alice\)/);
+    expect(all).not.toContain(APP_SECRET);
+    expect(all).not.toContain("rtc.live.cloudflare.com");
+    expect(all).not.toContain("Connect Timeout Error");
   });
 });
 

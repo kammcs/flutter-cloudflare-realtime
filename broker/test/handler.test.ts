@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createBrokerHandler, InMemorySessionStore } from "../supabase/functions/_shared/broker-core/mod.ts";
+import {
+  createBrokerHandler,
+  errorCause,
+  formatBrokerError,
+  InMemorySessionStore,
+} from "../supabase/functions/_shared/broker-core/mod.ts";
 import { APP_SECRET, makeBroker, newSession, req, SFU } from "./helpers.ts";
 
 const FORBIDDEN = { errorCode: "forbidden" };
@@ -138,6 +143,28 @@ describe("forwarding (rule 5)", () => {
     const res = await h.handler(req("POST", "/sessions/new", { user: "alice", room: "room-a" }));
     expect(res.status).toBe(502);
     expect(h.errors).toHaveLength(1);
+    expect(JSON.stringify(h.errors)).not.toContain(APP_SECRET);
+  });
+
+  it("reports the upstream error's code and how long the call took, never its message", async () => {
+    // Shaped like Node's fetch failing on DNS: the messages name the URL.
+    let h!: ReturnType<typeof makeBroker>;
+    h = makeBroker({}, () => {
+      h.clock.now += 1234;
+      const cause = Object.assign(new Error(`getaddrinfo ENOTFOUND rtc.live.cloudflare.com ${APP_SECRET}`), {
+        code: "ENOTFOUND",
+      });
+      throw new TypeError(`fetch failed: ${SFU}`, { cause });
+    });
+    const res = await h.handler(req("POST", "/sessions/new", { user: "alice", room: "room-a" }));
+    expect(res.status).toBe(502);
+    expect(h.errors).toEqual([
+      { route: "sessions/new", message: "SFU request failed", cause: "TypeError: ENOTFOUND", elapsedMs: 1234 },
+    ]);
+    expect(formatBrokerError(h.errors[0]!)).toBe(
+      "sessions/new: SFU request failed (TypeError: ENOTFOUND, after 1234 ms)",
+    );
+    expect(JSON.stringify(h.errors)).not.toContain("rtc.live.cloudflare.com");
     expect(JSON.stringify(h.errors)).not.toContain(APP_SECRET);
   });
 
@@ -487,6 +514,26 @@ describe("generate-ice-servers", () => {
     expect(h.errors).toEqual([{ route: "generate-ice-servers", message: "TURN API returned HTTP 401" }]);
   });
 
+  it("reports why the TURN API couldn't be reached, by error code only", async () => {
+    const turnToken = "test-turn-token-not-real";
+    const h = makeBroker({ turn: { keyId: "k", apiToken: turnToken } }, () => {
+      const cause = Object.assign(new Error(`Connect Timeout Error ${turnToken}`), {
+        name: "ConnectTimeoutError",
+        code: "UND_ERR_CONNECT_TIMEOUT",
+      });
+      throw new TypeError("fetch failed", { cause });
+    });
+    const res = await h.handler(req("POST", "/generate-ice-servers", { user: "alice", room: "room-a" }));
+    expect(res.status).toBe(502);
+    expect(h.errors).toEqual([{
+      route: "generate-ice-servers",
+      message: "TURN request failed",
+      cause: "TypeError: UND_ERR_CONNECT_TIMEOUT",
+      elapsedMs: 0,
+    }]);
+    expect(JSON.stringify(h.errors)).not.toContain(turnToken);
+  });
+
   it("requires room membership", async () => {
     const h = makeBroker();
     expect((await h.handler(req("POST", "/generate-ice-servers", { user: "alice", room: "room-b" }))).status)
@@ -563,5 +610,41 @@ describe("CORS", () => {
     );
     expect(res.status).toBe(201);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+});
+
+describe("diagnostics", () => {
+  it("describes errors by code or name along the cause chain", () => {
+    const connect = Object.assign(new Error("x"), { name: "ConnectTimeoutError", code: "UND_ERR_CONNECT_TIMEOUT" });
+    expect(errorCause(new TypeError("fetch failed", { cause: connect }))).toBe("TypeError: UND_ERR_CONNECT_TIMEOUT");
+    expect(errorCause(new TypeError("error sending request for url (https://example)"))).toBe("TypeError");
+    expect(errorCause(new DOMException("signal timed out", "TimeoutError"))).toBe("TimeoutError");
+    const reset = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+    expect(errorCause(new TypeError("fetch failed", { cause: reset }))).toBe("TypeError: ECONNRESET");
+  });
+
+  it("never passes free text through", () => {
+    const sneaky = Object.assign(new Error("m"), { name: "has spaces and a https://url", code: "Bearer abc def" });
+    expect(errorCause(sneaky)).toBeUndefined();
+    expect(errorCause("a string")).toBeUndefined();
+    expect(errorCause(null)).toBeUndefined();
+    expect(errorCause({ code: 42 })).toBeUndefined();
+  });
+
+  it("stops on cyclic cause chains", () => {
+    const a = new Error("a") as Error & { cause?: unknown; code?: string };
+    a.code = "EA";
+    const b = new Error("b") as Error & { cause?: unknown; code?: string };
+    b.code = "EB";
+    a.cause = b;
+    b.cause = a;
+    expect(errorCause(a)).toBe("EA: EB: EA: EB");
+  });
+
+  it("formats an error line", () => {
+    expect(formatBrokerError({ route: "tracks/new", message: "internal error" })).toBe("tracks/new: internal error");
+    expect(formatBrokerError({ route: "sessions/new", message: "SFU request failed", elapsedMs: 10012.4 })).toBe(
+      "sessions/new: SFU request failed (after 10012 ms)",
+    );
   });
 });

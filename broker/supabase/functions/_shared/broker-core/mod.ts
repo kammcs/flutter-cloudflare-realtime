@@ -8,6 +8,7 @@
 
 export { createBrokerHandler, ROOM_HEADER, SESSION_TOKEN_HEADER } from "./handler.ts";
 export type { BrokerHandler } from "./handler.ts";
+export { errorCause, formatBrokerError } from "./diagnostics.ts";
 export { InMemorySessionStore } from "./memory_store.ts";
 export { STUN_ONLY } from "./ice.ts";
 export type { IceServer, IceServersResponse } from "./ice.ts";

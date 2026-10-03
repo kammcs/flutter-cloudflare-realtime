@@ -8,6 +8,7 @@
 import {
   type BrokerHandler,
   createBrokerHandler,
+  formatBrokerError,
   parseAllowedOrigins,
   parseList,
   parsePositiveInt,
@@ -73,7 +74,7 @@ function buildHandler(env: Env): BrokerHandler {
     cors: allowedOrigins
       ? { allowedOrigins, extraAllowedHeaders: parseList(env.EXTRA_ALLOWED_HEADERS) }
       : undefined,
-    onError: ({ route, message }) => console.error(`realtime-broker ${route}: ${message}`),
+    onError: (info) => console.error(`realtime-broker ${formatBrokerError(info)}`),
   });
 }
 

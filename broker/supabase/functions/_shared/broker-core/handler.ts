@@ -18,6 +18,7 @@
 
 import { BadBodyError, EMPTY_BODY, type InspectedBody, inspectBody } from "./body.ts";
 import { corsResponseHeaders, isOriginAllowed, preflightResponse } from "./cors.ts";
+import { errorCause } from "./diagnostics.ts";
 import { generateIceServers, STUN_ONLY, TurnError } from "./ice.ts";
 import { matchRoute, type Route } from "./routes.ts";
 import { MIN_SESSION_TOKEN_SECRET_LENGTH, signSessionToken, verifySessionToken } from "./session_token.ts";
@@ -69,9 +70,15 @@ export function createBrokerHandler<C extends Caller>(config: BrokerConfig<C>): 
   const store: SessionStore = config.sessionStore;
   const upstreamBase = `${apiBaseUrl}/apps/${encodeURIComponent(config.appId)}`;
 
-  const report = (route: string, message: string) => {
+  const report = (route: string, message: string, upstream?: { error: unknown; startedAt: number }) => {
     try {
-      config.onError?.({ route, message });
+      const cause = upstream === undefined ? undefined : errorCause(upstream.error);
+      config.onError?.({
+        route,
+        message,
+        ...(cause !== undefined ? { cause } : {}),
+        ...(upstream !== undefined ? { elapsedMs: Math.max(0, now() - upstream.startedAt) } : {}),
+      });
     } catch {
       // Diagnostics must never break a request.
     }
@@ -142,10 +149,12 @@ export function createBrokerHandler<C extends Caller>(config: BrokerConfig<C>): 
 
       if (route.name === "generate-ice-servers") {
         if (!config.turn) return json(200, JSON.stringify(STUN_ONLY));
+        const startedAt = now();
         try {
           return json(200, JSON.stringify(await generateIceServers(config.turn, apiBaseUrl, fetchImpl)));
         } catch (e) {
-          report(route.name, e instanceof TurnError ? e.message : "TURN request failed");
+          if (e instanceof TurnError) report(route.name, e.message);
+          else report(route.name, "TURN request failed", { error: e, startedAt });
           return fail(502, "upstream_error", "could not generate ICE servers");
         }
       }
@@ -229,14 +238,15 @@ export function createBrokerHandler<C extends Caller>(config: BrokerConfig<C>): 
   ): Promise<Response | null> {
     const headers: Record<string, string> = { "Authorization": `Bearer ${config.appSecret}` };
     if (json !== null) headers["Content-Type"] = "application/json";
+    const startedAt = now();
     try {
       return await fetchImpl(`${upstreamBase}${route.upstreamPath}${search}`, {
         method,
         headers,
         body: json,
       });
-    } catch {
-      report(route.name, "SFU request failed");
+    } catch (e) {
+      report(route.name, "SFU request failed", { error: e, startedAt });
       return null;
     }
   }

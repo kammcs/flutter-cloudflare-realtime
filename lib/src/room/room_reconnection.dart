@@ -224,11 +224,21 @@ class _Reconnection {
         _giveUp(reason, attempts, lastError);
         return false;
       }
-      if (!immediate || attempts > 0) {
+      final waits = !immediate || attempts > 0;
+      final sleptFrom = _now;
+      if (waits) {
         await _sleep(delay);
         if (room._left) return false;
       }
       attempts++;
+      room._emit(
+        RoomReconnectAttemptEvent(
+          reason: reason,
+          attempt: attempts,
+          delay: waits ? delay : Duration.zero,
+          waited: _now - sleptFrom,
+        ),
+      );
       try {
         await _attempt();
       } on _Aborted {

@@ -590,6 +590,21 @@ void main() {
           'reconnect',
           'reconnect',
         ]);
+        expect(
+          [
+            for (final e in events.whereType<RoomReconnectAttemptEvent>())
+              (e.reason, e.attempt, e.delay, e.waited),
+          ],
+          [
+            for (final (n, s) in [(1, 1), (2, 2), (3, 4)])
+              (
+                ReconnectReason.peerConnectionFailed,
+                n,
+                Duration(seconds: s),
+                Duration(seconds: s),
+              ),
+          ],
+        );
         expect(alice.connectionState, RoomConnectionState.disconnected);
         expect(alice.isReconnecting, isFalse);
         async.elapse(const Duration(minutes: 5));
@@ -605,7 +620,47 @@ void main() {
         final reconnected = events.whereType<RoomReconnectedEvent>().single;
         expect(reconnected.reason, ReconnectReason.manual);
         expect(reconnected.attempts, 1);
+        final manual = events.whereType<RoomReconnectAttemptEvent>().last;
+        expect(manual.reason, ReconnectReason.manual);
+        expect(manual.attempt, 1);
+        expect(manual.delay, Duration.zero);
+        expect(manual.waited, Duration.zero);
         expect(h.announced('alice')!.sessionId, alice.session.sessionId);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('a network change while offline cuts the backoff wait short', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final events = _record(alice);
+        final base = h.connectAttempts;
+        h.connectError = const BrokerNetworkException(
+          operation: 'sessions/new',
+        );
+        h.pcOf(alice).emitConnectionState(_failed);
+        pump();
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(h.connectAttempts - base, 1);
+
+        // Attempt 2 would wait 2 s; the network comes back after 0.5 s.
+        h.connectError = null;
+        async.elapse(const Duration(milliseconds: 500));
+        pump();
+        expect(h.connectAttempts - base, 1);
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 2, reason: 'retried at once');
+        final second = events.whereType<RoomReconnectAttemptEvent>().last;
+        expect(second.attempt, 2);
+        expect(second.delay, const Duration(seconds: 2));
+        expect(second.waited, const Duration(milliseconds: 500));
+        h.pcOf(alice).emitConnectionState(_connected);
+        pump();
+        expect(alice.connectionState, RoomConnectionState.connected);
+        expect(events.whereType<RoomReconnectedEvent>().single.attempts, 2);
         alice.leave();
         pump();
       });
@@ -976,6 +1031,136 @@ void main() {
         async.elapse(const Duration(minutes: 1));
         pump();
         expect(h.pullsOf(alice), hasLength(1), reason: 'no retries');
+        alice.leave();
+        dave.dispose();
+        pump();
+      });
+    });
+
+    test('pull retries while a publisher\'s new session serves nothing yet '
+        'add no transceivers, mids or subscriptions', () {
+      // Seen on devices: a phone re-sessioned and announced its new session
+      // before its peer connection was up (its Wi-Fi was gone; it later
+      // fell over to cellular). The subscriber pulled each track again and
+      // again, every pull a 200 with no renegotiation, until the phone's
+      // media path came up. The SFU answers such a pull with a per-track
+      // error (`not_found_track_error`, no mid). Each retry must leave
+      // nothing behind on the subscriber's session.
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        const cam = TrackInfo(
+          kind: TrackKind.video,
+          source: TrackSource.camera,
+        );
+        h.broker.trackKinds['dave-1/dave-mic'] = 'audio';
+        h.broker.trackKinds['dave-2/dave-mic'] = 'audio';
+        final dave = InMemorySignaling(h.hub);
+        dave.join(
+          'room',
+          ParticipantState(
+            participantId: 'dave',
+            sessionId: 'dave-1',
+            tracks: const {'dave-mic': _mic, 'dave-cam': cam},
+          ),
+        );
+        pump();
+        final daveCam = alice.participant('dave')!.camera!;
+        wait(pump, daveCam.subscribe());
+        final daveMic = alice.participant('dave')!.microphone!;
+        expect(daveMic.subscriptionState, SfuTrackState.active);
+        final pc = h.pcOf(alice);
+        expect(pc.transceivers, hasLength(2));
+
+        // Dave's new session answers not_found_track_error six times per
+        // track; the seventh pull of each works.
+        final failuresLeft = {'dave-mic': 6, 'dave-cam': 6};
+        final pulledMids = [
+          daveMic.subscription!.mid!,
+          daveCam.subscription!.mid!,
+        ];
+        final sfu = h.broker.onNewTracks!;
+        h.broker.onNewTracks = (sessionId, request) async {
+          final isPull = request.sessionDescription == null;
+          if (isPull &&
+              request.tracks.every(
+                (t) =>
+                    t.sessionId == 'dave-2' && failuresLeft[t.trackName]! > 0,
+              )) {
+            for (final t in request.tracks) {
+              failuresLeft[t.trackName!] = failuresLeft[t.trackName]! - 1;
+            }
+            return TracksResponse(
+              tracks: [
+                for (final t in request.tracks)
+                  TrackResult(
+                    location: TrackLocation.remote,
+                    sessionId: t.sessionId,
+                    trackName: t.trackName,
+                    errorCode: 'not_found_track_error',
+                    errorDescription:
+                        'Make sure the publisher peer is connected and '
+                        'sending packets for this track',
+                  ),
+              ],
+            );
+          }
+          final response = await sfu(sessionId, request);
+          if (isPull) {
+            pulledMids.addAll([
+              for (final r in response.tracks)
+                if (r.mid != null && !r.hasError) r.mid!,
+            ]);
+          }
+          return response;
+        };
+        final events = _record(alice);
+
+        dave.update(
+          ParticipantState(
+            participantId: 'dave',
+            sessionId: 'dave-2',
+            tracks: const {'dave-mic': _mic, 'dave-cam': cam},
+          ),
+        );
+        pump();
+        async.elapse(const Duration(seconds: 30));
+        pump();
+
+        final fromNew = [
+          for (final p in h.pullsOf(alice))
+            if (p.startsWith('dave-2/')) p,
+        ];
+        expect(
+          fromNew.where((p) => p.startsWith('dave-2/dave-mic')),
+          hasLength(7),
+        );
+        expect(
+          fromNew.where((p) => p.startsWith('dave-2/dave-cam')),
+          hasLength(7),
+        );
+        expect(events.whereType<TrackSubscriptionFailedEvent>(), hasLength(12));
+        expect(failuresLeft.values, everyElement(lessThanOrEqualTo(0)));
+
+        // Both tracks are pulled from Dave's new session, once each.
+        expect(daveMic.subscriptionState, SfuTrackState.active);
+        expect(daveCam.subscriptionState, SfuTrackState.active);
+        expect(daveMic.subscription!.remoteSessionId, 'dave-2');
+        expect(daveCam.subscription!.remoteSessionId, 'dave-2');
+        expect(alice.session.subscriptions, hasLength(2));
+        // Only the successful pulls made transceivers (2 old, 2 new) and
+        // renegotiated; the failed ones added none.
+        expect(pc.transceivers, hasLength(4));
+        expect(pulledMids, hasLength(4));
+        // The SFU keeps exactly the current pulls open: every other mid it
+        // ever assigned to this session was closed.
+        final open = {...pulledMids}..removeAll(h.closesOf(alice));
+        expect(open, {daveMic.subscription!.mid, daveCam.subscription!.mid});
+        expect(
+          h.closesOf(alice),
+          hasLength(2),
+          reason: 'the two pulls from the old session',
+        );
+
         alice.leave();
         dave.dispose();
         pump();
