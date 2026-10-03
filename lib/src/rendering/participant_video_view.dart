@@ -54,7 +54,7 @@ class ParticipantVideoView extends StatefulWidget {
     this.rendererFactory,
   }) : localSource = null;
 
-  /// Shows the local capture of [source], such as a published camera's
+  /// Shows the local capture of [localSource], such as a published camera's
   /// `LocalMediaPublication.mediaSource` or a camera previewed before
   /// joining.
   const ParticipantVideoView.local(

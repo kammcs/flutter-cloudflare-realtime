@@ -37,11 +37,13 @@ class RoomAudioLevelSource implements AudioLevelSource {
   /// `session`; `remoteAudio` lists the pulled microphones and
   /// `localTrackId` returns the local microphone track's ID.
   RoomAudioLevelSource({
-    required this._session,
-    required this._remoteAudio,
+    required SfuSession? Function() session,
+    required Iterable<RoomAudioTrack> Function() remoteAudio,
     this.localParticipantId,
-    this._localTrackId,
-  });
+    String? Function()? localTrackId,
+  }) : _session = session,
+       _remoteAudio = remoteAudio,
+       _localTrackId = localTrackId;
 
   final SfuSession? Function() _session;
   final Iterable<RoomAudioTrack> Function() _remoteAudio;

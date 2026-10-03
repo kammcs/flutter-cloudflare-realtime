@@ -54,10 +54,11 @@ class CallStatsReader {
   /// Creates a reader. [elapsed] is a monotonic clock (tests pass fake
   /// time); [now] stamps the snapshots.
   CallStatsReader({
-    required this._elapsed,
+    required Duration Function() elapsed,
     DateTime Function()? now,
     this.timestampsInMicroseconds = !kIsWeb,
-  }) : _now = now ?? DateTime.now;
+  }) : _elapsed = elapsed,
+       _now = now ?? DateTime.now;
 
   final Duration Function() _elapsed;
   final DateTime Function() _now;

@@ -27,13 +27,18 @@ class SystemCallAudioBackend implements CallAudioBackend {
   /// one), `isHeld` whether it is on hold; `endpointChanges` fires when its
   /// endpoints change, and `interruptions` are the call's.
   SystemCallAudioBackend({
-    required this._platform,
-    required this._system,
-    required this._callId,
-    required this._isHeld,
-    required this._endpointChanges,
-    required this._interruptions,
-  });
+    required CallAudioBackend platform,
+    required SystemCallBackend system,
+    required String? Function() callId,
+    required bool Function() isHeld,
+    required Stream<void> endpointChanges,
+    required Stream<AudioInterruptionSignal> interruptions,
+  }) : _platform = platform,
+       _system = system,
+       _callId = callId,
+       _isHeld = isHeld,
+       _endpointChanges = endpointChanges,
+       _interruptions = interruptions;
 
   final CallAudioBackend _platform;
   final SystemCallBackend _system;

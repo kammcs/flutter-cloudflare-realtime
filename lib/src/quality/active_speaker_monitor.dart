@@ -25,11 +25,12 @@ class ActiveSpeakerMonitor {
   /// [clock] returns monotonic elapsed time; it defaults to a [Stopwatch]
   /// started here. Tests pass fake time.
   ActiveSpeakerMonitor({
-    required this._source,
+    required AudioLevelSource source,
     ActiveSpeakerConfig config = const ActiveSpeakerConfig(),
     String? localParticipantId,
     Duration Function()? clock,
-  }) : _detector = ActiveSpeakerDetector(
+  }) : _source = source,
+       _detector = ActiveSpeakerDetector(
          config: config,
          localParticipantId: localParticipantId,
        ),

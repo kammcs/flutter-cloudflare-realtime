@@ -555,9 +555,9 @@ class LocalMediaPublication {
     required this.kind,
     required this.publication,
     required this.ownsMediaSource,
-    this._simulcast,
+    SimulcastInfo? simulcast,
     this.videoCodec,
-  });
+  }) : _simulcast = simulcast;
 
   /// The participant that published it.
   final LocalParticipant participant;

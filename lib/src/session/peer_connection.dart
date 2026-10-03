@@ -17,9 +17,8 @@ import 'publish_options.dart';
 /// `{'iceServers': [...], 'bundlePolicy': 'max-bundle'}`.
 ///
 /// Internal: not exported from the package barrel.
-typedef PeerConnectionFactory = Future<PeerConnection> Function(
-  Map<String, dynamic> configuration,
-);
+typedef PeerConnectionFactory =
+    Future<PeerConnection> Function(Map<String, dynamic> configuration);
 
 /// The small slice of `RTCPeerConnection` that `SfuSession` uses.
 ///

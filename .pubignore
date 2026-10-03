@@ -1,0 +1,43 @@
+# What `dart pub publish` leaves out of the package archive. This file
+# replaces the root .gitignore for pub, so it repeats the patterns that
+# matter from there.
+
+# Secrets: never published (same patterns as .gitignore).
+.env
+.env.*
+*.pem
+*.key
+*.p8
+*.p12
+credentials*.json
+*.secret
+.dev.vars
+
+# Build output and tool state.
+/build/
+/coverage/
+.dart_tool/
+.flutter-plugins-dependencies
+/pubspec.lock
+**/doc/api/
+.idea/
+*.iml
+.DS_Store
+.claude/
+
+# Not part of the Dart package: the reference brokers (TypeScript), the DEV
+# ONLY dev server, the design docs and the repository's own tooling. They
+# stay on GitHub, where the README links to them. The platform setup guides
+# (doc/) are published.
+/broker/
+/tools/
+/docs/
+/.github/
+/.githooks/
+/CLAUDE.md
+
+# The example's build output.
+/example/build/
+/example/.dart_tool/
+/example/ios/Pods/
+/example/macos/Pods/

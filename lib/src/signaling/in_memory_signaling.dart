@@ -19,6 +19,9 @@ import 'signaling.dart';
 /// // alice.participants now emits [bob]; bob.participants emits [alice].
 /// ```
 class InMemorySignalingHub {
+  /// Creates a hub with no rooms.
+  InMemorySignalingHub();
+
   // roomId -> members, in join order.
   final Map<String, Map<InMemorySignaling, ParticipantState>> _rooms = {};
 

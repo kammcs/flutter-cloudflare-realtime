@@ -13,17 +13,13 @@ import 'room_options.dart';
 
 /// Creates the [BrokerClient] for one room. The default is
 /// [HttpBrokerClient].
-typedef BrokerClientFactory = BrokerClient Function(
-  BrokerConfig config,
-  String roomId,
-);
+typedef BrokerClientFactory =
+    BrokerClient Function(BrokerConfig config, String roomId);
 
 /// Connects an [SfuSession] through [broker]. The default is
 /// [SfuSession.connect].
-typedef SfuSessionConnector = Future<SfuSession> Function(
-  BrokerClient broker,
-  SfuSessionOptions options,
-);
+typedef SfuSessionConnector =
+    Future<SfuSession> Function(BrokerClient broker, SfuSessionOptions options);
 
 BrokerClient _defaultBrokerClient(BrokerConfig config, String roomId) =>
     HttpBrokerClient(config: config, roomId: roomId);

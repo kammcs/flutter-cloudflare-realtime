@@ -24,10 +24,8 @@ abstract interface class LayerDemandReporter {
 }
 
 /// Called when a subscription's chosen layer changes.
-typedef LayerPreferenceListener = void Function(
-  String subscriptionId,
-  LayerPreference preference,
-);
+typedef LayerPreferenceListener =
+    void Function(String subscriptionId, LayerPreference preference);
 
 class _Subscription {
   _Subscription(this.ladder);

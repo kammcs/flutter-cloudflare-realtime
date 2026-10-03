@@ -587,9 +587,8 @@ class VoipPush {
 
   final SystemCalls _calls;
 
-  /// Whether VoIP pushes work here: iOS with system calls [supported].
-  ///
-  /// [supported]: SystemCalls.supported
+  /// Whether VoIP pushes work here: iOS with system calls supported
+  /// ([SystemCalls.supported]).
   bool get supported =>
       _calls._supported && (_calls._backend?.supportsVoipPush ?? false);
 

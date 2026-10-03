@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter client for the Cloudflare Realtime SFU, on `flutter_webrtc`, for Android, iOS, macOS, Windows and the web.
+
+- **Rooms** (`CloudflareRealtime.join`, `Room`, `LocalParticipant`, `RemoteParticipant`) on top of an app-provided `Signaling` interface, with `InMemorySignaling` for tests and demos. Participants are diffed, and only what is subscribed is pulled.
+- **Publishing** the camera, microphone and screen, with mute, camera switching that behaves the same on every platform, and device selection with fallback.
+- **Simulcast** (three layers by default) with per-view layer selection, a manual override and opt-in layer pausing; VP8 by default, H.264, VP9 or AV1 per room or publication.
+- **Active speaker**, **connection quality** per participant and **typed stats**.
+- **Automatic reconnection:** the room replaces a failed or expired SFU session, republishes under the same names and pulls again, with backoff.
+- **Screen share** on desktops (a source picker), the web (the browser's picker), Android (MediaProjection under the package's foreground service) and iOS (a Broadcast Upload Extension from the package's templates).
+- **Calls on phones:** one audio-route API, a foreground service on Android, interruptions, the proximity sensor, and system calls through Android Telecom and CallKit/PushKit.
+- **DataChannels**, reliable and unreliable, that follow participants across sessions.
+- **The broker client** (`HttpBrokerClient`) for the broker contract; reference brokers (a Cloudflare Worker and a Supabase Edge Function) live in the repository, not in the package.
+- **Release preparation:**
+  - The SDK constraint is widened from Dart 3.13 / Flutter 3.47 to **Dart 3.11 / Flutter 3.41**, checked with resolved and downgraded dependencies, and an Android build, on Flutter 3.41.0. Internal constructors no longer use private named parameters (Dart 3.12).
+  - The Android plugin builds with the Android templates of older Flutter releases (AGP 8 with the Kotlin Gradle plugin) as well as with AGP 9's built-in Kotlin: it applies the Kotlin Gradle plugin only when built-in Kotlin is off, and sets the JVM target on the compile tasks.
+  - README rewritten for pub.dev, with platform setup guides in `doc/` (Android, iOS, macOS, Windows, web), `pubspec.yaml` metadata (`platforms`, `documentation`), a `.pubignore`, and the `public_member_api_docs` lint. `docs/api-review.md` lists the public API and the review's decisions.
+
+### Development history
+
 - **Verified in Chrome against the real SFU** (roadmap M13, the web part; `docs/checkpoint.md`, "In a browser"). Every integration test passes in Chrome 154 with fake devices, compiled to JS and to Wasm, and `cross_device_test.dart` passes between Chrome and a Pixel 10. Nothing in the package needed changing for Chrome; the fixes were in the tests. Firefox and Safari are still to run.
   - Example: `test_driver/integration_test.dart` for `flutter drive`. `audio_routing_test.dart` no longer reads `dart:io`'s `Platform` in a browser, and checks there that the pulled audio plays in the package's `<audio>` element and follows `setAudioOutputDevice` to each output. `screen_share_test.dart` runs in a browser with `CF_REALTIME_SCREEN_SHARE_WEB=true`, including a share with `captureAudio`. `cross_device_test.dart` no longer uses `1 << 32`, which is 0 on the web. `stats_test.dart` waits for the microphone's first rate as well as the camera's.
 

@@ -91,11 +91,11 @@ typedef InboundAudioResolver = String? Function(InboundAudioStream stream);
 class StatsAudioLevelSource implements AudioLevelSource {
   /// Creates a source that reads stats from [getStats].
   StatsAudioLevelSource({
-    required this._getStats,
+    required Future<List<StatsReport>> Function() getStats,
     required this.participantFor,
     this.localParticipantId,
     this.localTrackId,
-  });
+  }) : _getStats = getStats;
 
   /// Creates a source that reads [peerConnection]'s stats.
   factory StatsAudioLevelSource.peerConnection(
