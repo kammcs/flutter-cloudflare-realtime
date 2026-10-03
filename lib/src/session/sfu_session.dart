@@ -1011,6 +1011,7 @@ class SfuSession {
       _throwIfUnusable();
     }
 
+    final orphans = <String>[];
     for (final item in pulled) {
       final transceiver = await _pc.transceiverForMid(
         item.mid!,
@@ -1018,6 +1019,7 @@ class SfuSession {
       );
       _throwIfUnusable();
       if (transceiver == null) {
+        orphans.add(item.mid!);
         item.fail(
           this,
           SfuTrackException(
@@ -1030,6 +1032,27 @@ class SfuSession {
       }
       item.subscription._activate(this, transceiver, item.mid!);
       item.succeed();
+    }
+    if (orphans.isNotEmpty) await _releaseOrphanMids(orphans);
+  }
+
+  /// Closes, at the SFU, mids it assigned to pulls that then failed here
+  /// (their transceiver never showed up). Otherwise each retry of such a
+  /// pull would leave another pulled track on this session. Without a
+  /// transceiver there is nothing to stop locally, so the close is forced
+  /// (no SDP). Best effort: a failure here doesn't change the pulls' result.
+  Future<void> _releaseOrphanMids(List<String> mids) async {
+    if (!isUsable) return;
+    try {
+      await _call(
+        () => _broker.closeTracks(
+          sessionId,
+          CloseTracksRequest(mids: mids, force: true),
+        ),
+      );
+    } catch (_) {
+      // The pulls already failed; a session that is gone fails through
+      // [_call].
     }
   }
 

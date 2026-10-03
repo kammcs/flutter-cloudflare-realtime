@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 
+import 'call_diagnostics.dart';
+
 /// Network changes from polling the device's interface addresses.
 NetworkChangeSource? createNetworkChangeSource() =>
     InterfacePollingNetworkChanges();
@@ -36,6 +38,16 @@ class InterfacePollingNetworkChanges implements NetworkChangeSource {
         ]..sort();
         final signature = addresses.join(',');
         if (last != null && signature != last && !controller.isClosed) {
+          // Interface names and a count, never the addresses themselves.
+          final names = {
+            for (final i in interfaces)
+              if (i.addresses.isNotEmpty) i.name,
+          };
+          logDiagnostic(
+            'network',
+            'interfaces changed: ${addresses.length} addresses on '
+                '${names.isEmpty ? 'no interface' : names.join(', ')}',
+          );
           controller.add(null);
         }
         last = signature;

@@ -675,6 +675,103 @@ void main() {
       );
     });
 
+    test('retried pulls leave no mids behind when the transceiver never '
+        'appears', () async {
+      // The SFU assigned a mid to a pull that then failed here. Each retry
+      // gets a new mid: the failed one is closed at the SFU (forced: there
+      // is no transceiver to stop), so they don't pile up on the session.
+      final session = await h.connect();
+      var failing = 3;
+      h.broker.onNewTracks = (sessionId, request) async {
+        final ok = await h.broker.defaultNewTracks(sessionId, request);
+        if (failing-- <= 0) return ok;
+        return TracksResponse(
+          requiresImmediateRenegotiation: true,
+          sessionDescription: h.broker.sfuOffer(const []),
+          tracks: ok.tracks,
+        );
+      };
+      for (var i = 0; i < 3; i++) {
+        await expectLater(
+          session.subscribe(remoteSessionId: 'p', trackName: 't'),
+          throwsA(isA<SfuTrackException>()),
+        );
+      }
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 't');
+
+      expect(sub.mid, 'r4');
+      expect(session.subscriptions, [sub]);
+      final closes = [
+        for (final c in h.broker.callsTo('tracks/close'))
+          c.request! as CloseTracksRequest,
+      ];
+      expect(
+        [for (final c in closes) c.mids],
+        [
+          ['r1'],
+          ['r2'],
+          ['r3'],
+        ],
+      );
+      expect(
+        closes.every((c) => c.force && c.sessionDescription == null),
+        true,
+      );
+      expect(
+        [
+          for (final t in h.pc.transceivers)
+            if (!t.stopped) t.currentMid,
+        ],
+        ['r4'],
+      );
+    });
+
+    test('repeated per-track pull errors add no transceivers', () async {
+      // What the SFU answers while the publisher's session isn't serving
+      // the track yet (`not_found_track_error`): a 200 with a per-track
+      // error, no mid and no renegotiation. Retrying adds nothing to this
+      // session until a pull works.
+      final session = await h.connect();
+      var failing = 12;
+      h.broker.onNewTracks = (sessionId, request) async {
+        if (failing-- > 0) {
+          return TracksResponse(
+            tracks: [
+              for (final t in request.tracks)
+                TrackResult(
+                  location: TrackLocation.remote,
+                  sessionId: t.sessionId,
+                  trackName: t.trackName,
+                  errorCode: 'not_found_track_error',
+                  errorDescription: 'Make sure the publisher peer is connected',
+                ),
+            ],
+          );
+        }
+        return h.broker.defaultNewTracks(sessionId, request);
+      };
+      for (var i = 0; i < 12; i++) {
+        await expectLater(
+          session.subscribe(remoteSessionId: 'p', trackName: 't'),
+          throwsA(
+            isA<SfuTrackException>().having(
+              (e) => e.errorCode,
+              'errorCode',
+              'not_found_track_error',
+            ),
+          ),
+        );
+        expect(session.subscriptions, isEmpty);
+      }
+      expect(h.pc.transceivers, isEmpty);
+      expect(h.broker.callsTo('renegotiate'), isEmpty);
+
+      final sub = await session.subscribe(remoteSessionId: 'p', trackName: 't');
+      expect(session.subscriptions, [sub]);
+      expect([for (final t in h.pc.transceivers) t.currentMid], ['r1']);
+      expect(h.broker.callsTo('tracks/close'), isEmpty);
+    });
+
     test('a renegotiate error fails the batch', () async {
       final session = await h.connect();
       h.broker.onRenegotiate = (_, _) async =>

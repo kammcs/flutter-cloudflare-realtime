@@ -16,6 +16,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   createBrokerHandler,
+  formatBrokerError,
   parseAllowedOrigins,
   parseList,
   parsePositiveInt,
@@ -80,7 +81,7 @@ const handler = createBrokerHandler({
       extraAllowedHeaders: ["apikey", "x-client-info", ...parseList(env("EXTRA_ALLOWED_HEADERS"))],
     }
     : undefined,
-  onError: ({ route, message }) => console.error(`realtime-broker ${route}: ${message}`),
+  onError: (info) => console.error(`realtime-broker ${formatBrokerError(info)}`),
 });
 
 Deno.serve(handler);

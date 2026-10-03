@@ -23,7 +23,7 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 | `RoomOptions`, `AutoSubscribe`, `ReconnectOptions` | classes | Options |
 | `RoomConnectionState`, `SimulcastLayer`, `KeepScreenAwake` | enums | `KeepScreenAwake`: `RoomOptions.keepScreenAwake` (added after the review, §4.7) |
 | `ScreenSharePresets` | abstract final class | Static encodings |
-| `RoomEvent` | sealed class | 22 final subclasses: `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `ParticipantUpdatedEvent`, `TrackPublishedEvent`, `TrackUnpublishedEvent`, `TrackMutedEvent`, `TrackSubscribedEvent`, `TrackSubscriptionFailedEvent`, `LocalTrackPublishedEvent`, `LocalTrackUnpublishedEvent`, `LocalScreenShareStalledEvent`, `LocalCameraPausedEvent`, `LocalCameraResumedEvent`, `CallInterruptedEvent`, `CallResumedEvent`, `ConnectionQualityChangedEvent`, `RoomConnectionStateChangedEvent`, `RoomReconnectingEvent`, `RoomReconnectedEvent`, `RoomReconnectFailedEvent`, `RoomSessionFailedEvent`, `RoomErrorEvent` |
+| `RoomEvent` | sealed class | 23 final subclasses: `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `ParticipantUpdatedEvent`, `TrackPublishedEvent`, `TrackUnpublishedEvent`, `TrackMutedEvent`, `TrackSubscribedEvent`, `TrackSubscriptionFailedEvent`, `LocalTrackPublishedEvent`, `LocalTrackUnpublishedEvent`, `LocalScreenShareStalledEvent`, `LocalCameraPausedEvent`, `LocalCameraResumedEvent`, `CallInterruptedEvent`, `CallResumedEvent`, `ConnectionQualityChangedEvent`, `RoomConnectionStateChangedEvent`, `RoomReconnectingEvent`, `RoomReconnectAttemptEvent`, `RoomReconnectedEvent`, `RoomReconnectFailedEvent`, `RoomSessionFailedEvent`, `RoomErrorEvent` |
 
 ### Phones: audio, background, system calls (`src/audio/`, `src/background/`, `src/calls/`)
 

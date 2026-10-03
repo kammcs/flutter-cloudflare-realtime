@@ -107,6 +107,15 @@ The server pings every socket every 2 seconds (`--heartbeat-ms`), and drops a so
 
 `WsSignaling` in the app pings every 4 seconds. It treats 10 seconds of silence as a dead socket. It then reconnects with backoff (0.5 s, doubling, up to 10 s) and rejoins with its latest state. If it reconnects before the server has evicted the old socket, the new connection replaces the old one (see `replaced` below).
 
+**Drop the client's network, not the server's.** Cutting the network of the machine that runs the dev server (unplugging it, disabling its adapter) also cuts the broker's own path to Cloudflare. The client on that machine still reaches the broker over loopback, but every `sessions/new` fails with `502` until the machine's internet is back, including whatever it depends on (DHCP, DNS, a VPN that reconnects). Each of those failures can take up to Node's 10-second connect timeout, which stretches the client's backoff. So the recovery time you measure is mostly that machine's network coming back, not the app's reconnection; in production the broker is somewhere else and stays reachable.
+
+For a clean measurement, drop only a client's network while the broker stays reachable, for example:
+
+- a phone on USB with `adb reverse tcp:8787 tcp:8787` and the server URL `http://127.0.0.1:8787`: turn the phone's Wi-Fi off and on (and mobile data off, or it falls over to it). Broker and signaling calls still go over USB, while the media path to Cloudflare is gone;
+- or a second computer whose network you drop, with the dev server on a machine that stays online.
+
+When an upstream call fails, the log line names why, by error code only, and how long it took, for example `[broker] sessions/new: SFU request failed (TypeError: UND_ERR_CONNECT_TIMEOUT, after 10012 ms)`. `ENOTFOUND` or `EAI_AGAIN` is DNS; `UND_ERR_CONNECT_TIMEOUT` is no answer within 10 s (Node's fetch reports a DNS lookup that hangs this way too); `ECONNRESET` or `UND_ERR_SOCKET` is a connection that broke. Every request line ends with its duration (`-> 502 in 10012 ms`); the line is written when the response is ready, so the request arrived that long before the timestamp.
+
 ## Protocol
 
 It's JSON text frames over one WebSocket per participant.

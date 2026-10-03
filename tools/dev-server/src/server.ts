@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import {
   type BrokerHandler,
   createBrokerHandler,
+  formatBrokerError,
   InMemorySessionStore,
   type TurnConfig,
 } from "../../../broker/supabase/functions/_shared/broker-core/mod.ts";
@@ -66,7 +67,9 @@ export function createDevServer(options: DevServerOptions): DevServer {
     ...(options.turn ? { turn: options.turn } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
-    onError: (info) => log(`[broker] ${info.route}: ${info.message}`),
+    // Route, a fixed message, and for upstream failures the error's code or
+    // name and how long the call took: never URLs, headers, bodies or SDP.
+    onError: (info) => log(`[broker] ${formatBrokerError(info)}`),
   });
   const presence = new PresenceServer({
     authorize: createUpgradeAuthorizer(options.devToken),
@@ -123,6 +126,7 @@ async function handleHttp(
     res.end(req.method === "HEAD" ? undefined : JSON.stringify({ ok: true, devOnly: true }));
     return;
   }
+  const startedAt = performance.now();
   const request = await toWebRequest(req);
   if (request === null) {
     res.writeHead(413, { "Content-Type": "application/json" });
@@ -130,9 +134,13 @@ async function handleHttp(
     return;
   }
   const response = await broker(request);
-  // Method, path and status only: never headers, bodies, SDP or tokens.
+  // Method, path, status and duration only: never headers, bodies, SDP or
+  // tokens. The duration tells a slow upstream (a connect timeout is about
+  // 10 s) from a quick failure; the line is written when the response is
+  // ready, so the request arrived that long before its timestamp.
   const user = request.headers.get(DEV_USER_HEADER);
-  log(`[broker] ${req.method} ${pathOf(req)} -> ${response.status}${user ? ` (${user})` : ""}`);
+  const ms = Math.round(performance.now() - startedAt);
+  log(`[broker] ${req.method} ${pathOf(req)} -> ${response.status} in ${ms} ms${user ? ` (${user})` : ""}`);
   await sendWebResponse(res, response);
 }
 
