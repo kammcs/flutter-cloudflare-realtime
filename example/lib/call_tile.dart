@@ -99,7 +99,18 @@ class CallTile extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                data.video ?? _Avatar(label: data.label),
+                // The tile paints its own background, also behind the
+                // bars of a `contain` video (a screen share). Without it the
+                // tile's bounds didn't show: a portrait share read as a
+                // strip beside its label, and the label and overlay looked
+                // detached from the picture.
+                ColoredBox(
+                  color: tileBackground,
+                  child: data.video ?? _Avatar(label: data.label),
+                ),
+                // The label and the overlay are positioned on both sides,
+                // so they are never wider than the tile: they ellipsize or
+                // wrap instead of drawing past its edge.
                 Positioned(
                   left: 6,
                   bottom: 6,
@@ -121,19 +132,27 @@ class CallTile extends StatelessWidget {
                     when data.video != null)
                   Positioned(
                     top: 6,
+                    left: 6,
                     right: 6,
-                    child: _LayerOverlay(
-                      publication: publication,
-                      compact: compact,
-                      showStats: showStats,
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: _LayerOverlay(
+                        publication: publication,
+                        compact: compact,
+                        showStats: showStats,
+                      ),
                     ),
                   )
                 else if (data.localPublication case final publication?
                     when showStats && !compact)
                   Positioned(
                     top: 6,
+                    left: 6,
                     right: 6,
-                    child: _LocalStatsOverlay(publication: publication),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: _LocalStatsOverlay(publication: publication),
+                    ),
                   ),
               ],
             ),
@@ -144,19 +163,19 @@ class CallTile extends StatelessWidget {
   }
 }
 
+/// The tile's background, also behind a letterboxed video.
+const tileBackground = Color(0xFF202124);
+
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.label});
 
   final String label;
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: const Color(0xFF202124),
-    child: Center(
-      child: CircleAvatar(
-        radius: 28,
-        child: Text(label.isEmpty ? '?' : label.characters.first.toUpperCase()),
-      ),
+  Widget build(BuildContext context) => Center(
+    child: CircleAvatar(
+      radius: 28,
+      child: Text(label.isEmpty ? '?' : label.characters.first.toUpperCase()),
     ),
   );
 }

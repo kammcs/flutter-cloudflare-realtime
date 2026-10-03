@@ -156,6 +156,41 @@ void main() {
     await tester.pump();
   });
 
+  for (final width in [320.0, 360.0, 412.0, 600.0]) {
+    testWidgets('fits a ${width.round()} dp screen', (tester) async {
+      tester.view.physicalSize = Size(width, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final picker = ScreenSourcePicker(
+        backend: _Backend(MediaPlatform.windows, _Desktop([_window, _screen])),
+      );
+      final result = await _open(tester, picker, canShareAudio: true);
+      expect(tester.takeException(), isNull);
+
+      // Every choice is on screen and can be made.
+      final screen = Offset.zero & Size(width, 720);
+      for (final label in [
+        ...ScreenContent.values.map((c) => c.label),
+        'Share audio too',
+        'Cancel',
+      ]) {
+        final rect = tester.getRect(find.text(label));
+        expect(screen.contains(rect.topLeft), isTrue, reason: label);
+        expect(screen.contains(rect.bottomRight), isTrue, reason: label);
+      }
+      await tester.tap(find.text('Text + thumbnail layer'));
+      await tester.pump();
+      await tester.ensureVisible(find.text('Editor'));
+      await tester.tap(find.text('Editor'));
+      await tester.pumpAndSettle();
+      final choice = (await result)!;
+      expect(choice.source, _window);
+      expect(choice.content, ScreenContent.textWithThumbnail);
+      unawaited(picker.dispose());
+      await tester.pump();
+    });
+  }
+
   testWidgets('on the web, leaves the source to the browser', (tester) async {
     final result = await _open(tester, null, canShareAudio: true);
     expect(find.text('Your browser asks what to share next.'), findsOneWidget);

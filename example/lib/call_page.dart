@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
@@ -86,8 +87,19 @@ class CallPage extends StatefulWidget {
   State<CallPage> createState() => _CallPageState();
 }
 
+/// Below this width (phones in portrait), the app bar keeps the status
+/// icon, the layout toggle and a menu with the other actions.
+const double compactAppBarWidth = 600;
+
+/// From this width, the app bar spells the connection status out.
+const double wideAppBarWidth = 1000;
+
+/// The other app-bar actions, in the menu on narrow screens.
+enum _MenuAction { stats, hold, addParticipant, networkDrop, leave }
+
 class _CallPageState extends State<CallPage> {
   late final StreamSubscription<RoomEvent> _events;
+  late final StreamSubscription<List<RemoteParticipant>> _shares;
   bool _left = false;
   bool _busy = false;
 
@@ -96,6 +108,10 @@ class _CallPageState extends State<CallPage> {
 
   /// The tile the user put on the stage, if any.
   String? _pinned;
+
+  /// The remote screen shares seen in the last participant list, so only a
+  /// share that starts switches to the stage.
+  Set<String> _remoteShares = const {};
 
   /// Whether the tiles show the typed stats (Room.stats).
   bool _showStats = false;
@@ -115,6 +131,7 @@ class _CallPageState extends State<CallPage> {
   void initState() {
     super.initState();
     _events = _room.events.listen(_onEvent);
+    _shares = _room.participants.listen(_onParticipants);
     if (widget.systemCall case final call?) {
       // Mute in step with the system's; the room leaves when the call ends
       // (for example from the lock screen), and ends it when it leaves.
@@ -164,6 +181,29 @@ class _CallPageState extends State<CallPage> {
       case _:
         break;
     }
+  }
+
+  /// A remote screen share that starts (or is already running when you
+  /// join) takes the stage: the page switches to the stage layout, where
+  /// the share comes first, and says who is sharing. A pin made before the
+  /// share is dropped, so the share is what the stage shows. Back in the
+  /// gallery, it stays there until another share starts.
+  void _onParticipants(List<RemoteParticipant> remotes) {
+    final shares = {
+      for (final remote in remotes)
+        if (remote.screen case final share?) share.id: remote,
+    };
+    final started = [
+      for (final MapEntry(:key, :value) in shares.entries)
+        if (!_remoteShares.contains(key)) value,
+    ];
+    _remoteShares = shares.keys.toSet();
+    if (started.isEmpty || !mounted) return;
+    setState(() {
+      _stageLayout = true;
+      _pinned = null;
+    });
+    _show('${_nameOf(started.last)} is sharing their screen.');
   }
 
   /// A share that sends no frames: on macOS, almost always the missing
@@ -321,6 +361,7 @@ class _CallPageState extends State<CallPage> {
   @override
   void dispose() {
     _events.cancel();
+    _shares.cancel();
     _audioOutput.dispose();
     if (!_left) {
       _left = true;
@@ -342,41 +383,7 @@ class _CallPageState extends State<CallPage> {
       child: Scaffold(
         appBar: AppBar(
           title: Text('Room: ${_room.roomId}'),
-          actions: [
-            _StatusChip(
-              room: _room,
-              signalingStatus: widget.setup.signalingStatus,
-            ),
-            IconButton(
-              tooltip: _showStats ? 'Hide stats' : 'Show stats',
-              isSelected: _showStats,
-              icon: const Icon(Icons.query_stats),
-              onPressed: () => setState(() => _showStats = !_showStats),
-            ),
-            IconButton(
-              tooltip: _stageLayout ? 'Gallery layout' : 'Stage layout',
-              icon: Icon(_stageLayout ? Icons.grid_view : Icons.view_agenda),
-              onPressed: () => setState(() => _stageLayout = !_stageLayout),
-            ),
-            if (widget.systemCall case final call?)
-              SystemCallHoldButton(call: call),
-            if (widget.setup.addSimulatedParticipant case final add?)
-              IconButton(
-                tooltip: 'Add simulated participant',
-                icon: const Icon(Icons.person_add),
-                onPressed: add,
-              ),
-            IconButton(
-              tooltip: 'Simulate network drop (debug)',
-              icon: const Icon(Icons.wifi_off),
-              onPressed: _simulateNetworkDrop,
-            ),
-            IconButton(
-              tooltip: 'Leave',
-              icon: const Icon(Icons.call_end),
-              onPressed: _leave,
-            ),
-          ],
+          actions: _appBarActions(MediaQuery.sizeOf(context).width),
         ),
         body: SafeArea(
           child: Column(
@@ -403,6 +410,127 @@ class _CallPageState extends State<CallPage> {
           builder: (context, _) => _buildControls(),
         ),
       ),
+    );
+  }
+
+  /// The app bar's actions for a screen [width] wide.
+  ///
+  /// The connection status and the layout toggle are always there. Below
+  /// [compactAppBarWidth] the others go into a menu; below
+  /// [wideAppBarWidth] the status is an icon (its tooltip, or a tap, says
+  /// more).
+  List<Widget> _appBarActions(double width) {
+    final status = _StatusChip(
+      room: _room,
+      signalingStatus: widget.setup.signalingStatus,
+      compact: width < wideAppBarWidth,
+      onDetails: _show,
+    );
+    final layout = IconButton(
+      tooltip: _stageLayout ? 'Gallery layout' : 'Stage layout',
+      icon: Icon(_stageLayout ? Icons.grid_view : Icons.view_agenda),
+      onPressed: () => setState(() => _stageLayout = !_stageLayout),
+    );
+    if (width < compactAppBarWidth) {
+      return [status, layout, _buildMenu()];
+    }
+    return [
+      status,
+      IconButton(
+        tooltip: _showStats ? 'Hide stats' : 'Show stats',
+        isSelected: _showStats,
+        icon: const Icon(Icons.query_stats),
+        onPressed: () => setState(() => _showStats = !_showStats),
+      ),
+      layout,
+      if (widget.systemCall case final call?) SystemCallHoldButton(call: call),
+      if (widget.setup.addSimulatedParticipant case final add?)
+        IconButton(
+          tooltip: 'Add simulated participant',
+          icon: const Icon(Icons.person_add),
+          onPressed: add,
+        ),
+      IconButton(
+        tooltip: 'Simulate network drop (debug)',
+        icon: const Icon(Icons.wifi_off),
+        onPressed: _simulateNetworkDrop,
+      ),
+      IconButton(
+        tooltip: 'Leave',
+        icon: const Icon(Icons.call_end),
+        onPressed: _leave,
+      ),
+    ];
+  }
+
+  /// The narrow app bar's menu: the actions that don't fit beside the
+  /// title. Leave is also in the control bar.
+  Widget _buildMenu() {
+    final call = widget.systemCall;
+    return PopupMenuButton<_MenuAction>(
+      tooltip: 'More actions',
+      onSelected: (action) {
+        switch (action) {
+          case _MenuAction.stats:
+            setState(() => _showStats = !_showStats);
+          case _MenuAction.hold:
+            if (call == null) return;
+            call
+                .setHeld(call.state != SystemCallState.held)
+                .catchError((Object e) => _show('$e'));
+          case _MenuAction.addParticipant:
+            widget.setup.addSimulatedParticipant?.call();
+          case _MenuAction.networkDrop:
+            _simulateNetworkDrop();
+          case _MenuAction.leave:
+            _leave();
+        }
+      },
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem(
+          value: _MenuAction.stats,
+          checked: _showStats,
+          child: const Text('Show stats'),
+        ),
+        if (call != null)
+          PopupMenuItem(
+            value: _MenuAction.hold,
+            enabled:
+                call.state == SystemCallState.active ||
+                call.state == SystemCallState.held,
+            child: ListTile(
+              leading: Icon(
+                call.state == SystemCallState.held
+                    ? Icons.play_circle
+                    : Icons.pause_circle,
+              ),
+              title: Text(
+                call.state == SystemCallState.held
+                    ? 'Resume the call'
+                    : 'Hold the call',
+              ),
+            ),
+          ),
+        if (widget.setup.addSimulatedParticipant != null)
+          const PopupMenuItem(
+            value: _MenuAction.addParticipant,
+            child: ListTile(
+              leading: Icon(Icons.person_add),
+              title: Text('Add simulated participant'),
+            ),
+          ),
+        const PopupMenuItem(
+          value: _MenuAction.networkDrop,
+          child: ListTile(
+            leading: Icon(Icons.wifi_off),
+            title: Text('Simulate network drop (debug)'),
+          ),
+        ),
+        const PopupMenuItem(
+          value: _MenuAction.leave,
+          child: ListTile(leading: Icon(Icons.call_end), title: Text('Leave')),
+        ),
+      ],
     );
   }
 
@@ -528,50 +656,64 @@ class _CallPageState extends State<CallPage> {
       for (final tile in tiles)
         if (tile.id != stage.id) tile,
     ];
-    return Column(
-      children: [
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: GestureDetector(
-              onDoubleTap: () => setState(() => _pinned = null),
-              child: CallTile(
-                key: _keyOf(stage),
-                data: stage,
-                showStats: _showStats,
-                dominant: stage.participantId == dominant,
-                pinned: stage.id == _pinned,
+    // The strip takes up to a third of a short body (a phone in landscape,
+    // with banners up), so the stage always keeps the rest.
+    return LayoutBuilder(
+      builder: (context, constraints) => Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: GestureDetector(
+                onDoubleTap: () => setState(() => _pinned = null),
+                child: CallTile(
+                  key: _keyOf(stage),
+                  data: stage,
+                  showStats: _showStats,
+                  // A screen has no participant ID: never "dominant" (with
+                  // no dominant speaker, null == null starred the share).
+                  dominant:
+                      stage.participantId != null &&
+                      stage.participantId == dominant,
+                  pinned: stage.id == _pinned,
+                ),
               ),
             ),
           ),
-        ),
-        if (others.isNotEmpty)
-          SizedBox(
-            height: 112,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              children: [
-                for (final tile in others)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: AspectRatio(
-                      aspectRatio: 16 / 9,
-                      child: GestureDetector(
-                        onTap: () => setState(() => _pinned = tile.id),
-                        child: CallTile(
-                          key: _keyOf(tile),
-                          data: tile,
-                          showStats: _showStats,
-                          dominant:
-                              tile.participantId != null &&
-                              tile.participantId == dominant,
-                          compact: true,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+          if (others.isNotEmpty)
+            SizedBox(
+              height: math.min(112, constraints.maxHeight / 3),
+              child: _thumbnails(others, dominant),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _thumbnails(List<CallTileData> others, String? dominant) {
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      children: [
+        for (final tile in others)
+          Padding(
+            // Keyed, so a thumbnail keeps its slot when others come and go.
+            key: ValueKey(tile.id),
+            padding: const EdgeInsets.only(right: 8),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: GestureDetector(
+                onTap: () => setState(() => _pinned = tile.id),
+                child: CallTile(
+                  key: _keyOf(tile),
+                  data: tile,
+                  showStats: _showStats,
+                  dominant:
+                      tile.participantId != null &&
+                      tile.participantId == dominant,
+                  compact: true,
+                ),
+              ),
             ),
           ),
       ],
@@ -601,9 +743,11 @@ class _CallPageState extends State<CallPage> {
     required bool cameraOn,
     required bool sharing,
   }) {
+    // Seven buttons fit one row on most phones with tighter spacing; the
+    // Wrap takes a second row on the narrowest rather than overflow.
     return Wrap(
       alignment: WrapAlignment.center,
-      spacing: 16,
+      spacing: MediaQuery.sizeOf(context).width < compactAppBarWidth ? 6 : 16,
       runSpacing: 8,
       children: [
         IconButton.filledTonal(
@@ -653,12 +797,21 @@ class _CallPageState extends State<CallPage> {
   }
 }
 
-/// The room's connection state, plus the signaling status if there is one.
+/// The room's connection state, plus the signaling status if there is one:
+/// a chip that spells it out, or with [compact] an icon whose tooltip says
+/// it (and a tap, through [onDetails], for touch screens).
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.room, this.signalingStatus});
+  const _StatusChip({
+    required this.room,
+    this.signalingStatus,
+    this.compact = false,
+    this.onDetails,
+  });
 
   final Room room;
   final Stream<String>? signalingStatus;
+  final bool compact;
+  final ValueChanged<String>? onDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -673,19 +826,28 @@ class _StatusChip extends StatelessWidget {
           final ok =
               state.data == RoomConnectionState.connected &&
               (presence == null || presence == 'connected');
+          final text = presence == null
+              ? media
+              : 'media: $media · signaling: $presence';
+          Icon icon(double size) => Icon(
+            ok ? Icons.cloud_done : Icons.cloud_off,
+            size: size,
+            color: ok ? Colors.green : Colors.orange,
+          );
+          if (compact) {
+            return IconButton(
+              tooltip: 'Connection: $text',
+              icon: icon(24),
+              onPressed: onDetails == null
+                  ? null
+                  : () => onDetails!('Connection: $text'),
+            );
+          }
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Chip(
-              avatar: Icon(
-                ok ? Icons.cloud_done : Icons.cloud_off,
-                size: 18,
-                color: ok ? Colors.green : Colors.orange,
-              ),
-              label: Text(
-                presence == null
-                    ? media
-                    : 'media: $media · signaling: $presence',
-              ),
+              avatar: icon(18),
+              label: Text(text, overflow: TextOverflow.ellipsis),
             ),
           );
         },
