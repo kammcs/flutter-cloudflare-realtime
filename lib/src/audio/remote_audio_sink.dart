@@ -32,7 +32,8 @@ abstract interface class RemoteAudioSink {
 
   /// Plays remote audio through the output device [deviceId] (an
   /// `audiooutput` device ID). Throws an [UnsupportedError] where
-  /// [supportsOutputSelection] is false.
+  /// [supportsOutputSelection] is false. When the platform refuses the
+  /// device, completes with its error and keeps the previous output.
   Future<void> setOutputDevice(String deviceId);
 
   /// Stops everything and releases the elements.

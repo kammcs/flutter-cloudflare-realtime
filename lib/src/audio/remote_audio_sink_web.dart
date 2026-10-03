@@ -6,6 +6,7 @@ import 'package:dart_webrtc/dart_webrtc.dart' show MediaStreamTrackWeb;
 import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaStreamTrack;
 import 'package:web/web.dart' as web;
 
+import 'output_device_choice.dart';
 import 'remote_audio_sink.dart';
 
 /// The sink for the web.
@@ -30,7 +31,9 @@ class WebRemoteAudioSink implements RemoteAudioSink {
   final Map<String, web.HTMLAudioElement> _elements = {};
   final Set<String> _refused = {};
   web.HTMLDivElement? _container;
-  String? _sinkId;
+  final OutputDeviceChoice<web.HTMLAudioElement> _output = OutputDeviceChoice(
+    (element, deviceId) => element.setSinkId(deviceId).toDart,
+  );
   bool _blocked = false;
   bool _disposed = false;
 
@@ -80,11 +83,17 @@ class WebRemoteAudioSink implements RemoteAudioSink {
         'This browser cannot choose the audio output (setSinkId).',
       );
     }
-    _sinkId = deviceId;
-    await Future.wait([
-      for (final element in _elements.values)
-        element.setSinkId(deviceId).toDart,
-    ]);
+    // Kept only once the browser accepted it (see OutputDeviceChoice):
+    // Safari refuses a non-default device outside a user gesture.
+    final ids = _elements.keys.toSet();
+    await _output.choose(deviceId, [
+      for (final id in ids) _elements[id]!,
+    ], probe: web.HTMLAudioElement.new);
+    // Elements created while the browser answered started on the old one.
+    // (By ID: JS objects don't compare reliably under WebAssembly.)
+    for (final MapEntry(key: id, value: element) in _elements.entries) {
+      if (!ids.contains(id)) _applySinkId(element);
+    }
   }
 
   @override
@@ -107,14 +116,18 @@ class WebRemoteAudioSink implements RemoteAudioSink {
       ..autoplay = true
       // iOS Safari: play inline rather than in a fullscreen player.
       ..setAttribute('playsinline', '');
-    final sinkId = _sinkId;
-    if (sinkId != null && _canSetSinkId) {
-      unawaited(
-        element.setSinkId(sinkId).toDart.then<void>((_) {}, onError: (_) {}),
-      );
-    }
+    _applySinkId(element);
     _containerElement.append(element);
     return element;
+  }
+
+  /// Puts [element] on the accepted output device, if one was chosen.
+  void _applySinkId(web.HTMLAudioElement element) {
+    final sinkId = _output.deviceId;
+    if (sinkId == null || !_canSetSinkId) return;
+    unawaited(
+      element.setSinkId(sinkId).toDart.then<void>((_) {}, onError: (_) {}),
+    );
   }
 
   web.HTMLDivElement get _containerElement {

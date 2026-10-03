@@ -14,6 +14,9 @@
 // browser the test also checks that Bob's pulled audio plays in the
 // package's hidden <audio> element, and, where the browser supports
 // setSinkId, that choosing each output device keeps it playing there.
+// WebKit (Safari) refuses a non-default output without a user gesture,
+// which a test can't give: there the refusal is expected, and the audio
+// must keep playing on the output it had.
 //
 // Two rooms in one process share in-memory signaling: Alice publishes, Bob
 // pulls. The route is read back from the platform; on iOS the test also
@@ -197,6 +200,8 @@ Future<void> _webAudioPlays(Room bob, String when, {String? sinkId}) async {
 
 /// In a browser: each audio output in turn through `setSinkId`, where the
 /// browser supports it; [Room.setAudioOutputDevice] throws where it doesn't.
+/// WebKit may refuse an output (`NotAllowedError`: no user gesture); the
+/// room must then keep the previous one.
 Future<void> _webOutputs(Room bob) async {
   final outputs = [
     for (final d in await rtc.navigator.mediaDevices.enumerateDevices())
@@ -213,8 +218,28 @@ Future<void> _webOutputs(Room bob) async {
     );
     return;
   }
+  // The elements' `sinkId` until one is accepted: the default.
+  var current = '';
   for (final output in [...outputs.skip(1), ...outputs.take(1)]) {
-    await bob.setAudioOutputDevice(output.deviceId);
+    try {
+      await bob.setAudioOutputDevice(output.deviceId);
+    } catch (error) {
+      // Chrome and Firefox accept every output: anything thrown there fails.
+      if (!isWebKitBrowser() || !'$error'.contains('NotAllowedError')) {
+        rethrow;
+      }
+      _log(
+        'output "${output.label}" refused without a user gesture '
+        '(WebKit): $error',
+      );
+      await _webAudioPlays(
+        bob,
+        'after output "${output.label}" was refused',
+        sinkId: current,
+      );
+      continue;
+    }
+    current = output.deviceId;
     await _webAudioPlays(
       bob,
       'on output "${output.label}"',
