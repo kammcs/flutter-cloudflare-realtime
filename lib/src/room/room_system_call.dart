@@ -10,7 +10,9 @@ part of 'room.dart';
 ///   later, muting wins: both end up muted.
 /// - **Ending.** When the system call ends (from the system's UI, or the
 ///   app), the room leaves (`leaveWhenEnded`); when the room leaves, the
-///   call ends (`endWhenLeft`).
+///   call ends (`endWhenLeft`): [SystemCallEndReason.failed] while it still
+///   rings unanswered (nobody declined it), [SystemCallEndReason.local]
+///   otherwise.
 ///
 /// Holding needs nothing here: a held system call interrupts the call's
 /// audio through `CallAudio` (§4.7, [CallInterruptionReason.held]).
@@ -128,13 +130,21 @@ class _RoomSystemCall {
 
   /// The room leaves: ends the call ([Room.attachSystemCall]'s
   /// `endWhenLeft`) and stops following it.
+  ///
+  /// A ringing incoming call ends [SystemCallEndReason.failed], not
+  /// [SystemCall.end]'s default `declined`: the room leaving (on an error,
+  /// for example) is nobody declining it (`docs/design.md` §4.8, Who ended
+  /// a ringing call). Any other call ends [SystemCallEndReason.local].
   void dispose() {
     final call = _call;
     final end = _endWhenLeft;
     detach();
     if (call != null && end && !call.isEnded) {
+      final reason = !call.isOutgoing && call.state == SystemCallState.ringing
+          ? SystemCallEndReason.failed
+          : SystemCallEndReason.local;
       unawaited(
-        call.end().catchError((Object error) {
+        call.end(reason).catchError((Object error) {
           debugPrint('cloudflare_realtime: ending the system call: $error');
         }),
       );

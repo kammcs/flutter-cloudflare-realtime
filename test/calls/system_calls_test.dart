@@ -975,6 +975,28 @@ void main() {
       expect(call2.isEnded, isTrue);
     });
 
+    test('leaving ends a ringing call failed, an answered one local', () async {
+      // A ringing incoming call: the room leaving isn't a decline.
+      final alice = await h.join('alice');
+      final call = await calls().reportIncomingCall(id: _id, handle: _ada);
+      alice.attachSystemCall(call);
+      await alice.leave();
+      await _settle();
+      expect(system.calls, contains('end $_id failed'));
+      expect(call.endReason, SystemCallEndReason.failed);
+
+      // An answered call ends local, as before.
+      final bob = await h.join('bob');
+      final call2 = await calls().reportIncomingCall(id: _id2, handle: _ada);
+      await call2.answer();
+      await _settle();
+      bob.attachSystemCall(call2);
+      await bob.leave();
+      await _settle();
+      expect(system.calls, contains('end $_id2 local'));
+      expect(call2.endReason, SystemCallEndReason.local);
+    });
+
     test('leaveWhenEnded and endWhenLeft off; detach; an ended call can\'t '
         'be attached', () async {
       final alice = await h.join('alice');
