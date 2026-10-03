@@ -5,6 +5,7 @@ import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 
 import 'audio_routes_sheet.dart';
+import 'call_diagnostics.dart';
 import 'call_tile.dart';
 import 'device_settings.dart';
 import 'screen_share_dialog.dart';
@@ -150,6 +151,8 @@ class _CallPageState extends State<CallPage> {
   }
 
   void _onEvent(RoomEvent event) {
+    // The console gets a timestamped trail of every reconnection.
+    logReconnectEvent(event);
     switch (event) {
       case RoomSessionFailedEvent(:final failure)
           when !_room.options.reconnect.enabled:

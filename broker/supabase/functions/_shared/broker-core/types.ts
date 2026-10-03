@@ -96,6 +96,14 @@ export interface BrokerErrorInfo {
   readonly route: string;
   /** A short, sanitized description. */
   readonly message: string;
+  /**
+   * For a failed upstream call: the underlying error's `code` or `name`
+   * chain, for example `TypeError: UND_ERR_CONNECT_TIMEOUT` or
+   * `TypeError: ENOTFOUND`. Never the error's message (see `errorCause`).
+   */
+  readonly cause?: string;
+  /** For a failed upstream call: how long it ran before failing, in milliseconds. */
+  readonly elapsedMs?: number;
 }
 
 /** Configuration for {@link createBrokerHandler}. */
