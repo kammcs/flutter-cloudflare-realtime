@@ -1,5 +1,6 @@
 /// @docImport 'cloudflare_realtime.dart';
 /// @docImport '../rendering/participant_video_view.dart';
+/// @docImport '../audio/audio_output_exception.dart';
 library;
 
 import 'dart:async';
@@ -382,12 +383,15 @@ class Room {
   /// `Helper.selectAudioOutput`, which switches the whole app's output.
   ///
   /// Throws an [UnsupportedError] where [canSelectAudioOutput] is `false`.
-  /// The platform can also refuse the device; the call then completes with
-  /// the platform's error, unchanged, and the output stays as it was. In a
-  /// browser that error is a JavaScript `DOMException` (under WebAssembly
-  /// an untyped JS value), whose `toString()` contains its name:
-  /// `NotAllowedError` when the browser wants a user gesture (Safari, for any
-  /// device but the default), `NotFoundError` for an unknown [deviceId].
+  /// The platform can also refuse the device; the call then throws an
+  /// [AudioOutputException] and the output stays as it was, for the audio
+  /// playing now and for audio pulled later. Its
+  /// [AudioOutputException.reason] is
+  /// [AudioOutputFailure.needsUserGesture] when the browser wants a user
+  /// gesture (Safari, for any device but the default; a browser's
+  /// `NotAllowedError`), [AudioOutputFailure.notFound] for a device that
+  /// isn't there, and [AudioOutputFailure.other] otherwise; its
+  /// [AudioOutputException.cause] holds the platform's error, for logs.
   /// **In a browser, call it from a user gesture** (a button's `onPressed`),
   /// with nothing awaited before it.
   Future<void> setAudioOutputDevice(String deviceId) {

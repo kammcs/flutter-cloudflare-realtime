@@ -33,7 +33,17 @@ Joining from a button press usually avoids the block. On native platforms `isAud
 
 The browser asks for the camera and microphone when a capture starts. Before that, devices have no IDs or labels, so pick a device after the first capture.
 
-`Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`). **Call it from a user gesture** (a button's or menu item's `onPressed`, with nothing awaited before it): Safari refuses any device but the default outside one. A refused device throws the browser's error unchanged, a JavaScript `DOMException` (untyped under WebAssembly) whose `toString()` contains its name, such as `NotAllowedError`; it isn't an `Exception`, so catch it with a plain `catch (e)`. The output then stays as it was, for the audio playing now and for audio pulled later.
+`Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`). **Call it from a user gesture** (a button's or menu item's `onPressed`, with nothing awaited before it): Safari refuses any device but the default outside one. A refused device throws an `AudioOutputException`, and the output stays as it was, for the audio playing now and for audio pulled later. Its `reason` is `AudioOutputFailure.needsUserGesture` for the browser's `NotAllowedError` (Safari outside a gesture: ask the user to choose again), `notFound` for `NotFoundError`, and `other` for the rest, such as Chrome's `SecurityError` while the page has no microphone permission; `cause` holds the browser's `DOMException`, for logs.
+
+```dart
+try {
+  await room.setAudioOutputDevice(device.deviceId);
+} on AudioOutputException catch (e) {
+  if (e.reason == AudioOutputFailure.needsUserGesture) {
+    // Safari: show "Choose the speaker again" and call it from that tap.
+  }
+}
+```
 
 ## Screen share
 

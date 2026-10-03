@@ -132,6 +132,7 @@ Unchanged on purpose: streams of things that happen rather than of state (`Room.
 | A plain `SfuSessionException` when a publication, subscription or DataChannel was unpublished, closed, interrupted or moved before the operation completed | `SfuInterruptedException` |
 | A plain `SfuSessionException` when the SFU's answer was unusable (no result for a request, no answer, a renegotiation without an offer, a transceiver without a `mid`) | `SfuProtocolException` |
 | `SfuDataChannelException` | unchanged name; now in the same sealed family as the other `SfuSessionException`s |
+| `Room.setAudioOutputDevice` threw the platform's error unchanged when it refused the device: in a browser a JavaScript `DOMException` (not an `Exception`, untyped under WebAssembly), on native platforms a `PlatformException` | `AudioOutputException`, with `reason` (`AudioOutputFailure.needsUserGesture`, `notFound` or `other`), `deviceId` and the platform's error as `cause`. Replace `catch (e)` and matching on `'$e'.contains('NotAllowedError')` with `on AudioOutputException catch (e)` and `e.reason == AudioOutputFailure.needsUserGesture` |
 
 `e.runtimeType == BrokerException` is never true any more; use `is` or a `switch`.
 
@@ -143,6 +144,6 @@ These classes are now `final`: they can't be extended or implemented outside the
 - **Values:** `ParticipantState`, `TrackInfo`, `SimulcastInfo`, `MediaDevice`, `ScreenSource`, `CapturedTrack`, `RenderableTrack`, `AudioRoute`, `CallHandle`, `ScreenPickerState`, `RemoteTrackLayerState`, `TileDemand`, `BroadcastExtensionStatus`, `DataChannelMessage`, `RoomDataMessage`. `RoomDataMessage` has a public constructor now, `RoomDataMessage(message, participantId)`, for tests.
 - **Stats:** `RoomStats`, `ConnectionStats`, `IceCandidateStats`, `LocalTrackStats`, `OutboundLayerStats`, `RemoteTrackStats`.
 - **Wire models** (`broker.dart`): every request, response and result class listed in section 1.
-- **Exceptions:** every subtype of `BrokerException` and `SfuSessionException`, `AudioRouteUnavailableException`, `SystemCallException`.
+- **Exceptions:** every subtype of `BrokerException` and `SfuSessionException`, `AudioRouteUnavailableException`, `SystemCallException`, and the new `AudioOutputException`.
 
 Still open for mocking (`class MockRoom extends Mock implements Room`): `CloudflareRealtime`, `Room`, `LocalParticipant`, `RemoteParticipant`, `LocalMediaPublication`, `RemoteTrackPublication`, `RemoteTrackLease`, `RoomData`, `RemoteDataSubscription`, the media sources, `MediaDeviceList`, `ScreenSourcePicker`, `SystemCalls`, `SystemCall`, `VoipPush`, and in `broker.dart` `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription` and `HttpBrokerClient`. The interfaces you implement (`Signaling`, `BrokerClient`, `MediaBackend` and its parts, `VideoRenderer`, `NetworkChangeSource`, `AppLifecycleSource`, `LayerDemandReporter`) are unchanged.

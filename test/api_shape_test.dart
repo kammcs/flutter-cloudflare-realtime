@@ -35,6 +35,12 @@ String _mediaCase(MediaException e) => switch (e) {
   ScreenSourceNotFoundException() => 'notFound',
 };
 
+String _outputCase(AudioOutputFailure reason) => switch (reason) {
+  AudioOutputFailure.needsUserGesture => 'gesture',
+  AudioOutputFailure.notFound => 'notFound',
+  AudioOutputFailure.other => 'other',
+};
+
 void main() {
   test('BrokerException is sealed: one case per subtype', () {
     expect(
@@ -71,5 +77,15 @@ void main() {
       _mediaCase(const MediaPermissionDeniedException('denied')),
       'permission',
     );
+  });
+
+  test('AudioOutputException: a const exception with one of three reasons', () {
+    const e = AudioOutputException(
+      AudioOutputFailure.needsUserGesture,
+      deviceId: 'speaker-2',
+    );
+    expect(e, isA<Exception>());
+    expect(_outputCase(e.reason), 'gesture');
+    expect(AudioOutputFailure.values, hasLength(3));
   });
 }
