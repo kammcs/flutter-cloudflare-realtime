@@ -75,8 +75,7 @@ enum MediaDeviceKind {
 
 /// A camera, microphone or audio output, as listed by `enumerateDevices`.
 ///
-/// Two devices are equal when their [kind], [deviceId], [label] and
-/// [groupId] are equal.
+/// Two devices are equal when all their fields are equal.
 @immutable
 class MediaDevice {
   /// Creates a device description.
@@ -86,6 +85,7 @@ class MediaDevice {
     this.label = '',
     this.groupId,
     this.facing,
+    this.isDefault = false,
   });
 
   /// The platform's identifier for this device.
@@ -110,6 +110,19 @@ class MediaDevice {
   /// microphones and speakers.
   final CameraFacing? facing;
 
+  /// Whether the system names this device as its default for calls, so
+  /// capture prefers it (see `prioritizeDevices`).
+  ///
+  /// - **Windows:** the default communications device of Sound settings,
+  ///   read from the OS (Core Audio), for microphones and speakers.
+  ///   `flutter_webrtc` lists Windows audio devices in an order of their
+  ///   own (by endpoint ID) and doesn't say which one is the default.
+  /// - **Browsers:** the `default` and `communications` entries that
+  ///   Chromium lists ("Default - Headset Microphone").
+  /// - `false` elsewhere: the other native plugins don't mark one (phones
+  ///   route audio themselves), and no OS has a default camera.
+  final bool isDefault;
+
   /// Whether this device is the same physical device as [other].
   ///
   /// Matches on [deviceId], or on a non-empty [label] of the same [kind].
@@ -127,15 +140,18 @@ class MediaDevice {
       other.kind == kind &&
       other.label == label &&
       other.groupId == groupId &&
-      other.facing == facing;
+      other.facing == facing &&
+      other.isDefault == isDefault;
 
   @override
-  int get hashCode => Object.hash(deviceId, kind, label, groupId, facing);
+  int get hashCode =>
+      Object.hash(deviceId, kind, label, groupId, facing, isDefault);
 
   @override
   String toString() =>
       'MediaDevice(${kind.wireName}, "$label", $deviceId'
-      '${facing == null ? '' : ', ${facing!.name}'})';
+      '${facing == null ? '' : ', ${facing!.name}'}'
+      '${isDefault ? ', default' : ''})';
 }
 
 /// A local track captured by a [LocalMediaSource], with the stream it

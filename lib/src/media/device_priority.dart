@@ -22,13 +22,19 @@ const _virtualCameraLabels = [
 /// From first to last:
 ///
 /// 1. the [preferred] device, if present;
-/// 2. other devices, in the platform's order;
-/// 3. virtual devices (label contains "virtual"), cameras of well-known
+/// 2. the system's default device ([MediaDevice.isDefault]: on Windows,
+///    the default communications device of Sound settings), even when it
+///    is virtual: someone who made "SteelSeries Sonar - Microphone
+///    (SteelSeries Sonar Virtual Audio Device)" their default routes their
+///    microphone through it on purpose;
+/// 3. other devices, in the platform's order;
+/// 4. virtual devices (label contains "virtual"), cameras of well-known
 ///    virtual camera apps whose labels don't say so (NVIDIA Broadcast, Snap
 ///    Camera, XSplit VCam, ManyCam, mmhmm), and the macOS Continuity
 ///    "iPhone Microphone", which partytracks also pushes down because they
-///    tend to become the OS default without the user meaning it;
-/// 4. devices in [deprioritized]: ones that recently failed to produce a
+///    tend to become the OS default without the user meaning it (so the
+///    "iPhone Microphone" stays down here even as a browser's default);
+/// 5. devices in [deprioritized]: ones that recently failed to produce a
 ///    track.
 ///
 /// Within each group, with a [facing], cameras facing that way come first,
@@ -46,16 +52,16 @@ List<MediaDevice> prioritizeDevices(
 }) {
   int rank(MediaDevice device) {
     if (preferred != null && device.sameDeviceAs(preferred)) return 0;
-    if (deprioritized.any(device.sameDeviceAs)) return 3;
+    if (deprioritized.any(device.sameDeviceAs)) return 4;
     final label = device.label.toLowerCase();
-    if (label.contains('virtual') || label.contains('iphone microphone')) {
-      return 2;
-    }
+    if (label.contains('iphone microphone')) return 3;
+    if (device.isDefault) return 1;
+    if (label.contains('virtual')) return 3;
     if (device.kind == MediaDeviceKind.videoInput &&
         _virtualCameraLabels.any(label.contains)) {
-      return 2;
+      return 3;
     }
-    return 1;
+    return 2;
   }
 
   int facingRank(MediaDevice device) {

@@ -186,9 +186,14 @@ void main() {
           _source('other', 0.9),
         ];
 
+        final levels = <double>[];
+        bob.localParticipant.audioLevels.listen(levels.add);
         poll(3);
         expect(bob.localParticipant.isSpeaking, isTrue);
         expect(bob.currentActiveSpeakers, ['bob']);
+        // Its own track's level only, not the other source's.
+        expect(bob.localParticipant.audioLevel, inInclusiveRange(0.2, 0.5));
+        expect(levels.last, bob.localParticipant.audioLevel);
         expect(
           bob.currentDominantSpeaker,
           isNull,
@@ -200,6 +205,7 @@ void main() {
         poll(6);
         expect(bob.localParticipant.isSpeaking, isFalse);
         expect(bob.currentActiveSpeakers, isEmpty);
+        expect(bob.localParticipant.audioLevel, lessThan(0.05));
         // Not detectable: the muted sender has no track, so no level.
         expect(bob.localParticipant.canDetectSpeakingWhileMuted, isFalse);
         expect(bob.localParticipant.isSpeakingWhileMuted, isFalse);

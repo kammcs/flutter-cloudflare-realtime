@@ -54,6 +54,39 @@ void main() {
       await mic.dispose();
     });
 
+    test('a microphone opens the system default, even a virtual one, and '
+        'switches live to a chosen one', () async {
+      const sonar = MediaDevice(
+        deviceId: '{0.0.1.00000000}.{1013}',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Sonar - Microphone (Sonar Virtual Audio Device)',
+        isDefault: true,
+      );
+      final windows = FakeMediaBackend(devices: [mic1, mic2, sonar]);
+      final mic = MicrophoneSource(backend: windows);
+      await mic.startBroadcasting();
+      final audio = windows.userMediaCalls.single['audio'] as Map;
+      expect(audio['optional'], [
+        {'sourceId': sonar.deviceId},
+      ]);
+      expect(mic.currentTrack!.device, sonar);
+      expect(mic.currentActiveDevice, sonar);
+
+      final first = mic.currentTrack!;
+      final broadcast = <CapturedTrack?>[];
+      mic.broadcastTrack.listen(broadcast.add);
+      await mic.setPreferredDevice(mic2);
+      expect(mic.currentTrack!.device, mic2);
+      expect(mic.currentActiveDevice, mic2);
+      expect((first.track as FakeTrack).stopped, isTrue);
+      await pumpEventQueue();
+      // The new track replaces the old one with no gap (a publication's
+      // sender gets replaceTrack, no renegotiation).
+      expect(broadcast, [first, mic.currentTrack]);
+      await mic.dispose();
+      await windows.close();
+    });
+
     test('the camera requests its preset', () async {
       final camera = CameraSource(
         backend: backend,

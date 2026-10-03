@@ -121,6 +121,106 @@ void main() {
     );
   });
 
+  group('system default', () {
+    MediaDevice mic(String id, String label, {bool isDefault = false}) =>
+        MediaDevice(
+          deviceId: '{0.0.1.00000000}.{$id}',
+          kind: MediaDeviceKind.audioInput,
+          label: label,
+          isDefault: isDefault,
+        );
+
+    // A Windows desktop with many inputs, in the order flutter_webrtc lists
+    // them: Core Audio's enumeration order, by endpoint ID, which has
+    // nothing to do with the user's choice.
+    List<MediaDevice> windowsInputs({String? defaultId}) => [
+      for (final (id, label) in const [
+        ('0e1a', 'Headset Microphone (Arctis Pro Wireless Chat)'),
+        (
+          '1013',
+          'SteelSeries Sonar - Microphone '
+              '(SteelSeries Sonar Virtual Audio Device)',
+        ),
+        ('26fb', 'Microphone (Virtual Desktop Audio)'),
+        ('ae45', 'OBSBOT Tiny2 Microphone (OBSBOT Tiny2 Audio)'),
+        ('cd4b', 'Microphone (NVIDIA Broadcast)'),
+        ('fab8', 'Microphone (Steam Streaming Microphone)'),
+      ])
+        mic(id, label, isDefault: id == defaultId),
+    ];
+
+    String labelOf(MediaDevice device) => device.label;
+
+    test('without a default, the first listed real device wins (the '
+        'checkpoint bug: not what the user chose)', () {
+      expect(
+        labelOf(prioritizeDevices(windowsInputs()).first),
+        'Headset Microphone (Arctis Pro Wireless Chat)',
+      );
+    });
+
+    test('the default comes first, even when it is virtual', () {
+      final sorted = prioritizeDevices(windowsInputs(defaultId: '1013'));
+      expect(sorted.map(labelOf), [
+        'SteelSeries Sonar - Microphone '
+            '(SteelSeries Sonar Virtual Audio Device)',
+        'Headset Microphone (Arctis Pro Wireless Chat)',
+        'OBSBOT Tiny2 Microphone (OBSBOT Tiny2 Audio)',
+        'Microphone (NVIDIA Broadcast)',
+        'Microphone (Steam Streaming Microphone)',
+        'Microphone (Virtual Desktop Audio)',
+      ]);
+    });
+
+    test('a real default in the middle of the list comes first', () {
+      expect(
+        labelOf(prioritizeDevices(windowsInputs(defaultId: 'cd4b')).first),
+        'Microphone (NVIDIA Broadcast)',
+      );
+    });
+
+    test('the preferred device beats the default', () {
+      final inputs = windowsInputs(defaultId: '1013');
+      expect(prioritizeDevices(inputs, preferred: inputs[3]).first, inputs[3]);
+    });
+
+    test('a default that failed goes last', () {
+      final inputs = windowsInputs(defaultId: 'ae45');
+      final sorted = prioritizeDevices(inputs, deprioritized: [inputs[3]]);
+      expect(sorted.first, inputs[0]);
+      expect(sorted.last, inputs[3]);
+    });
+
+    test("a browser's default entries keep their place; a default iPhone "
+        'microphone still sinks', () {
+      const defaultEntry = MediaDevice(
+        deviceId: 'default',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Default - SteelSeries Sonar - Microphone (Virtual Audio)',
+        isDefault: true,
+      );
+      const communications = MediaDevice(
+        deviceId: 'communications',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Communications - Headset Microphone',
+        isDefault: true,
+      );
+      expect(prioritizeDevices([mic1, defaultEntry, communications, mic2]), [
+        defaultEntry,
+        communications,
+        mic1,
+        mic2,
+      ]);
+      const iphoneDefault = MediaDevice(
+        deviceId: 'default',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Default - My iPhone Microphone',
+        isDefault: true,
+      );
+      expect(prioritizeDevices([iphoneDefault, mic1]), [mic1, iphoneDefault]);
+    });
+  });
+
   group('facing', () {
     const back = MediaDevice(
       deviceId: '0',
