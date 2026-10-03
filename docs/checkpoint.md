@@ -263,25 +263,25 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 
 | # | Scenario | Win ↔ Mac | Win ↔ Android | Mac ↔ Android | 4-person |
 |---|---|---|---|---|---|
-| 1a | Join, see and hear each other | | Pass (Windows mic: wrong input picked among many devices; see notes) | | |
-| 1b | Mute / camera off and on | | Pass (Android local preview flickers; see notes) | | |
-| 1c | Screen share shown on the stage, stopped cleanly (desktop sharer) | | Pass | | n/a |
-| 1d | Leave and rejoin | | Pass (rejoin in ~6.5 s, fresh session) | | |
+| 1a | Join, see and hear each other | | Pass (Windows mic: wrong input picked among many devices; see notes) | **Fail**: video both ways and the Pixel heard on the Mac, but nothing from the Mac's microphone (see notes) | |
+| 1b | Mute / camera off and on | | Pass (Android local preview flickers; see notes) | Pass | |
+| 1c | Screen share shown on the stage, stopped cleanly (desktop sharer) | | Pass | Pass (Mac sharer) | n/a |
+| 1d | Leave and rejoin | | Pass (rejoin in ~6.5 s, fresh session) | Pass | |
 | 1e | 5 minutes stable | n/a | n/a | n/a | |
 
 | # | Layer switching, seen on | Windows | macOS | Android |
 |---|---|---|---|---|
-| 2a | Gallery: automatic `b`/`c`, resolution matches | Pass (Pixel camera at `b`, 360×640) | | Pass |
-| 2b | Stage `a` (1280×720), thumbnails `c` | Pass (Pixel thumbnail `c` 180×320; Pixel camera on stage `a`) | | Pass (Windows on stage `a` 1280×720 30 fps) |
-| 2c | Manual *Low* / *High* / *Medium* / *Auto* | Pass | | |
-| 2d | Publisher platforms received (list them) | Android (camera, front and back; screen 1080×2424) | | Windows (camera, screen) |
+| 2a | Gallery: automatic `b`/`c`, resolution matches | Pass (Pixel camera at `b`, 360×640) | Pass | Pass |
+| 2b | Stage `a` (1280×720), thumbnails `c` | Pass (Pixel thumbnail `c` 180×320; Pixel camera on stage `a`) | Pass | Pass (Windows on stage `a` 1280×720 30 fps) |
+| 2c | Manual *Low* / *High* / *Medium* / *Auto* | Pass | Pass (`cross_device_test`: low / high / low in 8.7 / 8.6 / 12.7 s from the Pixel, 8.7 / 8.2 / 12.2 s from Chrome) | |
+| 2d | Publisher platforms received (list them) | Android (camera, front and back; screen 1080×2424) | Android (camera; see notes on its layer sizes), Chrome (fake camera) | Windows (camera, screen), macOS (camera) |
 
 | # | Recovery, dropped device | Windows | macOS | Android |
 |---|---|---|---|---|
-| 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | | |
-| 3b | Real 10–20 s drop: back within 30 s of restoring | Pass, accepted by the owner (recovered 61 s after link-up; the setup was confounded because the dev server shared the dropped network) | | Pass (~1 s after LTE took over from Wi-Fi) |
-| 3c | Capture not restarted (own tile stayed live) | Pass | | Pass |
-| 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | Pass (2026-10-02, M13) | | Pass (Pixel 10, M2–M12 runs) |
+| 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | Pass | |
+| 3b | Real 10–20 s drop: back within 30 s of restoring | Pass, accepted by the owner (recovered 61 s after link-up; the setup was confounded because the dev server shared the dropped network) | not run (the Mac used is on wired Ethernet) | Pass (~1 s after LTE took over from Wi-Fi) |
+| 3c | Capture not restarted (own tile stayed live) | Pass | Pass (simulated drop) | Pass |
+| 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | Pass (2026-10-02, M13) | Pass (2026-10-03, every file; see notes) | Pass (Pixel 10, M2–M12 runs) |
 
 The checkpoint passes when every applicable cell passes.
 
@@ -304,6 +304,10 @@ The checkpoint passes when every applicable cell passes.
   - The dev server (the broker) ran on the same PC, so the broker lost its network too. Production brokers don't.
   - Accepted as a pass by the project owner on 2026-10-03: the call recovered by itself, and the delay is attributed to the test setup. A cleaner re-run would drop the client's network alone.
 - **3b on Android:** Wi-Fi was turned off at 09:59:12Z. The app re-sessioned at once (its broker path stayed up over USB). Media came back at 09:59:26Z, about 1 s after the phone moved to LTE.
+- **2026-10-03, Mac ↔ Android** (commit `16a5805`; MacBook Pro with macOS 27.0, built with Xcode 27.0; Pixel 10 with Android 16 on the LAN; dev server on Windows). By hand: everything but the Mac's microphone passed, the Mac's screen share included.
+  - **The Mac's microphone sent silence.** The Mac's system default input is *BlackHole 16ch*, a virtual loopback device, and the call opened it (`CoreAudio ADM: Selected input device: BlackHole 16ch`). Choosing *MacBook Pro Microphone* in the Devices sheet, and muting and unmuting, changed nothing: the switch never reached flutter_webrtc's audio device module on macOS (no new *Selected input device* line). `audio_routing_test` didn't catch it, because it only counts packets, which silence sends too. Fix in progress.
+  - **Automated, the same day:** every integration test passed on macOS at the first try, with the machine heavily loaded (load average 150–800); `cross_device_test` passed macOS ↔ Pixel and macOS ↔ Chrome (headless, fake devices). `late_publish`: kept session 482 ms; without early connect one re-session, 7.3 s. `stats`: three VP8 layers 1280×720 / 640×360 / 320×180 at 30 fps, RTT 2 ms, `excellent`, `lost` after 8.0 s. `camera_switch`: FaceTime HD (640×480) → OBSBOT Virtual Camera (1920×1080) → back, 30–48 ms each. `publish_quality`: paused after 2.5 s, resumed in 83 ms, the subscriber reached `a` in 6.2 s; H.264 through VideoToolbox, three layers. `screen_awake`: `pmset -g assertions` showed the app's `PreventUserIdleDisplaySleep` assertion ("cloudflare_realtime: video call") from the video's start, released on mute, taken again on unmute and released on leave; none during the voice-only part.
+  - **The Pixel's layer sizes:** in `cross_device_test` the Pixel announced layer heights 1280 / 640 / 320 (portrait 720×1280) but sent, and the Mac received, 960 / 480 / 240. The test passed; the encoder probably scaled down under load while the announcement kept the captured size. To look into.
 
 ## 7. Integration tests against the dev server
 
@@ -441,19 +445,29 @@ October 2, 2026, Chrome 154 (headless, fake devices) on macOS 27, against the de
 
 | Test | Chrome (JS) | Chrome (Wasm) | Firefox 137 | Safari 27 |
 |---|---|---|---|---|
-| `sfu_loopback_test` | Pass | Pass | not run | not run |
-| `datachannel_echo_test` | Pass | Pass | not run | not run |
-| `reconnect_test` | Pass | Pass | not run | not run |
-| `camera_switch_test` | Pass (one camera, `fake_device_0`, no facing in its label: 640×360 as asked) | Pass | not run | not run |
-| `late_publish_test` | Pass (kept session: 108 ms; without early connect: one re-session, 6.1 s) | Pass | not run | not run |
-| `stats_test` | Pass (three layers 1280×720 / 640×360 / 320×180 at ~20 fps, RTT 2–6 ms, `excellent`; `lost` after 6–8 s) | Pass | not run | not run |
-| `publish_quality_test` | Pass (paused after 2.3 s, resumed in 78–90 ms; switching up stayed on `b` for 20 s in both runs; a new pull of `a` decoded in 0.24–0.35 s; H.264 sent with OpenH264, decoded with VideoToolbox) | Pass | not run | not run |
-| `audio_routing_test` | Pass (no routes; the `<audio>` element plays; `setSinkId` to each of three outputs) | Pass | not run | not run |
-| `screen_share_test` (`CF_REALTIME_SCREEN_SHARE_WEB`) | Pass (800×450; with `captureAudio`, the audio published and pulled) | Pass | not run | not run |
+| `sfu_loopback_test` | Pass | Pass | not run | Pass (JS and Wasm) |
+| `datachannel_echo_test` | Pass | Pass | not run | Pass (JS and Wasm) |
+| `reconnect_test` | Pass | Pass | not run | Pass (JS and Wasm) |
+| `camera_switch_test` | Pass (one camera, `fake_device_0`, no facing in its label: 640×360 as asked) | Pass | not run | Pass, JS and Wasm (two mock cameras at 640×360, 4 ms per switch) |
+| `late_publish_test` | Pass (kept session: 108 ms; without early connect: one re-session, 6.1 s) | Pass | not run | Pass, JS and Wasm (kept session: 124 ms; without early connect: one re-session, 6.4 s) |
+| `stats_test` | Pass (three layers 1280×720 / 640×360 / 320×180 at ~20 fps, RTT 2–6 ms, `excellent`; `lost` after 6–8 s) | Pass | not run | Pass, JS and Wasm (three VP8 layers at ~29 fps, RTT 2 ms, `excellent`; `lost` after 8.0 s) |
+| `publish_quality_test` | Pass (paused after 2.3 s, resumed in 78–90 ms; switching up stayed on `b` for 20 s in both runs; a new pull of `a` decoded in 0.24–0.35 s; H.264 sent with OpenH264, decoded with VideoToolbox) | Pass | not run | Pass, JS and Wasm (paused after 2.3 s, resumed in 95 ms; switching up reached `a` in 6.2 s; a new pull of `a` decoded in 0.33 s; no encoder or decoder names reported) |
+| `audio_routing_test` | Pass (no routes; the `<audio>` element plays; `setSinkId` to each of three outputs) | Pass | not run | **Fail**, JS and Wasm: the `<audio>` element plays and all four microphones reach the subscriber, then `setSinkId` to a non-default speaker is refused (`NotAllowedError: A user gesture is required`). The test now expects that refusal in WebKit (after `16a5805`; not rerun in Safari yet) |
+| `screen_share_test` (`CF_REALTIME_SCREEN_SHARE_WEB`) | Pass (800×450; with `captureAudio`, the audio published and pulled) | Pass | not run | **Fail**, JS and Wasm: `getDisplayMedia must be called from a user gesture handler` (a `MediaCaptureException`); Safari can't run it unattended |
 | `background_test`, `system_call_test` | Skipped (phones only), as expected | n/a | n/a | n/a |
 | `cross_device_test` with a Pixel 10 | Pass both ways (the layer switches low / high / low in 8.6–12.7 s) | not run | not run | not run |
+| `cross_device_test` with macOS (October 3) | Pass both ways (low / high / low in 8.1–12.7 s on each receiver) | not run | not run | not run |
 
-Firefox didn't start under the sandbox of the tool that ran these, and Safari's remote automation was off, so both are still to run.
+Firefox didn't start under the sandbox of the tool that ran these; it was run on Windows instead (roadmap M13).
+
+Safari 27.0 on macOS 27.0, October 3, 2026, at `16a5805`, through `safaridriver` (`--browser-name=safari`, no `--headless`). Notes:
+
+- **Quit Safari first.** A Safari the user started refuses WebDriver sessions (`Safari was not launched for automation`); `safaridriver` then starts its own.
+- **Mock devices.** An automation session uses WebKit's mock devices (*Mock video device 1/2*, *Mock audio device 1–4*, *Mock speaker device 1–3*); no permission prompt appears, and no real camera or microphone is used.
+- **The output.** Safari's WebDriver can't read the console, so the tests' lines were forwarded from the page to a local collector by a temporary hook in `web/index.html` (not committed).
+- **Wasm** needs a loader override: Flutter 3.47.3's default `wasmAllowList` allows Chromium only, so a `--wasm` build never starts in Safari. The runs used a temporary `web/flutter_bootstrap.js` that allows WebKit ([doc/web.md](../doc/web.md#webassembly-in-safari-and-firefox)).
+- **User gestures.** Safari allows `setSinkId` to a non-default device and `getDisplayMedia` only from a user gesture, which `flutter drive` can't give. Apps call both from a button's `onPressed` ([doc/web.md](../doc/web.md)). A refused output used to stick and be retried on every later `<audio>` element; fixed after this run.
+- Every call logs `screen wake lock refused: NotAllowedError`: Safari refuses the wake lock, and the call is unaffected.
 
 ## 8. Troubleshooting
 
