@@ -356,6 +356,7 @@ final class RoomReconnectAttemptEvent extends RoomEvent {
     required this.attempt,
     required this.delay,
     required this.waited,
+    this.restarted = false,
   });
 
   /// Why the session is being replaced.
@@ -365,18 +366,27 @@ final class RoomReconnectAttemptEvent extends RoomEvent {
   final int attempt;
 
   /// The backoff delay drawn for this attempt ([ReconnectOptions.backoff]).
-  /// Zero when the attempt didn't wait ([Room.reconnect]'s first attempt).
+  /// Zero when the attempt didn't wait ([Room.reconnect]'s first attempt,
+  /// or a [restarted] one).
   final Duration delay;
 
   /// How long the attempt actually waited. Shorter than [delay] when a
   /// network change, a return to the foreground or [Room.reconnect] cut the
-  /// wait short.
+  /// wait short, or zero when one of the first two arrived during the
+  /// previous attempt.
   final Duration waited;
+
+  /// Whether a network change abandoned the previous attempt, so this one
+  /// started at once: the previous attempt was still waiting for its new
+  /// session (`sessions/new`) or for that session to connect, and may have
+  /// been stuck on the old network. The abandoned attempt reports no error.
+  final bool restarted;
 
   @override
   String toString() =>
       'RoomReconnectAttemptEvent(${reason.name}, attempt: $attempt, '
-      'delay: ${delay.inMilliseconds} ms, waited: ${waited.inMilliseconds} ms)';
+      'delay: ${delay.inMilliseconds} ms, waited: ${waited.inMilliseconds} ms'
+      '${restarted ? ', restarted' : ''})';
 }
 
 /// The room is on a new SFU session: its tracks and DataChannels were moved

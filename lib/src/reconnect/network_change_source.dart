@@ -23,7 +23,10 @@ library;
 /// connected, a change only shortens the wait if the connection drops soon
 /// after, because platforms report changes that don't break anything (a
 /// second interface coming up). While a reconnection is waiting to retry,
-/// a change makes it retry at once.
+/// a change makes it retry at once; while an attempt is still waiting for
+/// its new session (a broker request started on the old network can hang
+/// until its timeout) or for that session to connect, a change abandons it
+/// and starts the next attempt at once.
 abstract interface class NetworkChangeSource {
   /// Emits whenever the network changes: an interface comes up or goes
   /// down, Wi-Fi to cellular, a new address. The values are ignored.

@@ -23,10 +23,17 @@ void main() {
           delay: Duration(milliseconds: 8400),
           waited: Duration(milliseconds: 1200),
         ),
+        const RoomReconnectAttemptEvent(
+          reason: ReconnectReason.peerConnectionFailed,
+          attempt: 3,
+          delay: Duration.zero,
+          waited: Duration.zero,
+          restarted: true,
+        ),
         const RoomReconnectedEvent(
           reason: ReconnectReason.peerConnectionFailed,
           duration: Duration(milliseconds: 2950),
-          attempts: 2,
+          attempts: 3,
         ),
         const RoomReconnectFailedEvent(
           reason: ReconnectReason.networkChanged,
@@ -41,7 +48,9 @@ void main() {
         'attempt failed: $offline',
         'attempt 2 (peerConnectionFailed): backoff 8.4 s, waited 1.2 s '
             '(cut short)',
-        'reconnected (peerConnectionFailed) in 3.0 s after 2 attempts',
+        'attempt 3 (peerConnectionFailed): network changed, attempt 2 '
+            'abandoned, no backoff',
+        'reconnected (peerConnectionFailed) in 3.0 s after 3 attempts',
         'gave up (networkChanged) after 1 attempt: $offline',
       ],
     );

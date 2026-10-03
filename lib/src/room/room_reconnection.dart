@@ -6,6 +6,13 @@ class _Aborted implements Exception {
   const _Aborted();
 }
 
+/// Thrown inside a re-session attempt that a network change abandoned
+/// ([_Reconnection._abandonAttempt]): the episode starts the next attempt
+/// at once, without reporting an error.
+class _Abandoned implements Exception {
+  const _Abandoned();
+}
+
 /// Replaces a [Room]'s broken SFU session (`docs/design.md` §8).
 ///
 /// [ReconnectTrigger] decides *when*, from the session's connection state
@@ -30,7 +37,12 @@ class _Aborted implements Exception {
 /// Only one episode runs at a time. Triggers during an episode coalesce
 /// into it: one about the attempt's own session makes that attempt count as
 /// failed, and a network change or a return to the foreground cuts a
-/// backoff wait short.
+/// backoff wait short. A network change during an attempt that is still
+/// waiting for its new session (`sessions/new`, the ICE servers, the peer
+/// connection) or for that session to connect **abandons** the attempt and
+/// starts the next one at once ([_abandonAttempt]). During the rest of an
+/// attempt, a network change or a return to the foreground makes the next
+/// attempt, if one is needed, skip its backoff wait.
 class _Reconnection {
   _Reconnection(this._room)
     : _options = _room.options.reconnect,
@@ -56,6 +68,19 @@ class _Reconnection {
   // A trigger about the current attempt's session, fired while the attempt
   // ran: the attempt doesn't count as a success.
   ReconnectReason? _pending;
+  // Completed to abandon the running attempt ([_abandonAttempt], or the
+  // room leaving). A new one per attempt.
+  Completer<void>? _abandon;
+  // Whether a network change abandons the running attempt now: while it
+  // waits for its new session, or for that session to connect
+  // ([_connecting]).
+  bool _abandonable = false;
+  // The attempt's new session, while the attempt waits for it to connect.
+  SfuSession? _connecting;
+  // A network change or a return to the foreground arrived during an
+  // attempt without abandoning it: if the attempt fails, the next one
+  // starts without its backoff wait.
+  bool _skipNextWait = false;
 
   Duration get _now => _clock.elapsed;
 
@@ -128,13 +153,23 @@ class _Reconnection {
   }
 
   /// A network change or a return to the foreground is a good moment to try
-  /// again: cuts a backoff wait short, or restarts after giving up.
-  /// Returns whether it did either.
+  /// again: cuts a backoff wait short, abandons an attempt that may be stuck
+  /// on the old network (network changes only, [_abandonAttempt]), or
+  /// restarts after giving up. Returns whether it did any of these.
+  ///
+  /// During the rest of an attempt it returns `false`, and the next attempt,
+  /// if that one fails, skips its backoff wait.
   bool _retryNow(ReconnectReason reason) {
     if (_running) {
-      if (!_sleeping) return false;
-      _wakeUp();
-      return true;
+      if (_sleeping) {
+        _wakeUp();
+        return true;
+      }
+      if (reason == ReconnectReason.networkChanged && _abandonAttempt()) {
+        return true;
+      }
+      _skipNextWait = true;
+      return false;
     }
     if (_gaveUp && _options.enabled && !_room._left) {
       _backoff.reset();
@@ -142,6 +177,69 @@ class _Reconnection {
       return true;
     }
     return false;
+  }
+
+  /// Abandons the running attempt after a network change, if it is waiting
+  /// on something the old network can leave hanging: its new session
+  /// (`sessions/new` or the ICE servers can run to the broker timeout, 15 s,
+  /// on a route that is gone), or that session's peer connection connecting
+  /// (its candidates may be from the old network). The episode then starts
+  /// the next attempt at once. Returns whether it abandoned the attempt.
+  ///
+  /// The abandoned attempt leaves nothing behind: a session that arrives
+  /// late is closed before anything moves onto it (which forgets it in the
+  /// broker client and closes its peer connection), and its late failure is
+  /// ignored; a session already waiting to connect is closed, which
+  /// interrupts what moved onto it, so the next attempt moves it again.
+  ///
+  /// Not abandoned: an attempt whose new session has connected, or one
+  /// moving tracks onto its session or announcing it, since a request in
+  /// flight there (`tracks/new`, a signaling update) could land after the
+  /// next attempt's and undo it. Each change abandons at most one attempt,
+  /// and an abandoned attempt counts against the backoff's limits.
+  bool _abandonAttempt() {
+    final abandon = _abandon;
+    if (!_abandonable || abandon == null || abandon.isCompleted) return false;
+    final connecting = _connecting;
+    if (connecting != null &&
+        connecting.connectionState == SfuConnectionState.connected) {
+      return false;
+    }
+    abandon.complete();
+    // Ends a wait for the session to connect ([_whenConnected]).
+    _wakeUp();
+    return true;
+  }
+
+  /// [work], unless the running attempt is abandoned first: then throws
+  /// [_Abandoned] at once, ignores [work]'s failure, and [release]s what it
+  /// returns once it completes.
+  Future<T> _unlessAbandoned<T>(
+    Future<T> work, {
+    Future<void> Function(T value)? release,
+  }) {
+    final abandon = _abandon!;
+    final result = Completer<T>();
+    work.then(
+      (value) {
+        if (!result.isCompleted && !abandon.isCompleted) {
+          result.complete(value);
+        } else if (release != null) {
+          unawaited(release(value));
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!result.isCompleted && !abandon.isCompleted) {
+          result.completeError(error, stackTrace);
+        }
+      },
+    );
+    unawaited(
+      abandon.future.then((_) {
+        if (!result.isCompleted) result.completeError(const _Abandoned());
+      }),
+    );
+    return result.future;
   }
 
   /// [Room.reconnect].
@@ -217,19 +315,24 @@ class _Reconnection {
 
     var attempts = 0;
     Object? lastError;
+    var restarted = false;
+    _skipNextWait = false;
     while (true) {
       if (room._left) return false;
+      // An abandoned attempt draws a delay too, so a network that keeps
+      // changing can't restart attempts for longer than the backoff allows.
       final delay = _backoff.nextDelay();
       if (delay == null) {
         _giveUp(reason, attempts, lastError);
         return false;
       }
-      final waits = !immediate || attempts > 0;
+      final waits = !restarted && (!immediate || attempts > 0);
       final sleptFrom = _now;
-      if (waits) {
+      if (waits && !_skipNextWait) {
         await _sleep(delay);
         if (room._left) return false;
       }
+      _skipNextWait = false;
       attempts++;
       room._emit(
         RoomReconnectAttemptEvent(
@@ -237,12 +340,21 @@ class _Reconnection {
           attempt: attempts,
           delay: waits ? delay : Duration.zero,
           waited: _now - sleptFrom,
+          restarted: restarted,
         ),
       );
+      restarted = false;
       try {
         await _attempt();
       } on _Aborted {
         return false;
+      } on _Abandoned {
+        if (room._left) return false;
+        // A network change abandoned it: the next attempt starts at once.
+        _trigger.reset();
+        _scheduleCheck();
+        restarted = true;
+        continue;
       } catch (error) {
         if (room._left) return false;
         lastError = error;
@@ -298,16 +410,30 @@ class _Reconnection {
   Future<void> _attempt() async {
     final room = _room;
     _pending = null;
-    // Hold announcements until the new session carries our tracks, and let
-    // one in flight finish so ours is the last word.
-    room._holdAnnouncements = true;
-    await room._announcer.run();
+    final abandon = _abandon = Completer<void>();
+    final SfuSession next;
+    // Until the new session exists, a network change abandons the attempt.
+    _abandonable = true;
+    try {
+      // Hold announcements until the new session carries our tracks, and
+      // let one in flight finish so ours is the last word.
+      room._holdAnnouncements = true;
+      await _unlessAbandoned(room._announcer.run());
 
-    // 1. A new session, while the old one (if it still works) carries on.
-    final next = await room._connect(room._broker, room.options.sessionOptions);
-    if (room._left) {
+      // 1. A new session, while the old one (if it still works) carries
+      //    on. If the attempt is abandoned first, a session that arrives
+      //    later is closed at once: nothing ever moves onto it.
+      next = await _unlessAbandoned(
+        room._connect(room._broker, room.options.sessionOptions),
+        release: _closeQuietly,
+      );
+    } finally {
+      _abandonable = false;
+    }
+    // Left, or abandoned just as the session arrived.
+    if (room._left || abandon.isCompleted) {
       await _closeQuietly(next);
-      throw const _Aborted();
+      throw room._left ? const _Aborted() : const _Abandoned();
     }
 
     // 2. Switch. Closing the old session detaches everything on it, so it
@@ -437,12 +563,19 @@ class _Reconnection {
     final listener = next.connectionStateChanges.listen((state) {
       if (!waiting(state) && !done.isCompleted) done.complete();
     }, onDone: () => done.isCompleted ? null : done.complete());
+    // While it waits, a network change abandons the attempt.
+    _abandonable = true;
+    _connecting = next;
     try {
       await done.future;
     } finally {
+      _abandonable = false;
+      _connecting = null;
       unawaited(listener.cancel());
       if (identical(_wake, done)) _wake = null;
     }
+    if (_room._left) throw const _Aborted();
+    if (_abandon?.isCompleted ?? false) throw const _Abandoned();
     _checkUsable(next);
     if (next.connectionState != SfuConnectionState.connected &&
         next.connectionState != SfuConnectionState.initial) {
@@ -506,6 +639,10 @@ class _Reconnection {
     _disposed = true;
     _checkTimer?.cancel();
     _stableTimer?.cancel();
+    // An attempt waiting for its new session stops now; a session that
+    // arrives later is closed.
+    final abandon = _abandon;
+    if (abandon != null && !abandon.isCompleted) abandon.complete();
     _wakeUp();
   }
 }
