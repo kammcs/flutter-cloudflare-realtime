@@ -591,9 +591,16 @@ class SystemCall {
 /// [SystemCall.payload]. The call then arrives as a [SystemCallAddedEvent]
 /// (or in [SystemCalls.calls] after [SystemCalls.configure]).
 ///
+/// A second push with the key `ended` (a [SystemCallEndReason] name:
+/// `remoteEnded`, `unanswered`, `failed`, `answeredElsewhere` or
+/// `declinedElsewhere`) and the call's `id` stops the ring: the call ends
+/// with that reason, as a [SystemCallEndedEvent]. For a call the app
+/// doesn't have (the cancel launched it), nothing rings and no event comes.
+///
 /// Android has no VoIP pushes: a high-priority FCM message wakes the app,
-/// which calls [SystemCalls.reportIncomingCall]. Sending pushes is the
-/// app's server's job.
+/// which calls [SystemCalls.reportIncomingCall], and a cancel message ends
+/// it with `SystemCalls.instance.call(id)?.end(reason)`. Sending pushes is
+/// the app's server's job.
 class VoipPush {
   VoipPush._(this._calls);
 
