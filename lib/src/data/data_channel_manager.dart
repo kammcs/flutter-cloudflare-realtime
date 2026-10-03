@@ -187,7 +187,7 @@ class DataChannelManager {
     _forget(channel);
     channel._detach(
       SfuDataChannelState.interrupted,
-      const SfuSessionException('the data channel closed'),
+      const SfuInterruptedException('the data channel closed'),
     );
     if (id == null || !_port.isUsable) return;
     // Release the SFU's side too, best effort.
@@ -249,7 +249,7 @@ class DataChannelManager {
               item
                 ..fail(
                   this,
-                  const SfuSessionException('the operation had no result'),
+                  const SfuProtocolException('the operation had no result'),
                 )
                 ..settle();
             }
@@ -304,7 +304,7 @@ class DataChannelManager {
       await _port.renegotiate('datachannels/establish', description);
       _port.throwIfUnusable();
     } else if (description != null) {
-      throw const SfuSessionException(
+      throw const SfuProtocolException(
         'datachannels/establish returned an answer to no offer',
       );
     }
@@ -414,7 +414,7 @@ class DataChannelManager {
     } catch (error) {
       return error;
     }
-    return SfuSessionException('closed before $operation');
+    return SfuInterruptedException('closed before $operation');
   }
 
   /// Matches `datachannels/new` results to [requested] and opens a

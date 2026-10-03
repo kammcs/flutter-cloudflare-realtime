@@ -28,6 +28,7 @@
 import 'dart:io' show Platform;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;

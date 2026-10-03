@@ -73,11 +73,10 @@ enum ScreenShareEndReason {
 /// iOS, the broadcast finishing. Both end the share as
 /// [ScreenShareEndReason.userStopped].
 ///
-/// [trackChanges] carries the video track. With [ScreenShareOptions.captureAudio]
-/// on a platform that supports it, [audioTrackChanges] carries system or tab
-/// audio; broadcasting applies to both. Android and iOS don't capture
-/// screen audio: the option is ignored there and [audioTrackChanges] stays
-/// `null`.
+/// [track] is the video track. With [ScreenShareOptions.captureAudio] on a
+/// platform that supports it, [audioTrack] is the system or tab audio;
+/// broadcasting applies to both. Android and iOS don't capture screen
+/// audio: the option is ignored there and [audioTrack] stays `null`.
 ///
 /// Defaults to [MutePolicy.releaseCapture]: [stopBroadcasting] ends the
 /// share.
@@ -170,19 +169,20 @@ class ScreenShareSource extends LocalMediaSource {
   /// The capture options.
   ScreenShareOptions get options => _wantedOptions;
 
-  /// The system or tab audio track, if the share has one. Replays the
-  /// current value.
-  Stream<CapturedTrack?> get audioTrackChanges => _audioTrack.stream;
-
-  /// The system or tab audio track, or `null`.
+  /// The system or tab audio track, or `null` if the share has none.
   CapturedTrack? get audioTrack => _audioTrack.value;
 
-  /// [audioTrack] while broadcasting, else `null`. Replays the
-  /// current value.
-  Stream<CapturedTrack?> get broadcastAudioTrackChanges => _broadcastAudioTrack.stream;
+  /// [audioTrack], replaying the current value to each new listener, then
+  /// each change.
+  Stream<CapturedTrack?> get audioTrackChanges => _audioTrack.stream;
 
   /// [audioTrack] while broadcasting, else `null`.
   CapturedTrack? get broadcastAudioTrack => _broadcastAudioTrack.value;
+
+  /// [broadcastAudioTrack], replaying the current value to each new
+  /// listener, then each change.
+  Stream<CapturedTrack?> get broadcastAudioTrackChanges =>
+      _broadcastAudioTrack.stream;
 
   /// Emits once each time a running share ends, with the reason.
   Stream<ScreenShareEndReason> get ended => _ended.stream;

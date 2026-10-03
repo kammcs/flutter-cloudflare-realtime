@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' show StatsReport;
@@ -456,10 +457,7 @@ void main() {
 
         async.elapse(const Duration(seconds: 4));
         pump();
-        expect(
-          bob.connectionState,
-          isNot(RoomConnectionState.reconnecting),
-        );
+        expect(bob.connectionState, isNot(RoomConnectionState.reconnecting));
         // The new session's stats rate everyone again.
         h.pcOf(bob).statsProvider = () {
           bytes += 10000;

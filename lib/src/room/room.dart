@@ -86,13 +86,13 @@ typedef _Connector =
 /// - announces the local participant's state (`sessionId`, published
 ///   tracks, mute flags, metadata) through [signaling], and updates it as
 ///   [localParticipant] publishes, mutes and unpublishes;
-/// - diffs the other participants' states into [participantsChanges] and
+/// - diffs the other participants' states into [participants] and
 ///   [events], and **pulls only what is subscribed**: audio by default,
 ///   video when the UI asks (see [RoomOptions.autoSubscribe],
 ///   [RemoteTrackPublication.subscribe] and [ParticipantVideoView]);
 /// - follows remote participants to their new session when they reconnect,
 ///   and closes pulls of tracks that go away;
-/// - reports [connectionStateChanges], driven by the SFU session;
+/// - reports [connectionState], driven by the SFU session;
 /// - **replaces a broken session** (`docs/design.md` §8): when the session
 ///   fails, stays disconnected, or is reported gone, the room connects a
 ///   new one, moves its tracks and DataChannels onto it under the same
@@ -101,7 +101,16 @@ typedef _Connector =
 ///   [RoomReconnectingEvent] and [RoomReconnectedEvent];
 /// - picks each pulled video's simulcast layer from the size of the views
 ///   that show it ([layerReporter]), and detects who is speaking
-///   ([activeSpeakersChanges]).
+///   ([activeSpeakers]).
+///
+/// Observable state follows one convention throughout the package: a
+/// getter for the value now (`participants`, `connectionState`,
+/// `isAudioPlaybackBlocked`), and a stream named after it with `Changes`
+/// (`participantsChanges`, `connectionStateChanges`,
+/// `audioPlaybackBlockedChanges`; booleans drop the `is`) that replays the
+/// current value to each new listener, then emits each change. For a
+/// `StreamBuilder`, pass the stream as `stream` and the getter as
+/// `initialData`.
 class Room {
   Room._({
     required this.roomId,
@@ -213,13 +222,14 @@ class Room {
   SfuSession get session => _session;
 
   /// The other participants that have an SFU session, in the order they
-  /// appeared. Replays the current list to each new listener, and emits a
-  /// new list whenever anyone joins, leaves or changes (tracks, mute state,
-  /// metadata, session). Completes after [leave].
-  Stream<List<RemoteParticipant>> get participantsChanges => _participants.stream;
-
-  /// The other participants, now.
+  /// appeared.
   List<RemoteParticipant> get participants => _participants.value;
+
+  /// [participants], replaying the current list to each new listener, then
+  /// a new list whenever anyone joins, leaves or changes (tracks, mute
+  /// state, metadata, session). Completes after [leave].
+  Stream<List<RemoteParticipant>> get participantsChanges =>
+      _participants.stream;
 
   /// The remote participant with [participantId], if present.
   RemoteParticipant? participant(String participantId) =>
@@ -229,12 +239,13 @@ class Room {
   /// not replay past events. Completes after [leave].
   Stream<RoomEvent> get events => _events.stream;
 
-  /// The connection state, replaying the current value to each new
-  /// listener. Completes after [leave].
-  Stream<RoomConnectionState> get connectionStateChanges => _state.stream;
-
-  /// The current connection state.
+  /// The connection state, driven by the SFU session and the room's
+  /// reconnection.
   RoomConnectionState get connectionState => _state.value;
+
+  /// [connectionState], replaying the current value to each new listener,
+  /// then each change. Completes after [leave].
+  Stream<RoomConnectionState> get connectionStateChanges => _state.stream;
 
   /// Why the current SFU session failed, or `null` if it hasn't. A new
   /// session after a reconnection starts without a failure.
@@ -293,42 +304,45 @@ class Room {
 
   /// The participants speaking now, loudest first, by participant ID
   /// (`docs/design.md` §7). Includes the local participant while their
-  /// microphone is unmuted and they speak. Replays the current list to each
-  /// new listener and emits on every change. Empty when
-  /// [RoomOptions.activeSpeaker] is `null`. Completes after [leave].
-  Stream<List<String>> get activeSpeakersChanges => _speakers.monitor.speakers;
-
-  /// The current value of [activeSpeakersChanges].
+  /// microphone is unmuted and they speak. Empty when
+  /// [RoomOptions.activeSpeaker] is `null`.
   List<String> get activeSpeakers => _speakers.monitor.currentSpeakers;
+
+  /// [activeSpeakers], replaying the current list to each new listener,
+  /// then each change. Completes after [leave].
+  Stream<List<String>> get activeSpeakersChanges => _speakers.monitor.speakers;
 
   /// The participant to put on the stage: the loudest speaker, switching
   /// only after [ActiveSpeakerOptions.dominantSwitchTime], and kept while
   /// everyone is silent. The local participant only when
   /// [ActiveSpeakerOptions.localCanBeDominant]. `null` until someone spoke,
-  /// and after the dominant speaker left. Replays the current value.
-  Stream<String?> get dominantSpeakerChanges => _speakers.monitor.dominantSpeaker;
+  /// and after the dominant speaker left.
+  String? get dominantSpeaker => _speakers.monitor.currentDominantSpeaker;
 
-  /// The current value of [dominantSpeakerChanges].
-  String? get dominantSpeaker =>
-      _speakers.monitor.currentDominantSpeaker;
+  /// [dominantSpeaker], replaying the current value to each new listener,
+  /// then each change. Completes after [leave].
+  Stream<String?> get dominantSpeakerChanges =>
+      _speakers.monitor.dominantSpeaker;
 
-  /// Typed WebRTC statistics (`docs/design.md` §7.1): the transport, every
-  /// local publication's sent layers and every pulled track, read from
-  /// the session's `getStats()` every [RoomStatsOptions.interval] (2 s).
+  /// The latest typed WebRTC statistics (`docs/design.md` §7.1), or `null`
+  /// before the first snapshot: the transport, every local publication's
+  /// sent layers and every pulled track, read from the session's
+  /// `getStats()` every [RoomStatsOptions.interval] (2 s).
   ///
-  /// Replays the latest snapshot to each new listener. The room polls
-  /// while someone listens (or for connection quality, which is on by
-  /// default); the first snapshot of a session has no rates. Raw reports
-  /// stay available in [RoomStats.reports] and through [session]. A
-  /// broadcast stream; completes after [leave].
-  Stream<RoomStats> get statsChanges => _stats.stream;
-
-  /// The latest [statsChanges] snapshot, or `null` before the first.
+  /// The room polls only while someone listens to [statsChanges] (or for
+  /// connection quality, which is on by default); [getStats] takes one
+  /// snapshot on demand. The first snapshot of a session has no rates. Raw
+  /// reports stay available in [RoomStats.reports] and through [session].
   RoomStats? get stats => _stats.latest;
 
-  /// Takes a [statsChanges] snapshot now. Its rates cover the time since the
-  /// previous snapshot of the session (from [statsChanges] or here); the first
-  /// has none. Throws a [StateError] after [leave], and what `getStats()`
+  /// Each [stats] snapshot as it is taken, replaying the latest to each new
+  /// listener. Listening starts the polling. A broadcast stream; completes
+  /// after [leave].
+  Stream<RoomStats> get statsChanges => _stats.stream;
+
+  /// Takes a [stats] snapshot now. Its rates cover the time since the
+  /// previous snapshot of the session (from [statsChanges] or here); the
+  /// first has none. Throws a [StateError] after [leave], and what `getStats()`
   /// throws (it can fail briefly while the session renegotiates or is
   /// replaced).
   Future<RoomStats> getStats() {
@@ -372,7 +386,7 @@ class Room {
     return _audio.setOutput(deviceId);
   }
 
-  /// Whether this platform routes call audio ([audioRoutesChanges],
+  /// Whether this platform routes call audio ([audioRoutes],
   /// [selectAudioRoute], [setSpeakerphone]): on phones (Android and iOS).
   /// Desktops and browsers choose a device with [setAudioOutputDevice].
   bool get canSelectAudioRoute => CallAudio.instance.supported;
@@ -384,11 +398,13 @@ class Room {
   /// (Apple's route picker chooses them).
   ///
   /// App-wide, like the route itself; empty where [canSelectAudioRoute] is
-  /// `false`. Replays the current list.
-  Stream<List<AudioRoute>> get audioRoutesChanges => CallAudio.instance.routes.stream;
-
-  /// The current [audioRoutesChanges].
+  /// `false`.
   List<AudioRoute> get audioRoutes => CallAudio.instance.routes.value;
+
+  /// [audioRoutes], replaying the current list to each new listener, then
+  /// each change.
+  Stream<List<AudioRoute>> get audioRoutesChanges =>
+      CallAudio.instance.routes.stream;
 
   /// The route call audio plays on now, as the platform reports it.
   AudioRoute? get audioRoute => CallAudio.instance.current.value;
@@ -397,7 +413,7 @@ class Room {
   Stream<AudioRoute?> get audioRouteChanges =>
       CallAudio.instance.current.stream;
 
-  /// Plays call audio on [route], one of [audioRoutesChanges]. The choice sticks
+  /// Plays call audio on [route], one of [audioRoutes]. The choice sticks
   /// until a new headset connects or the route goes away; then the route is
   /// chosen automatically again ([RoomOptions.speakerphone]).
   ///
@@ -663,7 +679,11 @@ class Room {
 
   void _listenToSession(SfuSession session) {
     _sessionListeners
-      ..add(session.connectionStateChanges.listen((s) => _onSessionState(session, s)))
+      ..add(
+        session.connectionStateChanges.listen(
+          (s) => _onSessionState(session, s),
+        ),
+      )
       ..add(session.failures.listen((f) => _onSessionFailure(session, f)));
   }
 

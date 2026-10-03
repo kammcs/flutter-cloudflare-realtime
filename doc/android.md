@@ -61,8 +61,8 @@ While a room publishes a microphone or a camera, the package runs a foreground s
 ## Interruptions and the proximity sensor
 
 - **Interruptions:** a phone call, the assistant, an alarm or another app taking the audio focus pauses the call: `RoomAudioInterruptedEvent` (with a `CallInterruptionReason`: `phoneCall` or `otherAudio`), `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). It resumes by itself when the system gives the audio back or the app returns to the foreground (`RoomAudioResumedEvent`); `Room.resumeAudio()` tries at once. No `READ_PHONE_STATE` is needed.
-- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
-- **The screen stays on during a video call** (`FLAG_KEEP_SCREEN_ON` on the activity's window; no permission): it doesn't dim or lock while the camera or a screen share is sent or a remote video is shown, and sleeps as usual in a voice call. If your app keeps the screen on itself, pass `RoomOptions(keepScreenAwake: KeepScreenAwake.never)`; `KeepScreenAwake.always` keeps it on for voice calls too (except at the ear). `Room.keepingScreenAwake` says whether it's on.
+- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.isProximitySensorActive` says whether it's on.
+- **The screen stays on during a video call** (`FLAG_KEEP_SCREEN_ON` on the activity's window; no permission): it doesn't dim or lock while the camera or a screen share is sent or a remote video is shown, and sleeps as usual in a voice call. If your app keeps the screen on itself, pass `RoomOptions(keepScreenAwake: KeepScreenAwake.never)`; `KeepScreenAwake.always` keeps it on for voice calls too (except at the ear). `Room.isKeepingScreenAwake` says whether it's on.
 
 ## Screen share
 

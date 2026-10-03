@@ -20,13 +20,14 @@ import 'release.dart';
 ///
 /// Ported from partytracks' `getDevice`/`resilientTrack$`/`deviceManager`:
 ///
-/// - [devicesChanges] lists the devices of this kind, kept current.
+/// - [devices] lists the devices of this kind, kept current
+///   ([devicesChanges]).
 /// - [setPreferredDevice] picks one. Capture tries the preferred device
 ///   first, then the rest in [devicePriority] order, until one produces a
 ///   track.
 /// - **Fallback:** when the active device is unplugged (or its track ends),
-///   the source captures from the next device and [trackChanges] emits the new
-///   track.
+///   the source captures from the next device and [trackChanges] emits the
+///   new track.
 /// - **Return:** when the preferred device comes back, the source switches
 ///   back to it.
 /// - A device that fails is tried last until it is unplugged or chosen
@@ -79,13 +80,13 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// The shared device list this source reads from.
   MediaDeviceList get deviceList => _deviceList;
 
-  /// Devices of [deviceKind]. Replays the current list.
+  /// The devices of [deviceKind], now.
+  List<MediaDevice> get devices => _deviceList.devicesOfKind(deviceKind);
+
+  /// [devices], replaying the current list to each new listener, then each
+  /// change.
   Stream<List<MediaDevice>> get devicesChanges =>
       _deviceList.devicesOfKindChanges(deviceKind);
-
-  /// The current devices of [deviceKind].
-  List<MediaDevice> get devices =>
-      _deviceList.devicesOfKind(deviceKind);
 
   /// [devices] in the order capture tries them. See
   /// [prioritizeDevices].
@@ -101,20 +102,20 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   @protected
   CameraFacing? get preferredFacing => null;
 
-  /// The user's preferred device, or `null` for "no preference". Replays the
-  /// current value.
-  Stream<MediaDevice?> get preferredDeviceChanges => _preferred.stream;
-
-  /// The user's preferred device, or `null`.
+  /// The user's preferred device, or `null` for "no preference".
   MediaDevice? get preferredDevice => _preferred.value;
 
-  /// The device in use while capturing; otherwise the device capture would
-  /// try first. Use it to show the selection in a device picker. Replays the
-  /// current value.
-  Stream<MediaDevice?> get activeDeviceChanges => _activeDevice.stream;
+  /// [preferredDevice], replaying the current value to each new listener,
+  /// then each change.
+  Stream<MediaDevice?> get preferredDeviceChanges => _preferred.stream;
 
-  /// The device in use, or the one capture would try first.
+  /// The device in use while capturing; otherwise the device capture would
+  /// try first. Use it to show the selection in a device picker.
   MediaDevice? get activeDevice => _activeDevice.value;
+
+  /// [activeDevice], replaying the current value to each new listener, then
+  /// each change.
+  Stream<MediaDevice?> get activeDeviceChanges => _activeDevice.stream;
 
   /// The capture options.
   O get options => _wantedOptions;

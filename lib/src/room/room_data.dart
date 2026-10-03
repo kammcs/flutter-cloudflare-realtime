@@ -271,7 +271,7 @@ class RemoteDataSubscription {
 }
 
 /// A message received on a [RemoteDataSubscription].
-class RoomDataMessage {
+final class RoomDataMessage {
   RoomDataMessage._(this.message, this.participantId);
 
   /// The session-level message, with [DataChannelMessage.fromSessionId].

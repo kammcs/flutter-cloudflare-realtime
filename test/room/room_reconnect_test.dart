@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:cloudflare_realtime/src/reconnect/backoff.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
@@ -261,10 +263,7 @@ void main() {
             ..emitConnectionState(_connected)
             ..emitConnectionState(_disconnected);
           pump();
-          expect(
-            alice.connectionState,
-            RoomConnectionState.reconnecting,
-          );
+          expect(alice.connectionState, RoomConnectionState.reconnecting);
           async.elapse(const Duration(seconds: 4));
           pc.emitConnectionState(_connected);
           pump();

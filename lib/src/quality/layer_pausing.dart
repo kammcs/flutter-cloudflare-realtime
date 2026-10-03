@@ -36,7 +36,7 @@ import '../util/coalescing_runner.dart';
 /// [RoomErrorEvent] `layerPausing` once. Its participants still report
 /// their demand.
 @immutable
-class LayerPausingOptions {
+final class LayerPausingOptions {
   /// Creates layer pausing options.
   const LayerPausingOptions({
     this.enabled = false,

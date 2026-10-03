@@ -4,6 +4,7 @@
 
 import 'dart:math' as math;
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/reconnect/backoff.dart';
 import 'package:fake_async/fake_async.dart';

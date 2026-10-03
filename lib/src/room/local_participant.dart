@@ -53,13 +53,14 @@ class LocalParticipant implements Participant {
   Stream<LocalParticipant> get changes => _changes.stream;
 
   /// Whether this participant is speaking now: their microphone is unmuted
-  /// and they are in [Room.activeSpeakersChanges].
+  /// and they are in [Room.activeSpeakers].
   @override
   bool get isSpeaking =>
       _room._speakers.monitor.currentSpeakers.contains(participantId);
 
   /// [isSpeaking], replaying the current value to each new listener and
   /// then emitting its changes.
+  @override
   Stream<bool> get speakingChanges => _room._speakers.monitor.speakers
       .map((speakers) => speakers.contains(participantId))
       .distinct();
@@ -69,11 +70,13 @@ class LocalParticipant implements Participant {
   /// (a muted sender has no level to read; see
   /// [canDetectSpeakingWhileMuted]). Updated every
   /// [ActiveSpeakerOptions.pollInterval].
+  @override
   double get audioLevel =>
       _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
 
   /// [audioLevel], replaying the current value to each new listener and
   /// then emitting its changes.
+  @override
   Stream<double> get audioLevelChanges => _room._speakers.monitor.snapshots
       .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
       .distinct();
@@ -579,7 +582,7 @@ class LocalMediaPublication {
 
   /// The capture behind the track. Use it for device selection
   /// ([CameraSource.setPreferredDevice]), options and the local preview
-  /// ([LocalMediaSource.trackChanges]).
+  /// ([LocalMediaSource.track]).
   final LocalMediaSource mediaSource;
 
   /// What the track captures.
@@ -640,19 +643,24 @@ class LocalMediaPublication {
   /// Whether the track is still published.
   bool get isPublished => !_unpublished;
 
-  /// This track's typed stats from [Room.statsChanges] (`docs/design.md` §7.1):
-  /// its sent layers, replaying the latest; `null` until it has reports.
-  /// Listening makes the room poll.
-  Stream<LocalTrackStats?> get statsChanges =>
-      participant._room._stats.stream.map((stats) => stats.local[trackName]);
-
-  /// This track's stats in the latest [Room.statsChanges] snapshot, if any.
+  /// This track's typed stats (`docs/design.md` §7.1), its sent layers, in
+  /// the latest [Room.stats] snapshot; `null` until it has reports. See
+  /// [statsChanges].
   LocalTrackStats? get stats =>
       participant._room._stats.latest?.local[trackName];
 
+  /// [stats] for each snapshot, replaying the latest. Listening makes the
+  /// room poll.
+  Stream<LocalTrackStats?> get statsChanges =>
+      participant._room._stats.stream.map((stats) => stats.local[trackName]);
+
   /// What is announced for this track.
-  TrackInfo get info =>
-      TrackInfo(kind: kind, source: source, muted: isMuted, simulcast: simulcast);
+  TrackInfo get info => TrackInfo(
+    kind: kind,
+    source: source,
+    muted: isMuted,
+    simulcast: simulcast,
+  );
 
   /// Stops sending. The track stays published and is announced as muted.
   Future<void> mute() {

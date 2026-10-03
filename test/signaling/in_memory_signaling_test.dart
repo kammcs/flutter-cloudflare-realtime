@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Records every list a [Signaling.participants] stream emits, as ID lists.

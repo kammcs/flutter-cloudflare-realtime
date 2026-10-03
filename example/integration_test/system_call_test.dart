@@ -48,6 +48,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -189,10 +190,7 @@ void main() {
     } else {
       expect(endpoints, isNull, reason: 'iOS has no endpoints');
     }
-    await _until(
-      () => alice.audioRoutes.isNotEmpty,
-      'the routes are listed',
-    );
+    await _until(() => alice.audioRoutes.isNotEmpty, 'the routes are listed');
     _log(
       'routes: ${alice.audioRoutes.map((r) => r.kind.name)}, '
       'current ${alice.audioRoute?.kind.name}',
@@ -203,9 +201,7 @@ void main() {
       }
     }
     for (final kind in [AudioRouteKind.speaker, AudioRouteKind.earpiece]) {
-      final route = alice.audioRoutes
-          .where((r) => r.kind == kind)
-          .firstOrNull;
+      final route = alice.audioRoutes.where((r) => r.kind == kind).firstOrNull;
       if (route == null) {
         // The earpiece isn't listed while a headset is connected.
         _log('no ${kind.name} listed (a headset is connected?)');

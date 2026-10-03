@@ -37,20 +37,25 @@ enum MutePolicy {
 /// Two independent switches, ported from partytracks' `makeBroadcastTrack`:
 ///
 /// - **Enabled** ([isEnabled]): whether the source captures at all. When
-///   enabled, [trackChanges] carries the live captured track; when disabled it is
+///   enabled, [track] is the live captured track; when disabled it is
 ///   `null` and the device is released.
 /// - **Broadcasting** ([isBroadcasting]): whether the capture should be sent
-///   to other participants. [broadcastTrackChanges] carries the track while the
-///   source is enabled *and* broadcasting, and `null` otherwise. Publishing
-///   (roadmap M2) sends [broadcastTrackChanges], so "muted" means it is `null`.
+///   to other participants. [broadcastTrack] is the track while the source
+///   is enabled *and* broadcasting, and `null` otherwise. Publishing sends
+///   [broadcastTrack], so "muted" means it is `null`.
+///
+/// Each of these has a stream named after it with `Changes`
+/// ([enabledChanges], [broadcastingChanges], [trackChanges],
+/// [broadcastTrackChanges]) that replays the current value to each new
+/// listener, then emits each change.
 ///
 /// The switches are linked the same way as in partytracks:
 /// [startBroadcasting] enables the source, and [disable] stops broadcasting.
 /// What [stopBroadcasting] does to the capture is the [mutePolicy].
 ///
 /// Repairs happen inside the source: when a device is unplugged or a
-/// setting changes, the source captures again and [trackChanges] emits the new
-/// track. Listeners never need to re-subscribe.
+/// setting changes, the source captures again and [trackChanges] emits the
+/// new track. Listeners never need to re-subscribe.
 ///
 /// Failures are reported on [errors] and turn the source off; the methods
 /// don't throw for them. They do throw [StateError] after [dispose], and
@@ -83,9 +88,6 @@ abstract class LocalMediaSource {
   late final CoalescingRunner _runner = CoalescingRunner(_reconcileSafely);
   bool _disposed = false;
 
-  /// Whether the source should be capturing. Replays the current value.
-  Stream<bool> get enabledChanges => _enabled.stream;
-
   /// Whether the source should be capturing.
   ///
   /// Changes as soon as [enable] or [disable] is called; [track]
@@ -93,29 +95,33 @@ abstract class LocalMediaSource {
   /// when capture fails or a screen share ends.
   bool get isEnabled => _enabled.value;
 
-  /// Whether the capture should be sent to others. Replays the current
-  /// value.
-  Stream<bool> get broadcastingChanges => _broadcasting.stream;
+  /// [isEnabled], replaying the current value to each new listener, then
+  /// each change.
+  Stream<bool> get enabledChanges => _enabled.stream;
 
   /// Whether the capture should be sent to others.
   bool get isBroadcasting => _broadcasting.value;
 
-  /// The live captured track, or `null` while disabled or not yet captured.
-  /// Replays the current value.
-  ///
-  /// Emits a new track when the source repairs or changes its capture, for
-  /// example after a device is unplugged.
-  Stream<CapturedTrack?> get trackChanges => _track.stream;
+  /// [isBroadcasting], replaying the current value to each new listener,
+  /// then each change.
+  Stream<bool> get broadcastingChanges => _broadcasting.stream;
 
-  /// The live captured track, or `null`.
+  /// The live captured track, or `null` while disabled or not yet captured.
+  ///
+  /// Replaced when the source repairs or changes its capture, for example
+  /// after a device is unplugged.
   CapturedTrack? get track => _track.value;
 
-  /// The track to send: [track] while broadcasting, else `null`.
-  /// Replays the current value.
-  Stream<CapturedTrack?> get broadcastTrackChanges => _broadcastTrack.stream;
+  /// [track], replaying the current value to each new listener, then each
+  /// new track.
+  Stream<CapturedTrack?> get trackChanges => _track.stream;
 
   /// The track to send: [track] while broadcasting, else `null`.
   CapturedTrack? get broadcastTrack => _broadcastTrack.value;
+
+  /// [broadcastTrack], replaying the current value to each new listener,
+  /// then each change.
+  Stream<CapturedTrack?> get broadcastTrackChanges => _broadcastTrack.stream;
 
   /// Capture failures: permission denied, every device failing, a screen
   /// source that can't be found. The source is disabled when one arrives.
@@ -242,7 +248,8 @@ abstract class LocalMediaSource {
   @protected
   Future<void> requestReconcile() => _disposed ? Future.value() : _runner.run();
 
-  /// Publishes [track] as [track], and updates [broadcastTrackChanges].
+  /// Sets [track] (this source's captured track) to [track], and updates
+  /// [broadcastTrack].
   @protected
   void setTrack(CapturedTrack? track) {
     if (_track.isClosed) return;

@@ -36,7 +36,7 @@ enum ConnectionQuality {
 /// The limits of one [ConnectionQuality] level: a measurement at or below
 /// every limit is at least that level.
 @immutable
-class QualityThresholds {
+final class QualityThresholds {
   /// Creates the limits.
   const QualityThresholds({
     required this.roundTripTime,
@@ -79,7 +79,7 @@ class QualityThresholds {
 
 /// How connection quality is rated (`docs/design.md` §7.1).
 @immutable
-class ConnectionQualityOptions {
+final class ConnectionQualityOptions {
   /// Creates a configuration; the defaults are explained in design.md.
   const ConnectionQualityOptions({
     this.excellent = const QualityThresholds(
@@ -148,7 +148,7 @@ class ConnectionQualityOptions {
 
 /// Typed stats and connection quality in a room (`RoomOptions.stats`).
 @immutable
-class RoomStatsOptions {
+final class RoomStatsOptions {
   /// Creates the options.
   const RoomStatsOptions({
     this.interval = const Duration(seconds: 2),

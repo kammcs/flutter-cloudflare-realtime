@@ -25,7 +25,7 @@ enum CallHandleType {
 /// Show a readable name with `displayName` on the call; the handle is what
 /// the system keeps (iOS Recents).
 @immutable
-class CallHandle {
+final class CallHandle {
   /// Creates a handle.
   const CallHandle(this.value, {this.type = CallHandleType.generic});
 
@@ -123,7 +123,7 @@ enum SystemCallErrorCode {
 
 /// Thrown by [SystemCalls] and [SystemCall] when the system refuses a
 /// request.
-class SystemCallException implements Exception {
+final class SystemCallException implements Exception {
   /// Creates the exception.
   const SystemCallException(this.code, [this.message]);
 
@@ -142,7 +142,7 @@ class SystemCallException implements Exception {
 ///
 /// Several settings exist on one platform only; the other ignores them.
 @immutable
-class SystemCallsOptions {
+final class SystemCallsOptions {
   /// Creates a configuration.
   const SystemCallsOptions({
     this.supportsVideo = true,

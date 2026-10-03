@@ -9,7 +9,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
 /// the track is replaced or unsubscribed. Don't stop [track] or dispose
 /// [stream] yourself.
 @immutable
-class RenderableTrack {
+final class RenderableTrack {
   /// Pairs [track] with the [stream] that holds it.
   const RenderableTrack({required this.track, required this.stream});
 

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -202,7 +203,7 @@ class _AudioOutputs extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
       stream: devices.audioOutputsChanges,
-      initialData: devices.devicesOfKind(MediaDeviceKind.audioOutput),
+      initialData: devices.audioOutputs,
       builder: (context, snapshot) {
         final outputs = snapshot.data ?? const [];
         if (outputs.isEmpty) {

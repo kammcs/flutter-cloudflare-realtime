@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/rendering.dart' show RenderFittedBox;
@@ -599,10 +600,7 @@ void main() {
 
       await _drive(tester, cam.subscribe());
       await _settle(tester);
-      expect(
-        find.text('video ${cam.track!.stream.id} cover'),
-        findsOneWidget,
-      );
+      expect(find.text('video ${cam.track!.stream.id} cover'), findsOneWidget);
 
       // Turning subscribe on and off follows the widget.
       await tester.pumpWidget(

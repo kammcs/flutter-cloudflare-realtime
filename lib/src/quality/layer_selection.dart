@@ -19,7 +19,7 @@ import 'simulcast_ladder.dart';
 /// gets `c`, up to 540 gets `b`, anything bigger gets `a`. A 2×2 gallery on
 /// a 1080p screen (540-pixel tiles) therefore pulls `b`.
 @immutable
-class LayerSelectionOptions {
+final class LayerSelectionOptions {
   /// Creates a layer-selection configuration.
   const LayerSelectionOptions({
     this.maxUpscale = 1.5,
@@ -89,7 +89,7 @@ class LayerSelectionOptions {
 /// [width] and [height] are **physical** pixels: logical size ×
 /// device-pixel ratio. [SimulcastLayerReporter] measures them.
 @immutable
-class TileDemand {
+final class TileDemand {
   /// Creates a demand from physical pixel sizes.
   const TileDemand({
     required this.width,

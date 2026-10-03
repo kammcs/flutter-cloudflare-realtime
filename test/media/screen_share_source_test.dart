@@ -29,8 +29,7 @@ void main() {
 
   tearDown(() => backend.close());
 
-  FakeTrack videoOf(ScreenShareSource share) =>
-      share.track!.track as FakeTrack;
+  FakeTrack videoOf(ScreenShareSource share) => share.track!.track as FakeTrack;
 
   group('desktop', () {
     test(

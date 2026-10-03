@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/material.dart';
 
 /// Signaling without media: who is in the room, through

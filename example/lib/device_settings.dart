@@ -285,7 +285,7 @@ class AudioOutputDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
       stream: devices.audioOutputsChanges,
-      initialData: devices.devicesOfKind(MediaDeviceKind.audioOutput),
+      initialData: devices.audioOutputs,
       builder: (context, snapshot) => ValueListenableBuilder<String?>(
         valueListenable: output,
         builder: (context, chosen, _) {

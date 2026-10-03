@@ -67,13 +67,14 @@ class RemoteParticipant implements Participant {
   Stream<RemoteParticipant> get changes => _changes.stream;
 
   /// Whether the participant is speaking now: they are in
-  /// [Room.activeSpeakersChanges].
+  /// [Room.activeSpeakers].
   @override
   bool get isSpeaking =>
       _room._speakers.monitor.currentSpeakers.contains(participantId);
 
   /// [isSpeaking], replaying the current value to each new listener and
   /// then emitting its changes.
+  @override
   Stream<bool> get speakingChanges => _room._speakers.monitor.speakers
       .map((speakers) => speakers.contains(participantId))
       .distinct();
@@ -81,11 +82,13 @@ class RemoteParticipant implements Participant {
   /// The participant's smoothed microphone level, `0..1` (0 while not
   /// pulled or silent), for a level meter. Updated every
   /// [ActiveSpeakerOptions.pollInterval].
+  @override
   double get audioLevel =>
       _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
 
   /// [audioLevel], replaying the current value to each new listener and
   /// then emitting its changes.
+  @override
   Stream<double> get audioLevelChanges => _room._speakers.monitor.snapshots
       .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
       .distinct();
@@ -337,20 +340,21 @@ class RemoteTrackPublication {
   /// not pulled yet).
   RenderableTrack? get track => _track.value;
 
-  /// The pulled track, replaying the current one to each new listener. It
-  /// emits a new one when the track is pulled again (for example from the
+  /// [track], replaying the current one to each new listener. It emits a
+  /// new one when the track is pulled again (for example from the
   /// publisher's new session), and `null` when unsubscribed. The room
   /// disposes each stream it replaces.
   Stream<RenderableTrack?> get trackChanges => _track.stream;
 
-  /// This track's typed stats from [Room.statsChanges] (`docs/design.md` §7.1),
-  /// replaying the latest: `null` while it isn't pulled on the room's
-  /// current session. Listening makes the room poll.
+  /// This track's typed stats (`docs/design.md` §7.1) in the latest
+  /// [Room.stats] snapshot: `null` while it isn't pulled on the room's
+  /// current session, or before the first snapshot. See [statsChanges].
+  RemoteTrackStats? get stats => _room._stats.latest?.remote[id];
+
+  /// [stats] for each snapshot, replaying the latest. Listening makes the
+  /// room poll.
   Stream<RemoteTrackStats?> get statsChanges =>
       _room._stats.stream.map((stats) => stats.remote[id]);
-
-  /// This track's stats in the latest [Room.statsChanges] snapshot, if any.
-  RemoteTrackStats? get stats => _room._stats.latest?.remote[id];
 
   /// Emits this publication whenever [isMuted], [isSubscribed],
   /// [track], [subscriptionState] or [error] changes. Completes when

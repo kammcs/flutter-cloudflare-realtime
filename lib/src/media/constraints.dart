@@ -12,7 +12,7 @@ import 'media_types.dart';
 /// `docs/design.md` §6: publishing [h720] gives layer `a` at 1280×720,
 /// `b` at ½ (640×360, the same as [h360]) and `c` at ¼ (320×180, [h180]).
 @immutable
-class VideoPreset {
+final class VideoPreset {
   /// Creates a preset.
   const VideoPreset({
     required this.width,
@@ -65,7 +65,7 @@ class VideoPreset {
 
 /// Camera capture settings.
 @immutable
-class CameraOptions {
+final class CameraOptions {
   /// Creates camera settings.
   const CameraOptions({
     this.preset = VideoPreset.h720,
@@ -110,7 +110,7 @@ class CameraOptions {
 /// All three processing steps default to on, which is what calls want.
 /// Turn them off for music or for audio that is already processed.
 @immutable
-class MicrophoneOptions {
+final class MicrophoneOptions {
   /// Creates microphone settings.
   const MicrophoneOptions({
     this.echoCancellation = true,
@@ -157,7 +157,7 @@ class MicrophoneOptions {
 
 /// Screen share capture settings.
 @immutable
-class ScreenShareOptions {
+final class ScreenShareOptions {
   /// Creates screen share settings.
   const ScreenShareOptions({
     this.frameRate = 15,

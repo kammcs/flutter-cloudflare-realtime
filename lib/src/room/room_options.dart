@@ -20,7 +20,7 @@ import '../session/sfu_session.dart';
 /// (`docs/design.md` §4.3). A large gallery then pulls only the cameras on
 /// screen.
 @immutable
-class AutoSubscribe {
+final class AutoSubscribe {
   /// Creates an auto-subscribe policy.
   const AutoSubscribe({this.audio = true, this.video = false});
 
@@ -116,7 +116,7 @@ enum RoomConnectionState {
 /// is never restarted. Attempts are spaced by [backoff]; when it gives up,
 /// the room is [RoomConnectionState.disconnected] until [Room.reconnect].
 @immutable
-class ReconnectOptions {
+final class ReconnectOptions {
   /// Creates reconnection options.
   const ReconnectOptions({
     this.enabled = true,
@@ -189,7 +189,7 @@ enum KeepScreenAwake {
 
 /// Options for [CloudflareRealtime.join].
 @immutable
-class RoomOptions {
+final class RoomOptions {
   /// Creates room options.
   const RoomOptions({
     this.autoSubscribe = const AutoSubscribe(),
@@ -270,7 +270,7 @@ class RoomOptions {
 
   /// Active-speaker detection (`docs/design.md` §7): how often audio levels
   /// are read and how they are smoothed. `null` turns detection off: then
-  /// [Room.activeSpeakersChanges] stays empty and no stats are polled.
+  /// [Room.activeSpeakers] stays empty and no stats are polled.
   final ActiveSpeakerOptions? activeSpeaker;
 
   /// Typed stats and connection quality (`docs/design.md` §7.1): how often

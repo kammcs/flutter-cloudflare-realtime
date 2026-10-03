@@ -15,6 +15,9 @@ void main() {
     await list.ready;
     expect(list.devices, [cam1, mic1, speaker1]);
     expect(list.devicesOfKind(MediaDeviceKind.videoInput), [cam1]);
+    expect(list.audioInputs, [mic1]);
+    expect(list.videoInputs, [cam1]);
+    expect(list.audioOutputs, [speaker1]);
     expect(await list.audioInputsChanges.first, [mic1]);
     expect(await list.videoInputsChanges.first, [cam1]);
     expect(await list.audioOutputsChanges.first, [speaker1]);

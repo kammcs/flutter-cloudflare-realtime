@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
@@ -598,10 +600,7 @@ void main() {
         final transceiver = pc.transceivers.single;
         expect(transceiver.kind, 'video');
         expect(transceiver.sendEncodings, SimulcastPresets.h720);
-        expect(
-          transceiver.sentTrack,
-          same(cam.mediaSource.track!.track),
-        );
+        expect(transceiver.sentTrack, same(cam.mediaSource.track!.track));
         expect(cam.isMuted, isFalse);
         expect(cam.ownsMediaSource, isTrue);
         expect(alice.localParticipant.camera, cam);
@@ -636,10 +635,7 @@ void main() {
         expect(await alice.localParticipant.switchCamera(), cam2);
         await _settle();
         expect(cam.mediaSource.track!.device, cam2);
-        expect(
-          transceiver.sentTrack,
-          same(cam.mediaSource.track!.track),
-        );
+        expect(transceiver.sentTrack, same(cam.mediaSource.track!.track));
         expect(alice.localParticipant.camera, cam);
         expect(
           h.callsOf(alice, 'tracks/new'),
@@ -929,7 +925,10 @@ void main() {
 
       var participantsDone = false;
       var eventsDone = false;
-      alice.participantsChanges.listen(null, onDone: () => participantsDone = true);
+      alice.participantsChanges.listen(
+        null,
+        onDone: () => participantsDone = true,
+      );
       alice.events.listen(null, onDone: () => eventsDone = true);
 
       final leaving = alice.leave();

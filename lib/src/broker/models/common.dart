@@ -15,7 +15,7 @@ enum SdpType {
 ///
 /// [toString] reports only the type and the SDP length: SDP carries ICE
 /// credentials and fingerprints, and must never be logged.
-class SessionDescription {
+final class SessionDescription {
   /// Creates a session description.
   const SessionDescription({required this.type, required this.sdp});
 

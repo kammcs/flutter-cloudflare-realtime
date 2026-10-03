@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/session/track_name.dart';
 import 'package:fake_async/fake_async.dart';
@@ -430,7 +431,10 @@ void main() {
     test('a failing request does not wedge the queue', () async {
       final session = await h.connect();
       h.broker.onNewTracks = (_, _) async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 500);
+          throw const BrokerResponseException(
+            operation: 'tracks/new',
+            statusCode: 500,
+          );
       final failed = session.publish(
         FakeMediaStreamTrack(kind: 'audio'),
         options: const PublishOptions(trackName: 'a'),
@@ -1430,7 +1434,10 @@ void main() {
         SfuConnectionState.disconnected,
         SfuConnectionState.connected,
       ]);
-      expect(await session.connectionStateChanges.first, SfuConnectionState.connected);
+      expect(
+        await session.connectionStateChanges.first,
+        SfuConnectionState.connected,
+      );
 
       await session.close();
       await pumpEventQueue();
@@ -1717,8 +1724,10 @@ void main() {
     const stable = RTCSignalingState.RTCSignalingStateStable;
 
     final pushFailures = <String, Future<TracksResponse> Function()>{
-      'a 5xx': () async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 503),
+      'a 5xx': () async => throw const BrokerResponseException(
+        operation: 'tracks/new',
+        statusCode: 503,
+      ),
       'a 403': () async =>
           throw const BrokerForbiddenException(operation: 'tracks/new'),
       'a network error': () async =>
@@ -1770,10 +1779,11 @@ void main() {
         'renegotiates', () async {
       final session = await h.connect();
       final pub = await session.publish(FakeMediaStreamTrack(kind: 'audio'));
-      h.broker.onCloseTracks = (_, _) async => throw const BrokerException(
-        operation: 'tracks/close',
-        statusCode: 500,
-      );
+      h.broker.onCloseTracks = (_, _) async =>
+          throw const BrokerResponseException(
+            operation: 'tracks/close',
+            statusCode: 500,
+          );
       h.pc.log.clear();
 
       await expectLater(pub.unpublish(), throwsA(isA<BrokerException>()));
@@ -1811,10 +1821,11 @@ void main() {
 
     test('a failed renegotiate call leaves a usable, stable session', () async {
       final session = await h.connect();
-      h.broker.onRenegotiate = (_, _) async => throw const BrokerException(
-        operation: 'renegotiate',
-        statusCode: 500,
-      );
+      h.broker.onRenegotiate = (_, _) async =>
+          throw const BrokerResponseException(
+            operation: 'renegotiate',
+            statusCode: 500,
+          );
       await expectLater(
         session.subscribe(remoteSessionId: 'p', trackName: 'a'),
         throwsA(isA<BrokerException>()),
@@ -1833,7 +1844,10 @@ void main() {
       final failures = <SfuSessionFailure>[];
       session.failures.listen(failures.add);
       h.broker.onNewTracks = (_, _) async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 500);
+          throw const BrokerResponseException(
+            operation: 'tracks/new',
+            statusCode: 500,
+          );
       h.pc.failNext('rollback', 'rollback not supported');
 
       await expectLater(

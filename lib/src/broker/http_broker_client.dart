@@ -32,16 +32,16 @@ class HttpBrokerClient implements BrokerClient {
   ///
   /// Throws an [ArgumentError] if [roomId] is empty or contains a line
   /// break.
-  HttpBrokerClient({required this.config, required this.roomId})
-    : _client = config.httpClient ?? http.Client(),
-      _ownsClient = config.httpClient == null {
+  HttpBrokerClient({required this.options, required this.roomId})
+    : _client = options.httpClient ?? http.Client(),
+      _ownsClient = options.httpClient == null {
     if (roomId.isEmpty || roomId.contains(RegExp(r'[\r\n]'))) {
       throw ArgumentError.value(roomId, 'roomId', 'must be a non-empty line');
     }
   }
 
-  /// The broker configuration.
-  final BrokerOptions config;
+  /// The broker options: its URL, the app's headers and the timeout.
+  final BrokerOptions options;
 
   /// The room sent in `X-Realtime-Room` on every call.
   final String roomId;
@@ -66,7 +66,7 @@ class HttpBrokerClient implements BrokerClient {
     final json = response.json;
     if (json['sessionId'] is! String && json['errorCode'] is String) {
       // A 2xx body with an error and no session: nothing to return.
-      throw BrokerException(
+      throw BrokerResponseException(
         operation: operation,
         statusCode: response.statusCode,
         errorCode: json['errorCode'] as String,
@@ -259,7 +259,7 @@ class HttpBrokerClient implements BrokerClient {
   }) async {
     if (_disposed) throw StateError('HttpBrokerClient has been disposed.');
 
-    final appHeaders = await config.headers();
+    final appHeaders = await options.headers();
     if (_disposed) throw StateError('HttpBrokerClient has been disposed.');
 
     final abort = Completer<void>();
@@ -285,12 +285,12 @@ class HttpBrokerClient implements BrokerClient {
       response = await _client
           .send(request)
           .then(http.Response.fromStream)
-          .timeout(config.timeout);
+          .timeout(options.timeout);
     } on TimeoutException {
       if (!abort.isCompleted) abort.complete();
       throw BrokerTimeoutException(
         operation: operation,
-        timeout: config.timeout,
+        timeout: options.timeout,
       );
     } on Exception catch (e) {
       // http.ClientException, and platform socket/TLS errors from custom
@@ -356,7 +356,7 @@ class HttpBrokerClient implements BrokerClient {
         errorDescription: errorDescription,
       );
     }
-    return BrokerException(
+    return BrokerResponseException(
       operation: operation,
       statusCode: status,
       errorCode: errorCode,
@@ -365,7 +365,7 @@ class HttpBrokerClient implements BrokerClient {
   }
 
   Uri _url(List<String> segments, Map<String, String>? query) {
-    final base = config.baseUrl;
+    final base = options.baseUrl;
     final queryParameters = {...base.queryParameters, ...?query};
     return base.replace(
       pathSegments: [

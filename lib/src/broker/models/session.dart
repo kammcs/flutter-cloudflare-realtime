@@ -8,7 +8,7 @@ import 'tracks.dart';
 /// starting WebRTC negotiation. partytracks creates sessions this way, then
 /// pushes its first track with the offer. An unconnected session can expire
 /// before its first track or DataChannel operation.
-class NewSessionRequest {
+final class NewSessionRequest {
   /// Creates a `sessions/new` request.
   const NewSessionRequest({this.sessionDescription, this.correlationId});
 
@@ -42,7 +42,7 @@ class NewSessionRequest {
 }
 
 /// The response of `POST sessions/new`.
-class NewSessionResponse with SfuErrorFields {
+final class NewSessionResponse with SfuErrorFields {
   /// Creates a new-session response.
   const NewSessionResponse({
     required this.sessionId,
@@ -91,7 +91,7 @@ class NewSessionResponse with SfuErrorFields {
 }
 
 /// A media track in `GET sessions/{id}`.
-class SessionTrackState {
+final class SessionTrackState {
   /// Creates a track state.
   const SessionTrackState({
     this.location,
@@ -153,7 +153,7 @@ class SessionTrackState {
 }
 
 /// A DataChannel in `GET sessions/{id}`.
-class SessionDataChannelState {
+final class SessionDataChannelState {
   /// Creates a DataChannel state.
   const SessionDataChannelState({
     this.location,
@@ -204,7 +204,7 @@ class SessionDataChannelState {
 
 /// The response of `GET sessions/{id}`: the session's tracks and
 /// DataChannels. It contains no SDP.
-class SessionState with SfuErrorFields {
+final class SessionState with SfuErrorFields {
   /// Creates a session state.
   const SessionState({
     this.tracks = const [],

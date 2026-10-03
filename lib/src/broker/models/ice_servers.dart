@@ -6,7 +6,7 @@ import 'json.dart';
 /// "credential"?: "..."}`. `urls` may also be a single string.
 ///
 /// [toString] never includes [username] or [credential].
-class IceServer {
+final class IceServer {
   /// Creates an ICE server.
   IceServer({required List<String> urls, this.username, this.credential})
     : urls = List.unmodifiable(urls);
@@ -69,7 +69,7 @@ class IceServer {
 
 /// The response of the broker's `generate-ice-servers` endpoint:
 /// `{"iceServers": [...]}`.
-class IceServersResponse {
+final class IceServersResponse {
   /// Creates an ICE servers response.
   IceServersResponse({required List<IceServer> iceServers})
     : iceServers = List.unmodifiable(iceServers);

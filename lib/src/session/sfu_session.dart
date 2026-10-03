@@ -32,7 +32,7 @@ import 'track_name.dart';
 part 'track_publication.dart';
 
 /// Options for [SfuSession.connect].
-class SfuSessionOptions {
+final class SfuSessionOptions {
   /// Creates session options.
   const SfuSessionOptions({
     this.iceServers,
@@ -175,12 +175,13 @@ class SfuSession {
   DataChannelManager get _data =>
       _dataChannels ??= DataChannelManager(SfuSessionPort._(this));
 
-  /// The connection state, replaying the current value to each new
-  /// listener. Completes after [close].
-  Stream<SfuConnectionState> get connectionStateChanges => _connectionState.stream;
-
-  /// The current connection state.
+  /// The connection state.
   SfuConnectionState get connectionState => _connectionState.value;
+
+  /// [connectionState], replaying the current value to each new listener,
+  /// then each change. Completes after [close].
+  Stream<SfuConnectionState> get connectionStateChanges =>
+      _connectionState.stream;
 
   /// Why the session failed, or null if it hasn't.
   SfuSessionFailure? get failure => _failure;
@@ -210,7 +211,7 @@ class SfuSession {
 
   /// Whether an SDP exchange has completed on this session (a push, a pull
   /// or [establishConnection]), so its peer connection has something to
-  /// connect. Until then [connectionStateChanges] stays
+  /// connect. Until then [connectionState] stays
   /// [SfuConnectionState.initial] and the SFU may expire the session.
   bool get hasNegotiated => _negotiated;
   bool _negotiated = false;
@@ -712,7 +713,7 @@ class SfuSession {
           for (final item in batch) {
             item.fail(
               this,
-              const SfuSessionException('the operation had no result'),
+              const SfuProtocolException('the operation had no result'),
             );
           }
         }
@@ -829,7 +830,10 @@ class SfuSession {
     for (final item in batch) {
       final publication = item.publication;
       if (!identical(publication._session, this)) {
-        item.fail(this, const SfuSessionException('unpublished before push'));
+        item.fail(
+          this,
+          const SfuInterruptedException('unpublished before push'),
+        );
         continue;
       }
       try {
@@ -873,7 +877,7 @@ class SfuSession {
       if (mid == null) {
         item.fail(
           this,
-          const SfuSessionException('the transceiver has no mid'),
+          const SfuProtocolException('the transceiver has no mid'),
         );
       } else {
         item.mid = mid;
@@ -901,7 +905,7 @@ class SfuSession {
     _throwIfRequestError('tracks/new', response);
     final answer = response.sessionDescription;
     if (answer == null) {
-      throw const SfuSessionException('tracks/new returned no answer');
+      throw const SfuProtocolException('tracks/new returned no answer');
     }
     await _setRemoteDescription(answer);
     _throwIfUnusable();
@@ -939,7 +943,10 @@ class SfuSession {
       if (identical(item.subscription._session, this)) {
         requested.add(item);
       } else {
-        item.fail(this, const SfuSessionException('unsubscribed before pull'));
+        item.fail(
+          this,
+          const SfuInterruptedException('unsubscribed before pull'),
+        );
       }
     }
     if (requested.isEmpty) return;
@@ -1075,7 +1082,7 @@ class SfuSession {
   /// `renegotiate`.
   Future<void> _renegotiate(String operation, SessionDescription? offer) async {
     if (offer == null || offer.type != SdpType.offer) {
-      throw SfuSessionException(
+      throw SfuProtocolException(
         '$operation asked for renegotiation without an offer',
       );
     }

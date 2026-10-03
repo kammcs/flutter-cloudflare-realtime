@@ -54,7 +54,7 @@ enum TrackSource {
 /// hint, so malformed input reads as `null` (no hint) rather than failing
 /// the whole participant state.
 @immutable
-class SimulcastInfo {
+final class SimulcastInfo {
   /// Creates a simulcast description.
   ///
   /// [rids] must not be empty. When given, [scaleDownBy] has one entry per
@@ -160,7 +160,7 @@ class SimulcastInfo {
 /// - [simulcast]: the layers a simulcast video track sends. Subscribers ask
 ///   for a layer (`preferredRid`) only when it is set.
 @immutable
-class TrackInfo {
+final class TrackInfo {
   /// Creates a track description.
   const TrackInfo({
     required this.kind,
@@ -296,7 +296,7 @@ const DeepCollectionEquality _deepEquality = DeepCollectionEquality();
 ///
 /// Readers ignore unknown keys, so later versions can add fields.
 @immutable
-class ParticipantState {
+final class ParticipantState {
   /// Creates a participant state.
   ///
   /// [tracks] and [metadata] are copied into unmodifiable maps.

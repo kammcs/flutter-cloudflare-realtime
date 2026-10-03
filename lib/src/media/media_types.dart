@@ -77,7 +77,7 @@ enum MediaDeviceKind {
 ///
 /// Two devices are equal when all their fields are equal.
 @immutable
-class MediaDevice {
+final class MediaDevice {
   /// Creates a device description.
   const MediaDevice({
     required this.deviceId,
@@ -162,7 +162,7 @@ class MediaDevice {
 /// the stream when it replaces or releases the capture. Don't stop them
 /// yourself.
 @immutable
-class CapturedTrack {
+final class CapturedTrack {
   /// Wraps a captured [track] and its [stream].
   const CapturedTrack({required this.track, required this.stream, this.device});
 
@@ -212,7 +212,7 @@ enum ScreenSourceType {
 /// Instances are immutable snapshots. A [ScreenSourcePicker] replaces a
 /// source with a new snapshot when its name or thumbnail changes.
 @immutable
-class ScreenSource {
+final class ScreenSource {
   /// Creates a source description.
   const ScreenSource({
     required this.id,

@@ -14,7 +14,7 @@ import '../signaling/participant_state.dart';
 ///
 /// [reports] keeps the raw reports for anything not modelled here.
 @immutable
-class RoomStats {
+final class RoomStats {
   /// Creates a snapshot.
   const RoomStats({
     required this.timestamp,
@@ -90,7 +90,7 @@ enum IceCandidateType {
 /// `remote-candidate`). Addresses are left out; they are in the raw
 /// reports.
 @immutable
-class IceCandidateStats {
+final class IceCandidateStats {
   /// Creates the stats.
   const IceCandidateStats({
     this.type,
@@ -124,7 +124,7 @@ class IceCandidateStats {
 
 /// The transport to the SFU: the selected ICE candidate pair.
 @immutable
-class ConnectionStats {
+final class ConnectionStats {
   /// Creates the stats.
   const ConnectionStats({
     this.roundTripTime,
@@ -207,7 +207,7 @@ enum QualityLimitationReason {
 /// a whole single-encoding track. The SFU's view of it comes from its RTCP
 /// receiver reports (`remote-inbound-rtp`).
 @immutable
-class OutboundLayerStats {
+final class OutboundLayerStats {
   /// Creates the stats.
   const OutboundLayerStats({
     this.rid,
@@ -313,7 +313,7 @@ class OutboundLayerStats {
 /// A local published track's stats: its sent streams, one per simulcast
 /// layer.
 @immutable
-class LocalTrackStats {
+final class LocalTrackStats {
   /// Creates the stats.
   const LocalTrackStats({
     required this.trackName,
@@ -379,7 +379,7 @@ class LocalTrackStats {
 
 /// A pulled remote track's stats (`inbound-rtp`).
 @immutable
-class RemoteTrackStats {
+final class RemoteTrackStats {
   /// Creates the stats.
   const RemoteTrackStats({
     required this.publicationId,

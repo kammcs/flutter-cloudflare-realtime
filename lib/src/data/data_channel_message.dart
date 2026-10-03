@@ -1,7 +1,7 @@
 part of 'data_channel_manager.dart';
 
 /// A message received on an [SfuDataChannel].
-class DataChannelMessage {
+final class DataChannelMessage {
   /// Creates a message. The package creates these; the constructor is
   /// public so apps can build them in their own tests.
   const DataChannelMessage({

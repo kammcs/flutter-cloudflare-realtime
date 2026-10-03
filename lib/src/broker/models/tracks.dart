@@ -16,7 +16,7 @@ enum SimulcastOrdering {
 /// Wire shape:
 /// `{"preferredRid": "a", "priorityOrdering"?: "none" | "asciibetical",
 /// "ridNotAvailable"?: "none" | "asciibetical"}`.
-class SimulcastOptions {
+final class SimulcastOptions {
   /// Creates simulcast preferences.
   const SimulcastOptions({
     required this.preferredRid,
@@ -71,7 +71,7 @@ class SimulcastOptions {
 ///
 /// Use [TrackObject.local] to push and [TrackObject.remote] to pull. The
 /// unnamed constructor exposes every field the SFU accepts.
-class TrackObject {
+final class TrackObject {
   /// Creates a track object with any combination of fields.
   const TrackObject({
     this.location,
@@ -163,7 +163,7 @@ class TrackObject {
 ///
 /// The request can succeed while this track failed: check [hasError].
 /// A `tracks/close` result usually carries only [mid] and any error.
-class TrackResult with SfuErrorFields {
+final class TrackResult with SfuErrorFields {
   /// Creates a track result.
   const TrackResult({
     this.location,
@@ -237,7 +237,7 @@ class TrackResult with SfuErrorFields {
 /// One request pushes (all [TrackObject.local]) or pulls (all
 /// [TrackObject.remote]), never both. A pull batch can name several
 /// publishers.
-class TracksRequest {
+final class TracksRequest {
   /// Creates a `tracks/new` request.
   ///
   /// A push carries the local [sessionDescription] offer. A pull usually has
@@ -284,7 +284,7 @@ class TracksRequest {
 /// Used to change a pulled track's simulcast layer, or to reuse a
 /// transceiver for another track: pass [TrackObject.remote] with the
 /// existing `mid`.
-class UpdateTracksRequest {
+final class UpdateTracksRequest {
   /// Creates a `tracks/update` request.
   const UpdateTracksRequest({required this.tracks, this.sessionDescription});
 
@@ -319,7 +319,7 @@ class UpdateTracksRequest {
 ///
 /// Wire shape: `{"tracks": [{"mid": "7"}], "sessionDescription"?: {...},
 /// "force": false}`.
-class CloseTracksRequest {
+final class CloseTracksRequest {
   /// Creates a `tracks/close` request.
   ///
   /// With `force: false` (a negotiated close), stop the transceivers, create
@@ -383,7 +383,7 @@ class CloseTracksRequest {
 ///
 /// Check [hasError] for a request-level error and each entry of [tracks]
 /// for per-track errors (see [trackErrors]).
-class TracksResponse with SfuErrorFields {
+final class TracksResponse with SfuErrorFields {
   /// Creates a tracks response.
   const TracksResponse({
     this.requiresImmediateRenegotiation = false,
@@ -443,7 +443,7 @@ class TracksResponse with SfuErrorFields {
 
 /// The body of `PUT sessions/{id}/renegotiate`: the local answer to an offer
 /// the SFU sent with `requiresImmediateRenegotiation`.
-class RenegotiateRequest {
+final class RenegotiateRequest {
   /// Creates a renegotiation request.
   const RenegotiateRequest({required this.sessionDescription});
 
@@ -465,7 +465,7 @@ class RenegotiateRequest {
 }
 
 /// The response of `PUT sessions/{id}/renegotiate`. Usually empty.
-class RenegotiateResponse with SfuErrorFields {
+final class RenegotiateResponse with SfuErrorFields {
   /// Creates a renegotiation response.
   const RenegotiateResponse({
     this.sessionDescription,

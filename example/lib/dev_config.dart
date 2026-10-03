@@ -130,12 +130,13 @@ class DevServerConfig {
   };
 
   /// The broker settings: the server's root, with [brokerHeaders].
-  BrokerOptions brokerConfig({Duration timeout = const Duration(seconds: 15)}) =>
-      BrokerOptions(
-        baseUrl: serverUrl,
-        headers: () async => brokerHeaders,
-        timeout: timeout,
-      );
+  BrokerOptions brokerConfig({
+    Duration timeout = const Duration(seconds: 15),
+  }) => BrokerOptions(
+    baseUrl: serverUrl,
+    headers: () async => brokerHeaders,
+    timeout: timeout,
+  );
 
   /// The signaling WebSocket URL: `ws(s)://<server>/signaling?token=<token>`.
   Uri get signalingUrl => serverUrl.replace(

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 
 /// One call recorded by [FakeBrokerClient].

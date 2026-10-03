@@ -36,6 +36,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -259,9 +260,7 @@ void main() {
       }
       // A tablet or an emulator has no earpiece: its voice calls play on
       // the speaker, where the sensor stays off.
-      if (!alice.audioRoutes.any(
-        (r) => r.kind == AudioRouteKind.earpiece,
-      )) {
+      if (!alice.audioRoutes.any((r) => r.kind == AudioRouteKind.earpiece)) {
         _log('no earpiece: the sensor stays off');
         await _expectProximity(alice, false, 'a voice call on the speaker');
         return;

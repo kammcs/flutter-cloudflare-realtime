@@ -6,9 +6,9 @@ part of 'room.dart';
 /// [RoomStatsOptions.interval] feeds both:
 ///
 /// - **Polling** runs while the room is joined and either someone listens
-///   to [Room.statsChanges] (or a publication's `stats`), or connection quality is
-///   on ([RoomStatsOptions.connectionQuality], the default). With quality
-///   off and no listener, nothing is polled. [Room.getStats] takes one
+///   to [Room.statsChanges] (or a publication's `statsChanges`), or
+///   connection quality is on ([RoomStatsOptions.connectionQuality], the
+///   default). With quality off and no listener, nothing is polled. [Room.getStats] takes one
 ///   snapshot whenever asked. Polls never overlap, and a failed poll is
 ///   skipped (`getStats` can fail briefly during renegotiation).
 /// - **Mapping** (see [CallStatsReader]): local tracks by their `mid` on
@@ -289,7 +289,9 @@ class _RoomStats {
   void _setLocal(ConnectionQuality quality) {
     if (local.isClosed || local.value == quality) return;
     local.set(quality);
-    _room._emit(ParticipantConnectionQualityChangedEvent(_room.localParticipant, quality));
+    _room._emit(
+      ParticipantConnectionQualityChangedEvent(_room.localParticipant, quality),
+    );
   }
 
   void _setRemote(RemoteParticipant remote, ConnectionQuality quality) {

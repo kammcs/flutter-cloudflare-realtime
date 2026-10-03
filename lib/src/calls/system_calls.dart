@@ -103,21 +103,21 @@ class SystemCalls {
 
   /// Sets the system's call UI up for this app, and completes with
   /// [isSupported]. Call it once at startup, before reporting calls; calling
-  /// it again updates [config].
+  /// it again updates [options].
   ///
   /// Calls the system already has are in [calls] when it completes (and
   /// emitted as [SystemCallAddedEvent]): on iOS, a VoIP push that launched
   /// the app reports its call before Dart runs.
   Future<bool> configure([
-    SystemCallsOptions config = const SystemCallsOptions(),
+    SystemCallsOptions options = const SystemCallsOptions(),
   ]) async {
     if (_backend != null) {
-      if (_supported) await _platform.configure(config);
+      if (_supported) await _platform.configure(options);
       return _supported;
     }
     var ok = false;
     try {
-      ok = await _platform.configure(config);
+      ok = await _platform.configure(options);
     } catch (error) {
       debugPrint('cloudflare_realtime: system calls unavailable: $error');
     }

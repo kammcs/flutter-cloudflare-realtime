@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' show StatsReport;
@@ -194,11 +195,7 @@ void main() {
         // Its own track's level only, not the other source's.
         expect(bob.localParticipant.audioLevel, inInclusiveRange(0.2, 0.5));
         expect(levels.last, bob.localParticipant.audioLevel);
-        expect(
-          bob.dominantSpeaker,
-          isNull,
-          reason: 'local not dominant',
-        );
+        expect(bob.dominantSpeaker, isNull, reason: 'local not dominant');
 
         mic.mute();
         pump();

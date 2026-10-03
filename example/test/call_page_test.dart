@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:cloudflare_realtime_example/call_page.dart';
 import 'package:cloudflare_realtime_example/call_tile.dart';
 import 'package:flutter/material.dart';

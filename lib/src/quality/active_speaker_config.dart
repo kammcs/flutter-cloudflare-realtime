@@ -22,7 +22,7 @@ import 'package:flutter/foundation.dart';
 ///    first speaker is dominant at once, and a dominant speaker who falls
 ///    silent stays dominant until someone else takes over.
 @immutable
-class ActiveSpeakerOptions {
+final class ActiveSpeakerOptions {
   /// Creates an active-speaker configuration.
   const ActiveSpeakerOptions({
     this.pollInterval = const Duration(milliseconds: 250),

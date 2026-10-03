@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 /// attempt, whichever comes first. Either limit can be `null` for "no
 /// limit"; with both `null` it retries forever.
 @immutable
-class BackoffOptions {
+final class BackoffOptions {
   /// Creates a backoff configuration.
   const BackoffOptions({
     this.initialDelay = const Duration(milliseconds: 500),

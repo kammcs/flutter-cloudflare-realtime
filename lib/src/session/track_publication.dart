@@ -77,7 +77,8 @@ class LocalTrackPublication {
   /// The current state.
   SfuTrackState get state => _state.value;
 
-  /// The state, replaying the current value to each new listener.
+  /// [state], replaying the current value to each new listener, then each
+  /// change.
   Stream<SfuTrackState> get stateChanges => _state.stream;
 
   /// Why the publication failed or was interrupted, if it did.
@@ -169,7 +170,7 @@ class LocalTrackPublication {
         case SfuTrackState.failed ||
             SfuTrackState.interrupted ||
             SfuTrackState.closed:
-          throw SfuSessionException('the publication is ${state.name}');
+          throw SfuInterruptedException('the publication is ${state.name}');
         case SfuTrackState.active when transceiver != null:
           try {
             if (await transceiver.hasSentMedia()) {
@@ -287,7 +288,8 @@ class RemoteTrackSubscription {
   /// The current state.
   SfuTrackState get state => _state.value;
 
-  /// The state, replaying the current value to each new listener.
+  /// [state], replaying the current value to each new listener, then each
+  /// change.
   Stream<SfuTrackState> get stateChanges => _state.stream;
 
   /// Why the subscription failed or was interrupted, if it did.
@@ -303,7 +305,7 @@ class RemoteTrackSubscription {
   /// interrupted (showing the last frame), and is null after it closes.
   MediaStreamTrack? get track => _track.value;
 
-  /// The received track: replays the current one to each new listener, then
+  /// [track] once set: replays the current one to each new listener, then
   /// emits each new one (for example after [SfuSession.resubscribe]).
   Stream<MediaStreamTrack> get trackChanges =>
       _track.stream.where((t) => t != null).cast<MediaStreamTrack>();

@@ -74,7 +74,8 @@ final realtime = CloudflareRealtime(
 );
 
 // 2. Join a room. `signaling` is your Signaling implementation; for a local
-//    demo, InMemorySignaling(InMemorySignalingHub()) works in one process.
+//    demo, InMemorySignaling(InMemorySignalingHub()) from
+//    package:cloudflare_realtime/testing.dart works in one process.
 final room = await realtime.join(
   'room-123',
   signaling: mySignaling,
@@ -91,8 +92,8 @@ await microphone.mute(); // announced to the others; unmute() to undo
 //    view is on screen, at the layer that fits the view.
 Widget build(BuildContext context) {
   return StreamBuilder<List<RemoteParticipant>>(
-    stream: room.participants, // emits on joins, leaves and track changes
-    initialData: room.currentParticipants,
+    stream: room.participantsChanges, // on joins, leaves and track changes
+    initialData: room.participants,
     builder: (context, snapshot) => GridView.count(
       crossAxisCount: 2,
       children: [
@@ -111,7 +112,8 @@ await room.leave();
 
 **Next:**
 
-- `room.events` (a `RoomEvent` stream: participants joining and leaving, tracks published and muted, reconnection, errors) and `room.connectionState`.
+- Observable state is a getter for the value now and a `…Changes` stream that replays it, then emits each change: `room.participants` / `participantsChanges`, `room.connectionState` / `connectionStateChanges`, `publication.isMuted` / `mutedChanges`.
+- `room.events` (a sealed `RoomEvent` stream: participants joining and leaving, tracks published and muted, reconnection, errors) and `room.connectionState`.
 - `room.activeSpeakers` / `dominantSpeaker`, and `isSpeaking` and `connectionQuality` on each participant.
 - `room.localParticipant.publishScreen()`: a `ScreenSourcePicker` source on desktops; the system or browser picker elsewhere.
 - `room.localParticipant.switchCamera()`, `room.audioRoutes` / `selectAudioRoute()` on phones, `room.setAudioOutputDevice()` elsewhere.
@@ -133,7 +135,7 @@ A broker must enforce these rules, or one user can listen in on another room:
 
 The repository has two **reference brokers** that implement these rules, a Cloudflare Worker and a Supabase Edge Function, with tests: see [broker/README.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/broker/README.md) for the full contract, the session tokens and CORS. They are references, not drop-in products: their room-membership check rejects every room until you implement it. The DEV ONLY [tools/dev-server/](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/tools/dev-server/README.md) runs a local broker and WebSocket signaling for trying calls across devices from a laptop; never deploy it.
 
-`HttpBrokerClient` is the default client. Implement `BrokerClient` yourself for a different transport.
+`HttpBrokerClient` is the default client. Implement `BrokerClient` yourself for a different transport: it, the wire models and the low-level `SfuSession` are in `package:cloudflare_realtime/broker.dart`, which most apps never import.
 
 ## Signaling
 
@@ -163,7 +165,7 @@ class MySignaling implements Signaling {
 }
 ```
 
-The contract is in the [`Signaling`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/Signaling-class.html) docs, and the JSON wire shape in [`ParticipantState`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/ParticipantState-class.html). `InMemorySignaling` is a ready-made implementation for tests and single-process demos, and the example app has a WebSocket one (`example/lib/ws_signaling.dart`).
+The contract is in the [`Signaling`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/Signaling-class.html) docs, and the JSON wire shape in [`ParticipantState`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/ParticipantState-class.html). `InMemorySignaling` (in `package:cloudflare_realtime/testing.dart`) is a ready-made implementation for tests and single-process demos, and the example app has a WebSocket one (`example/lib/ws_signaling.dart`).
 
 Presence data is only as trustworthy as your transport: the broker, not signaling, decides who may pull what.
 
@@ -175,7 +177,7 @@ Presence data is only as trustworthy as your transport: the broker, not signalin
 | iOS | [doc/ios.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/ios.md) | Camera and microphone usage descriptions; the `audio` background mode (plus `voip` for CallKit and VoIP pushes); a Broadcast Upload Extension target, from the package's templates, for screen sharing, with an App Group and the same signing team on both targets. |
 | macOS | [doc/macos.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/macos.md) | The camera, audio-input and network-client entitlements, the usage descriptions, and the user's Screen Recording permission for sharing. |
 | Windows | [doc/windows.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/windows.md) | Visual Studio 2022 17.14+ with the C++ ATL component. Nothing to declare. |
-| Web | [doc/web.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md) | HTTPS, your web origins in the broker's CORS list, and a "tap to enable audio" button for the autoplay policy (`Room.audioPlaybackBlocked`, `Room.startAudio()`). |
+| Web | [doc/web.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md) | HTTPS, your web origins in the broker's CORS list, and a "tap to enable audio" button for the autoplay policy (`Room.isAudioPlaybackBlocked`, `Room.startAudio()`). |
 
 ## Testing your app
 
@@ -183,8 +185,10 @@ Widget tests (`testWidgets`, or anything under `fake_async`) run in fake time, a
 
 - Advance time with a duration, `await tester.pump(const Duration(milliseconds: 100))`, rather than relying on `pumpAndSettle()`.
 - Run calls that really wait, such as `join` and `room.leave()`, inside `await tester.runAsync(() => room.leave())`.
-- `ParticipantVideoView.defaultRendererFactory` swaps in a fake renderer, since `flutter_webrtc`'s plugin doesn't run in `flutter test`.
-- `CloudflareRealtime`'s `mediaBackend`, `createBrokerClient` and `connectSession` parameters replace the capture, the broker client and the SFU session with fakes; `InMemorySignaling` stands in for your signaling.
+- Import `package:cloudflare_realtime/testing.dart` for the seams below. `flutter_webrtc`'s plugin doesn't run in `flutter test`.
+- `ParticipantVideoView.defaultRendererFactory` swaps in a fake `VideoRenderer`.
+- `CloudflareRealtime`'s `mediaBackend` (a `MediaBackend`), `createBrokerClient` (a `BrokerClientFactory`) and `connectSession` (an `SfuSessionConnector`) parameters replace the capture, the broker client and the SFU session with fakes; `InMemorySignaling` stands in for your signaling.
+- `Room`, `LocalParticipant`, `RemoteParticipant`, the publications and the other stateful classes can be mocked (`implements`); the options, value types, events and exceptions are `final` or `sealed`, so build them with their constructors.
 
 ## Docs
 

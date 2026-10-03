@@ -40,8 +40,8 @@ iOS stops the camera of a backgrounded app. The track stays published and sends 
 ## Interruptions and the proximity sensor
 
 - **Interruptions:** a phone call, Siri, an alarm or another app taking the audio pauses the call: `RoomAudioInterruptedEvent`, `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). iOS doesn't say what interrupted, so the reason is `unknown` (or `held` while a system call is on hold). The call resumes by itself when the system gives the audio back or the app returns to the foreground (`RoomAudioResumedEvent`); `Room.resumeAudio()` tries at once.
-- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
-- **The screen stays on during a video call** (`isIdleTimerDisabled`, restored afterwards): it doesn't dim or lock while the camera or a screen share is sent or a remote video is shown, and sleeps as usual in a voice call. If your app keeps the screen on itself, pass `RoomOptions(keepScreenAwake: KeepScreenAwake.never)`; `KeepScreenAwake.always` keeps it on for voice calls too (except at the ear). `Room.keepingScreenAwake` says whether it's on.
+- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.isProximitySensorActive` says whether it's on.
+- **The screen stays on during a video call** (`isIdleTimerDisabled`, restored afterwards): it doesn't dim or lock while the camera or a screen share is sent or a remote video is shown, and sleeps as usual in a voice call. If your app keeps the screen on itself, pass `RoomOptions(keepScreenAwake: KeepScreenAwake.never)`; `KeepScreenAwake.always` keeps it on for voice calls too (except at the ear). `Room.isKeepingScreenAwake` says whether it's on.
 
 ## Screen share: the Broadcast Upload Extension
 

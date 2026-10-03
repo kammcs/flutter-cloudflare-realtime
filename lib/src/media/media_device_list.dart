@@ -49,15 +49,20 @@ class MediaDeviceList {
   /// not).
   Future<void> get ready => _ready;
 
-  /// Every device, in the order the platform lists them. Replays the current
-  /// list to new listeners.
-  Stream<List<MediaDevice>> get devicesChanges => _devices.stream;
-
-  /// The current device list. Empty until the first enumeration finishes.
+  /// Every device, in the order the platform lists them. Empty until the
+  /// first enumeration finishes.
   List<MediaDevice> get devices => _devices.value;
 
-  /// Devices of one [kind]: replays the current list, then emits when it
-  /// changes.
+  /// [devices], replaying the current list to each new listener, then
+  /// emitting when it changes. Completes after [dispose].
+  Stream<List<MediaDevice>> get devicesChanges => _devices.stream;
+
+  /// The devices of one [kind], now.
+  List<MediaDevice> devicesOfKind(MediaDeviceKind kind) =>
+      _ofKind(devices, kind);
+
+  /// [devicesOfKind], replaying the current list to each new listener, then
+  /// emitting when it changes.
   Stream<List<MediaDevice>> devicesOfKindChanges(MediaDeviceKind kind) {
     List<MediaDevice>? previous;
     return devicesChanges.map((all) => _ofKind(all, kind)).where((list) {
@@ -69,19 +74,27 @@ class MediaDeviceList {
     });
   }
 
-  /// The current devices of one [kind].
-  List<MediaDevice> devicesOfKind(MediaDeviceKind kind) =>
-      _ofKind(devices, kind);
+  /// The microphones, now.
+  List<MediaDevice> get audioInputs =>
+      devicesOfKind(MediaDeviceKind.audioInput);
 
-  /// Microphones. See [devicesOfKindChanges].
+  /// [audioInputs], replaying the current list, then its changes.
   Stream<List<MediaDevice>> get audioInputsChanges =>
       devicesOfKindChanges(MediaDeviceKind.audioInput);
 
-  /// Cameras. See [devicesOfKindChanges].
+  /// The cameras, now.
+  List<MediaDevice> get videoInputs =>
+      devicesOfKind(MediaDeviceKind.videoInput);
+
+  /// [videoInputs], replaying the current list, then its changes.
   Stream<List<MediaDevice>> get videoInputsChanges =>
       devicesOfKindChanges(MediaDeviceKind.videoInput);
 
-  /// Speakers and headsets. See [devicesOfKindChanges].
+  /// The speakers and headsets, now.
+  List<MediaDevice> get audioOutputs =>
+      devicesOfKind(MediaDeviceKind.audioOutput);
+
+  /// [audioOutputs], replaying the current list, then its changes.
   Stream<List<MediaDevice>> get audioOutputsChanges =>
       devicesOfKindChanges(MediaDeviceKind.audioOutput);
 

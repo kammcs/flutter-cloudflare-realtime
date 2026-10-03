@@ -8,7 +8,9 @@
 // for the settings (including the dev server's X-Dev-User) and a
 // command line. The test never prints them.
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 

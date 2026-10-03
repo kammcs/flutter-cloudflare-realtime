@@ -32,7 +32,7 @@ enum ReconnectReason {
 /// Tuning for when the package replaces a broken SFU session
 /// (design.md §8).
 @immutable
-class ReconnectTriggerOptions {
+final class ReconnectTriggerOptions {
   /// Creates a trigger configuration.
   const ReconnectTriggerOptions({
     this.disconnectedTimeout = const Duration(seconds: 5),

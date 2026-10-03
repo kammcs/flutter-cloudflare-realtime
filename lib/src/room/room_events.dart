@@ -2,9 +2,16 @@ part of 'room.dart';
 
 /// Something that happened in a [Room], delivered on [Room.events].
 ///
-/// Streams such as [Room.participantsChanges] and [Room.connectionStateChanges] carry the
-/// same information as state; events are for reacting to changes (a toast
-/// when someone joins, a sound when a track is muted).
+/// State such as [Room.participants] and [Room.connectionState] (and their
+/// `…Changes` streams) carries the same information; events are for
+/// reacting to changes (a toast when someone joins, a sound when a track is
+/// muted).
+///
+/// The subtypes are named by what they are about: `Participant…` (a remote
+/// participant), `Track…` (a remote track), `LocalTrack…` (a local
+/// publication) and `Room…` (the room, its connection and the device's
+/// call audio and camera). The class is sealed, so a `switch` over them is
+/// exhaustive.
 sealed class RoomEvent {
   const RoomEvent();
 }
@@ -156,7 +163,10 @@ final class TrackSubscriptionFailedEvent extends RoomEvent {
 /// arrives from a remote participant.
 final class ParticipantConnectionQualityChangedEvent extends RoomEvent {
   /// Creates the event.
-  const ParticipantConnectionQualityChangedEvent(this.participant, this.quality);
+  const ParticipantConnectionQualityChangedEvent(
+    this.participant,
+    this.quality,
+  );
 
   /// Whose quality changed: the [LocalParticipant] or a
   /// [RemoteParticipant].
@@ -291,7 +301,7 @@ final class RoomCameraResumedEvent extends RoomEvent {
   String toString() => 'RoomCameraResumedEvent()';
 }
 
-/// [Room.connectionStateChanges] changed.
+/// [Room.connectionState] changed.
 final class RoomConnectionStateChangedEvent extends RoomEvent {
   /// Creates the event.
   const RoomConnectionStateChangedEvent(this.state);

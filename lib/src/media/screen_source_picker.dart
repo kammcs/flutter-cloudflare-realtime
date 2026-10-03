@@ -18,7 +18,7 @@ import 'thumbnail_check.dart';
 /// listing is in progress, the last listing error, and whether the OS
 /// seems to block screen capture.
 @immutable
-class ScreenPickerState {
+final class ScreenPickerState {
   /// Creates a snapshot.
   ScreenPickerState({
     List<ScreenSource> sources = const [],
@@ -173,11 +173,12 @@ class ScreenSourcePicker {
   /// the web (the browser has its own picker) and on mobile.
   bool get isSupported => _media.desktopCapturer != null;
 
-  /// The picker's state. Replays the current value.
-  Stream<ScreenPickerState> get stateChanges => _state.stream;
-
-  /// The picker's current state.
+  /// The picker's state: the sources, the loading flag and any problem.
   ScreenPickerState get state => _state.value;
+
+  /// [state], replaying the current value to each new listener, then each
+  /// change. Completes after [dispose].
+  Stream<ScreenPickerState> get stateChanges => _state.stream;
 
   /// Starts listing and watching sources. Completes when the first listing
   /// has finished (successfully or not). Calling it again does nothing.
@@ -214,9 +215,7 @@ class ScreenSourcePicker {
     final capturer = _media.desktopCapturer!;
     _timer?.cancel();
     _timer = null;
-    _setState(
-      state.copyWith(isLoading: true, error: state.error),
-    );
+    _setState(state.copyWith(isLoading: true, error: state.error));
     Object? lastError;
     for (var attempt = 0; attempt <= retries; attempt++) {
       if (_disposed) return;

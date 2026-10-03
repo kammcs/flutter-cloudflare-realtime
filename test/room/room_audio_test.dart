@@ -1,4 +1,5 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:cloudflare_realtime/src/audio/remote_audio_sink.dart';
 import 'package:cloudflare_realtime/src/audio/remote_audio_sink_native.dart';
 import 'package:flutter_test/flutter_test.dart';

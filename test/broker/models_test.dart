@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Encodes and decodes [json] so tests compare plain JSON values.

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -66,7 +67,7 @@ void main() {
     BrokerHeadersProvider? headers,
   }) => HttpBrokerClient(
     roomId: 'room-1',
-    config: BrokerOptions(
+    options: BrokerOptions(
       baseUrl: Uri.parse(base),
       headers:
           headers ??
@@ -442,7 +443,7 @@ void main() {
       expect(
         () => HttpBrokerClient(
           roomId: '',
-          config: BrokerOptions(
+          options: BrokerOptions(
             baseUrl: Uri.parse('https://x'),
             headers: () async => {},
           ),
@@ -452,7 +453,7 @@ void main() {
       expect(
         () => HttpBrokerClient(
           roomId: 'a\r\nb',
-          config: BrokerOptions(
+          options: BrokerOptions(
             baseUrl: Uri.parse('https://x'),
             headers: () async => {},
           ),
@@ -606,14 +607,14 @@ void main() {
       );
     });
 
-    test('other statuses pass through as BrokerException', () async {
+    test('other statuses pass through as BrokerResponseException', () async {
       server.reply(406, {
         'errorCode': 'invalid_params',
         'errorDescription': 'bad track',
       });
       final e = await errorOf(client.getSessionState('s1'));
-      expect(e.runtimeType, BrokerException);
-      e as BrokerException;
+      expect(e.runtimeType, BrokerResponseException);
+      e as BrokerResponseException;
       expect(e.statusCode, 406);
       expect(e.errorCode, 'invalid_params');
     });
@@ -761,7 +762,7 @@ void main() {
     test('an owned client is created when none is injected', () {
       final owned = HttpBrokerClient(
         roomId: 'r',
-        config: BrokerOptions(
+        options: BrokerOptions(
           baseUrl: Uri.parse('https://x'),
           headers: () async => {},
         ),

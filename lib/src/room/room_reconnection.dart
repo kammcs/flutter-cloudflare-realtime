@@ -446,7 +446,7 @@ class _Reconnection {
     _checkUsable(next);
     if (next.connectionState != SfuConnectionState.connected &&
         next.connectionState != SfuConnectionState.initial) {
-      throw SfuSessionException(
+      throw SfuInterruptedException(
         'the new session did not connect '
         '(${next.connectionState.name})',
       );
@@ -459,14 +459,14 @@ class _Reconnection {
     final room = _room;
     if (room._left) throw const _Aborted();
     if (!identical(room._session, next)) {
-      throw const SfuSessionException('the session was replaced');
+      throw const SfuInterruptedException('the session was replaced');
     }
     if (next.isClosed) throw const SfuSessionClosedException();
     final failure = next.failure;
     if (failure != null) throw SfuSessionFailedException(failure);
     final pending = _pending;
     if (pending != null) {
-      throw SfuSessionException('the new session broke (${pending.name})');
+      throw SfuInterruptedException('the new session broke (${pending.name})');
     }
   }
 
