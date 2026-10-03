@@ -273,12 +273,12 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 |---|---|---|---|---|
 | 2a | Gallery: automatic `b`/`c`, resolution matches | Pass (Pixel camera at `b`, 360×640) | Pass | Pass |
 | 2b | Stage `a` (1280×720), thumbnails `c` | Pass (Pixel thumbnail `c` 180×320; Pixel camera on stage `a`) | Pass | Pass (Windows on stage `a` 1280×720 30 fps) |
-| 2c | Manual *Low* / *High* / *Medium* / *Auto* | Pass | Pass (`cross_device_test`: low / high / low in 8.7 / 8.6 / 12.7 s from the Pixel, 8.7 / 8.2 / 12.2 s from Chrome) | |
+| 2c | Manual *Low* / *High* / *Medium* / *Auto* | Pass | Pass (`cross_device_test`: low / high / low in 8.7 / 8.6 / 12.7 s from the Pixel, 8.7 / 8.2 / 12.2 s from Chrome) | Pass (2026-10-03, 4-person session) |
 | 2d | Publisher platforms received (list them) | Android (camera, front and back; screen 1080×2424) | Android (camera; see notes on its layer sizes), Chrome (fake camera) | Windows (camera, screen), macOS (camera) |
 
 | # | Recovery, dropped device | Windows | macOS | Android |
 |---|---|---|---|---|
-| 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | Pass | |
+| 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | Pass | Pass (2026-10-03, 4-person session) |
 | 3b | Real 10–20 s drop: back within 30 s of restoring | Pass, accepted by the owner (recovered 61 s after link-up; the setup was confounded because the dev server shared the dropped network) | Pass after a fix (Ethernet out for 18 s: presence back 0.5 s and media 6.9 s after link-up; see notes) | Pass (~1 s after LTE took over from Wi-Fi) |
 | 3c | Capture not restarted (own tile stayed live) | Pass | Pass (simulated drop) | Pass |
 | 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | Pass (2026-10-02, M13) | Pass (2026-10-03, every file; see notes) | Pass (Pixel 10, M2–M12 runs) |
