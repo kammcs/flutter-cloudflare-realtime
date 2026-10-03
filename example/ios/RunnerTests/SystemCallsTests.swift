@@ -582,9 +582,94 @@ final class SystemCallsHandlerTests: XCTestCase {
   }
 }
 
+/// An `RTCAudioSession` delegate that records the interruptions WebRTC's
+/// audio device module is told about.
+private final class InterruptionRecorder: NSObject {
+  var events: [String] = []
+
+  @objc(audioSessionDidBeginInterruption:)
+  func didBegin(_ session: NSObject) { events.append("began") }
+
+  @objc(audioSessionDidEndInterruption:shouldResumeSession:)
+  func didEnd(_ session: NSObject, shouldResumeSession: Bool) {
+    events.append(shouldResumeSession ? "ended(resume)" : "ended")
+  }
+}
+
 /// WebRTC's `RTCAudioSession`, reached through the Objective-C runtime in
 /// the app (flutter_webrtc links WebRTC).
 final class SystemCallAudioTests: XCTestCase {
+  // CallKit deactivating the session (a hold) stops the app's audio I/O
+  // without an AVAudioSession interruption; WebRTC's AVAudioEngine module
+  // restarts its engine only when an interruption ends. So didDeactivate
+  // begins one, and didActivate (audioSessionDidActivate:) ends it.
+  func testDeactivationBeginsAnInterruptionThatActivationEnds() throws {
+    let audio = SystemCallAudio.shared
+    let session = try XCTUnwrap(
+      (NSClassFromString("RTCAudioSession") as? NSObject.Type)?
+        .perform(NSSelectorFromString("sharedInstance"))?.takeUnretainedValue() as? NSObject)
+    guard audio.isAvailable,
+      session.responds(to: NSSelectorFromString("notifyDidBeginInterruption"))
+    else {
+      throw XCTSkip("WebRTC's RTCAudioSession (with its private selectors) isn't loaded here")
+    }
+    let recorder = InterruptionRecorder()
+    session.perform(NSSelectorFromString("addDelegate:"), with: recorder)
+    defer {
+      session.perform(NSSelectorFromString("removeDelegate:"), with: recorder)
+      session.setValue(false, forKey: "isInterrupted")
+    }
+    let avSession = AVAudioSession.sharedInstance()
+    XCTAssertFalse(audio.isInterrupted)
+
+    audio.didActivate(avSession)  // CallKit activated the call's audio.
+    XCTAssertEqual(recorder.events, ["ended(resume)"])
+    audio.didDeactivate(avSession)  // A hold.
+    XCTAssertTrue(audio.isInterrupted)
+    XCTAssertEqual(session.value(forKey: "isActive") as? Bool, false)
+    XCTAssertEqual(recorder.events, ["ended(resume)", "began"])
+    audio.didDeactivate(avSession)  // Already interrupted: not begun twice.
+    XCTAssertEqual(recorder.events, ["ended(resume)", "began"])
+    audio.didActivate(avSession)  // The unhold.
+    XCTAssertFalse(audio.isInterrupted)
+    XCTAssertEqual(session.value(forKey: "isActive") as? Bool, true)
+    XCTAssertEqual(recorder.events, ["ended(resume)", "began", "ended(resume)"])
+    audio.didDeactivate(avSession)
+    audio.didActivate(avSession)
+    XCTAssertEqual(
+      recorder.events, ["ended(resume)", "began", "ended(resume)", "began", "ended(resume)"],
+      "every hold restarts the audio")
+    // Three activations and three deactivations: the count is balanced.
+  }
+
+  // A real interruption WebRTC already handled isn't begun again.
+  func testDeactivationDuringARealInterruptionDoesNotBeginAnother() throws {
+    let audio = SystemCallAudio.shared
+    let session = try XCTUnwrap(
+      (NSClassFromString("RTCAudioSession") as? NSObject.Type)?
+        .perform(NSSelectorFromString("sharedInstance"))?.takeUnretainedValue() as? NSObject)
+    guard audio.isAvailable,
+      session.responds(to: NSSelectorFromString("notifyDidBeginInterruption"))
+    else {
+      throw XCTSkip("WebRTC's RTCAudioSession (with its private selectors) isn't loaded here")
+    }
+    let recorder = InterruptionRecorder()
+    session.perform(NSSelectorFromString("addDelegate:"), with: recorder)
+    defer {
+      session.perform(NSSelectorFromString("removeDelegate:"), with: recorder)
+      session.setValue(false, forKey: "isInterrupted")
+    }
+    let avSession = AVAudioSession.sharedInstance()
+    audio.didActivate(avSession)
+    session.setValue(true, forKey: "isInterrupted")  // iOS posted one.
+    audio.didDeactivate(avSession)
+    XCTAssertEqual(recorder.events, ["ended(resume)"])
+    audio.didActivate(avSession)
+    XCTAssertFalse(audio.isInterrupted)
+    XCTAssertEqual(recorder.events, ["ended(resume)", "ended(resume)"])
+    session.perform(NSSelectorFromString("audioSessionDidDeactivate:"), with: avSession)
+  }
+
   func testRTCAudioSessionHandOff() throws {
     let audio = SystemCallAudio.shared
     guard audio.isAvailable else {
@@ -636,5 +721,31 @@ final class SystemCallAudioTests: XCTestCase {
     audio.update(hasCalls: false, activated: false)
     session.perform(
       NSSelectorFromString("audioSessionDidDeactivate:"), with: AVAudioSession.sharedInstance())
+  }
+}
+
+/// The call audio channel's `AVAudioSession` interruptions (§4.7), and
+/// CallKit's ownership of them (§4.8).
+final class AudioInterruptionEventTests: XCTestCase {
+  private func info(_ type: AVAudioSession.InterruptionType) -> [AnyHashable: Any] {
+    [AVAudioSessionInterruptionTypeKey: type.rawValue]
+  }
+
+  func testForwardedWithoutACallKitCall() {
+    let began = CloudflareRealtimePlugin.interruptionEvent(info(.began), callKitOwnsSession: false)
+    XCTAssertEqual(began?["event"] as? String, "interruption")
+    XCTAssertEqual(began?["type"] as? String, "began")
+    XCTAssertEqual(began?["reason"] as? String, "unknown")
+    let ended = CloudflareRealtimePlugin.interruptionEvent(info(.ended), callKitOwnsSession: false)
+    XCTAssertEqual(ended?["type"] as? String, "ended")
+    XCTAssertNil(CloudflareRealtimePlugin.interruptionEvent([:], callKitOwnsSession: false))
+  }
+
+  // While a CallKit call exists its hold and its audio deactivation are the
+  // interruptions; a notification iOS posts for them (even one arriving
+  // after the unhold) doesn't reach Dart.
+  func testLeftToCallKitWhileACallExists() {
+    XCTAssertNil(CloudflareRealtimePlugin.interruptionEvent(info(.began), callKitOwnsSession: true))
+    XCTAssertNil(CloudflareRealtimePlugin.interruptionEvent(info(.ended), callKitOwnsSession: true))
   }
 }

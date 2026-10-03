@@ -36,6 +36,8 @@ final class SystemCallAudio {
   static let shared = SystemCallAudio()
 
   private let session: RTCAudioSessionAPI?
+  /// The same object, for the private selectors that are optional here.
+  private let sessionObject: NSObject?
   private let configurationClass: NSObject.Type?
   private var guardInstalled = false
   /// Whether CallKit owns the session's activation now: a CallKit call
@@ -44,6 +46,7 @@ final class SystemCallAudio {
 
   private init() {
     session = Self.findSession()
+    sessionObject = session.map { $0 as AnyObject } as? NSObject
     configurationClass = NSClassFromString("RTCAudioSessionConfiguration") as? NSObject.Type
   }
 
@@ -97,13 +100,48 @@ final class SystemCallAudio {
   }
 
   /// CallKit activated the session (`provider(_:didActivate:)`).
+  /// `audioSessionDidActivate:` also ends WebRTC's interruption, which
+  /// restarts its audio (see `didDeactivate`).
   func didActivate(_ audioSession: AVAudioSession) {
     session?.audioSessionDidActivate(audioSession)
   }
 
-  /// CallKit deactivated the session (`provider(_:didDeactivate:)`).
+  /// CallKit deactivated the session (`provider(_:didDeactivate:)`): a hold,
+  /// or the system taking the audio.
+  ///
+  /// Also begins an interruption in WebRTC. iOS stops the app's audio I/O
+  /// when CallKit deactivates the session (on a hold, ~0.5 s later), but
+  /// posts no `AVAudioSession` interruption for it, so WebRTC's
+  /// `AVAudioEngine` module believes its engine still runs. That module
+  /// restarts the engine only when an interruption ends, and ignores
+  /// `canPlayOrRecord`; so without a begin, the end that
+  /// `audioSessionDidActivate:` sends at the next `didActivate` changes
+  /// nothing and the call stays silent both ways (docs/design.md §4.8).
   func didDeactivate(_ audioSession: AVAudioSession) {
     session?.audioSessionDidDeactivate(audioSession)
+    beginInterruption()
+  }
+
+  /// Whether WebRTC's `RTCAudioSession` is interrupted (`false` without it).
+  var isInterrupted: Bool {
+    guard let object = sessionObject, object.responds(to: NSSelectorFromString("isInterrupted"))
+    else { return false }
+    return (object.value(forKey: "isInterrupted") as? Bool) ?? false
+  }
+
+  /// Begins an interruption in `RTCAudioSession`, as its own handler of
+  /// `AVAudioSession.interruptionNotification` does: `isInterrupted`, then
+  /// its delegates (the audio device module) are told. Nothing when a real
+  /// interruption already began it. The selectors are private (WebRTC's
+  /// `RTCAudioSession+Private.h`), so each is checked.
+  private func beginInterruption() {
+    guard let object = sessionObject,
+      object.responds(to: NSSelectorFromString("setIsInterrupted:")),
+      object.responds(to: NSSelectorFromString("notifyDidBeginInterruption"))
+    else { return }
+    if isInterrupted { return }
+    object.setValue(true, forKey: "isInterrupted")
+    object.perform(NSSelectorFromString("notifyDidBeginInterruption"))
   }
 
   /// Sets the category before CallKit activates the session, in the start
