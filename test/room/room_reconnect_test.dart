@@ -921,6 +921,321 @@ void main() {
     });
   });
 
+  group('a network change during an attempt', () {
+    /// Makes the next `sessions/new` hang until the returned completer
+    /// completes; later ones answer at once.
+    Completer<NewSessionResponse> hangNextNewSession() {
+      final hung = Completer<NewSessionResponse>();
+      var first = true;
+      h.broker.onNewSession = (_) {
+        if (!first) return h.broker.defaultNewSession();
+        first = false;
+        return hung.future;
+      };
+      return hung;
+    }
+
+    test('abandons an attempt stuck on sessions/new and starts the next at '
+        'once; the late session is closed with nothing on it', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final mic = wait(pump, alice.localParticipant.publishMicrophone());
+        final events = _record(alice);
+        final base = h.connectAttempts;
+        final pcs = h.sessions.peerConnections.created;
+        final hung = hangNextNewSession();
+        h.autoConnect = true;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(h.connectAttempts - base, 1);
+        final stalePc = pcs.last;
+
+        // Offline: the request hangs (it would run to the broker timeout).
+        async.elapse(const Duration(seconds: 5));
+        pump();
+        expect(alice.isReconnecting, isTrue);
+        expect(h.connectAttempts - base, 1);
+
+        // The network comes back: the next attempt starts at once.
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 2);
+        expect(alice.connectionState, RoomConnectionState.connected);
+        final reconnected = events.whereType<RoomReconnectedEvent>().single;
+        expect(reconnected.attempts, 2);
+        expect(reconnected.duration, const Duration(seconds: 6));
+        expect(
+          [
+            for (final e in events.whereType<RoomReconnectAttemptEvent>())
+              (e.attempt, e.delay, e.waited, e.restarted),
+          ],
+          [
+            (1, const Duration(seconds: 1), const Duration(seconds: 1), false),
+            (2, Duration.zero, Duration.zero, true),
+          ],
+        );
+        expect(
+          events.whereType<RoomErrorEvent>(),
+          isEmpty,
+          reason: 'an abandoned attempt is no error',
+        );
+        final session = alice.session;
+        expect(mic.publication.session, same(session));
+        expect(h.announced('alice')!.sessionId, session.sessionId);
+
+        // The abandoned attempt's session arrives late: closed at once,
+        // nothing pushed on it, and the room stays on its session.
+        late NewSessionResponse late;
+        h.broker.defaultNewSession().then((r) => late = r);
+        pump();
+        hung.complete(late);
+        pump();
+        expect(stalePc.closed, isTrue);
+        expect(h.broker.forgotten, contains(late.sessionId));
+        expect(
+          h.broker.calls.where((c) => c.sessionId == late.sessionId),
+          isEmpty,
+        );
+        expect(alice.session, same(session));
+        expect(alice.connectionState, RoomConnectionState.connected);
+        expect(h.announced('alice')!.sessionId, session.sessionId);
+        expect(events.whereType<RoomReconnectingEvent>(), hasLength(1));
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('a late failure of the abandoned attempt is ignored', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        wait(pump, alice.localParticipant.publishMicrophone());
+        final events = _record(alice);
+        final pcs = h.sessions.peerConnections.created;
+        final hung = hangNextNewSession();
+        h.autoConnect = true;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        final stalePc = pcs.last;
+        h.network.change();
+        pump();
+        expect(alice.connectionState, RoomConnectionState.connected);
+        final session = alice.session;
+
+        hung.completeError(
+          BrokerTimeoutException(
+            operation: 'sessions/new',
+            timeout: const Duration(seconds: 15),
+          ),
+        );
+        async.elapse(const Duration(seconds: 30));
+        pump();
+        expect(stalePc.closed, isTrue, reason: 'released by the connect');
+        expect(events.whereType<RoomErrorEvent>(), isEmpty);
+        expect(events.whereType<RoomReconnectingEvent>(), hasLength(1));
+        expect(events.whereType<RoomReconnectAttemptEvent>(), hasLength(2));
+        expect(alice.session, same(session));
+        expect(alice.connectionState, RoomConnectionState.connected);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('abandons an attempt whose new session is still connecting', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final mic = wait(pump, alice.localParticipant.publishMicrophone());
+        final events = _record(alice);
+        final base = h.connectAttempts;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        final stuck = alice.session;
+        final stuckPc = h.pcOf(alice);
+        expect(mic.publication.session, same(stuck));
+        stuckPc.emitConnectionState(_connecting);
+        async.elapse(const Duration(seconds: 3));
+        pump();
+        expect(alice.isReconnecting, isTrue);
+
+        h.autoConnect = true;
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 2);
+        expect(stuck.isClosed, isTrue);
+        expect(stuckPc.closed, isTrue);
+        expect(alice.session, isNot(same(stuck)));
+        expect(alice.connectionState, RoomConnectionState.connected);
+        expect(events.whereType<RoomReconnectedEvent>().single.attempts, 2);
+        expect(
+          events.whereType<RoomReconnectAttemptEvent>().last.restarted,
+          isTrue,
+        );
+        expect(events.whereType<RoomErrorEvent>(), isEmpty);
+        expect(mic.publication.session, same(alice.session));
+        expect(mic.publication.state, SfuTrackState.active);
+        expect(h.announced('alice')!.sessionId, alice.session.sessionId);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('each change abandons at most one attempt, and abandoned attempts '
+        'count against the backoff', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final events = _record(alice);
+        final base = h.connectAttempts;
+        final hung = Completer<NewSessionResponse>();
+        h.broker.onNewSession = (_) => hung.future;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(h.connectAttempts - base, 1);
+
+        // Two changes before the next attempt starts: one restart.
+        h.network
+          ..change()
+          ..change();
+        pump();
+        expect(h.connectAttempts - base, 2);
+
+        // Another change: the third and last attempt (maxAttempts: 3).
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 3);
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 3);
+        final failed = events.whereType<RoomReconnectFailedEvent>().single;
+        expect(failed.attempts, 3);
+        expect(alice.connectionState, RoomConnectionState.disconnected);
+
+        hung.completeError(const BrokerNetworkException(operation: 'x'));
+        pump();
+        expect(events.whereType<RoomErrorEvent>(), isEmpty);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('does not abandon an attempt moving its tracks; if that attempt '
+        'fails, the next one skips its backoff wait', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final mic = wait(pump, alice.localParticipant.publishMicrophone());
+        final events = _record(alice);
+        final base = h.connectAttempts;
+        final first = alice.session.sessionId;
+        final original = h.broker.onNewTracks!;
+        final gate = Completer<void>();
+        var failPush = true;
+        h.broker.onNewTracks = (sessionId, request) async {
+          if (sessionId != first && request.sessionDescription != null) {
+            await gate.future;
+            if (failPush) {
+              failPush = false;
+              throw const BrokerNetworkException(operation: 'tracks/new');
+            }
+          }
+          return original(sessionId, request);
+        };
+        h.autoConnect = true;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        expect(h.connectAttempts - base, 1);
+        final moving = alice.session;
+
+        // The push is in flight: not abandoned.
+        h.network.change();
+        pump();
+        expect(h.connectAttempts - base, 1);
+        expect(alice.session, same(moving));
+        expect(moving.isClosed, isFalse);
+
+        // It fails: the next attempt doesn't wait its 2 s.
+        gate.complete();
+        pump();
+        expect(h.connectAttempts - base, 2);
+        expect(alice.connectionState, RoomConnectionState.connected);
+        final attempt = events.whereType<RoomReconnectAttemptEvent>().last;
+        expect(attempt.attempt, 2);
+        expect(attempt.delay, const Duration(seconds: 2));
+        expect(attempt.waited, Duration.zero);
+        expect(attempt.restarted, isFalse);
+        expect(
+          events.whereType<RoomErrorEvent>().single.error,
+          isA<BrokerNetworkException>(),
+        );
+        expect(mic.publication.session, same(alice.session));
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('an attempt that completes normally is unaffected by a change '
+        'while it moves its tracks', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final mic = wait(pump, alice.localParticipant.publishMicrophone());
+        final events = _record(alice);
+        final first = alice.session.sessionId;
+        final original = h.broker.onNewTracks!;
+        final gate = Completer<void>();
+        h.broker.onNewTracks = (sessionId, request) async {
+          if (sessionId != first) await gate.future;
+          return original(sessionId, request);
+        };
+        h.autoConnect = true;
+
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        h.network.change();
+        pump();
+        gate.complete();
+        pump();
+        expect(alice.connectionState, RoomConnectionState.connected);
+        expect(events.whereType<RoomReconnectedEvent>().single.attempts, 1);
+        expect(events.whereType<RoomErrorEvent>(), isEmpty);
+        expect(mic.publication.session, same(alice.session));
+        expect(h.announced('alice')!.sessionId, alice.session.sessionId);
+        alice.leave();
+        pump();
+      });
+    });
+
+    test('leave() while sessions/new hangs stops the episode at once', () {
+      _fake((async, pump) {
+        final alice = join(pump, 'alice');
+        final pcs = h.sessions.peerConnections.created;
+        final hung = hangNextNewSession();
+        h.pcOf(alice).emitConnectionState(_failed);
+        async.elapse(const Duration(seconds: 1));
+        pump();
+        final stalePc = pcs.last;
+        expect(alice.isReconnecting, isTrue);
+
+        wait(pump, alice.leave());
+        expect(alice.isReconnecting, isFalse);
+        late NewSessionResponse late;
+        h.broker.defaultNewSession().then((r) => late = r);
+        pump();
+        hung.complete(late);
+        pump();
+        expect(stalePc.closed, isTrue);
+        expect(h.broker.forgotten, contains(late.sessionId));
+      });
+    });
+  });
+
   group('while reconnecting', () {
     test('leave() during the backoff wait stops it', () {
       _fake((async, pump) {

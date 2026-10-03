@@ -31,6 +31,9 @@ String? describeReconnectEvent(RoomEvent event) => switch (event) {
   RoomConnectionStateChangedEvent(:final state) => 'state: ${state.name}',
   RoomSessionFailedEvent(:final failure) => 'session failed: $failure',
   RoomReconnectingEvent(:final reason) => 'reconnecting (${reason.name})',
+  RoomReconnectAttemptEvent(:final reason, :final attempt, restarted: true) =>
+    'attempt $attempt (${reason.name}): network changed, attempt '
+        '${attempt - 1} abandoned, no backoff',
   RoomReconnectAttemptEvent(
     :final reason,
     :final attempt,
