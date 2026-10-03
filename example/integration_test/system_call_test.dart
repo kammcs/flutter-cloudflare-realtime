@@ -24,7 +24,12 @@
 //    intent, Answer and Decline; the ongoing one Hang up), pressed through
 //    its own PendingIntents as a tap would: Answer answers (through the
 //    app's activity), Hang up and Decline end the call.
-// 4. Android, with the driver: an incoming call reported while the app is
+// 4. Android, with the driver: Telecom ending a ringing call, through the
+//    example's companion InCallService (debug builds; the driver allows
+//    its app op): a reject, as a watch's Decline, is `declined`; a
+//    disconnect, the path Telecom takes to make room for an emergency call
+//    or a phone call, is `failed`.
+// 5. Android, with the driver: an incoming call reported while the app is
 //    in the background (as an FCM handler would) still rings with its
 //    full-screen notification.
 //
@@ -431,6 +436,52 @@ void main() {
     );
     expect(await _callNotifications(), isEmpty);
   }, skip: !android);
+
+  testWidgets(
+    'a ringing call Telecom ends: declined only for a reject (Android)',
+    (tester) async {
+      await configure();
+      // The driver allows the app op that lets Telecom bind the example's
+      // companion InCallService (a watch's or a car's, in effect).
+      _log('COMPANION NOW');
+      await Future<void>.delayed(const Duration(seconds: 3));
+
+      Future<SystemCallEndReason> endFromTelecom(String how) async {
+        final call = await calls.reportIncomingCall(
+          handle: const CallHandle('integration-test'),
+          displayName: 'Telecom $how',
+        );
+        await _eventually(
+          () async =>
+              await _support.invokeMethod<bool>('companionSeesRingingCall') ==
+              true,
+          'Telecom shows the ringing call to the companion',
+        );
+        expect(
+          await _support.invokeMethod<bool>('companionEndRingingCall', {
+            'how': how,
+          }),
+          isTrue,
+        );
+        final reason = await call.whenEnded.timeout(_timeout);
+        _log('a ringing call Telecom ended with $how: ${reason.name}');
+        return reason;
+      }
+
+      // A person declining it on a watch, a car or a headset: Telecom's
+      // reject.
+      expect(await endFromTelecom('reject'), SystemCallEndReason.declined);
+      // Telecom's disconnect, the path it takes when it makes room for an
+      // emergency call or a phone call the user places: nobody declined.
+      expect(await endFromTelecom('disconnect'), SystemCallEndReason.failed);
+      expect(calls.calls, isEmpty);
+      await _eventually(
+        () async => !(await _foregroundServices()).contains(_callService),
+        'the call service stops',
+      );
+    },
+    skip: !android || _driven != '1',
+  );
 
   testWidgets(
     'an incoming call reported from the background (Android)',
