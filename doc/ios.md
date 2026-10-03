@@ -13,6 +13,7 @@
 
 - **iOS 15.0** or later (the plugin's deployment target).
 - CocoaPods or Swift Package Manager. The plugin's `Package.swift` uses the `FlutterFramework` package of recent Flutter releases; with older Flutter versions, use CocoaPods.
+- **Privacy manifest:** the plugin ships a `PrivacyInfo.xcprivacy` (no tracking, no collected data) that declares its use of `UserDefaults` (reason `CA92.1` for the system-call settings, `1C8F.1` for the App Group the screen share uses). The Broadcast Upload Extension's template sources are compiled into your extension, not the plugin: they read `UserDefaults` from the App Group and `ProcessInfo.systemUptime`, so declare those in your extension's own manifest.
 
 ## Info.plist
 

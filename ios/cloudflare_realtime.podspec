@@ -13,7 +13,7 @@ Native call audio routing (speaker, receiver, headsets) for the cloudflare_realt
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'kammcs' => '85201048+kammcs@users.noreply.github.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'cloudflare_realtime/Sources/cloudflare_realtime/**/*'
+  s.source_files = 'cloudflare_realtime/Sources/cloudflare_realtime/**/*.swift'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 
@@ -21,9 +21,7 @@ Native call audio routing (speaker, receiver, headsets) for the cloudflare_realt
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version = '5.0'
 
-  # If your plugin requires a privacy manifest, for example if it uses any
-  # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your
-  # plugin's privacy impact, and then uncomment this line. For more information,
-  # see https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
-  # s.resource_bundles = {'cloudflare_realtime_privacy' => ['cloudflare_realtime/Sources/cloudflare_realtime/PrivacyInfo.xcprivacy']}
+  # The privacy manifest (the plugin reads UserDefaults, a required reason
+  # API). Package.swift ships the same file as a resource.
+  s.resource_bundles = {'cloudflare_realtime_privacy' => ['cloudflare_realtime/Sources/cloudflare_realtime/PrivacyInfo.xcprivacy']}
 end
