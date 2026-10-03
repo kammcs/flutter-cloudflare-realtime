@@ -168,6 +168,25 @@ class ReconnectOptions {
       'stablePeriod: $stablePeriod)';
 }
 
+/// When a [Room] keeps the device's screen on (no dimming, no lock): see
+/// [RoomOptions.keepScreenAwake] and `docs/design.md` §4.7.
+enum KeepScreenAwake {
+  /// While the room is joined (not disconnected) **and video is live**:
+  /// the local camera or screen share is published and sending, or a
+  /// remote video is subscribed (a `ParticipantVideoView` shows it, or it
+  /// was subscribed) and not muted by its publisher. A voice call lets the
+  /// screen sleep as usual, so the proximity sensor can turn it off at the
+  /// ear. The default.
+  whileVideo,
+
+  /// While the room is joined (not disconnected), video or not.
+  always,
+
+  /// Never: for apps that keep the screen on themselves (a wakelock
+  /// plugin, their own window flag).
+  never,
+}
+
 /// Options for [CloudflareRealtime.join].
 @immutable
 class RoomOptions {
@@ -193,6 +212,7 @@ class RoomOptions {
     this.connectEarly = true,
     this.foregroundService = true,
     this.proximitySensor = true,
+    this.keepScreenAwake = KeepScreenAwake.whileVideo,
     this.layerPausing = const LayerPausingOptions(),
     this.videoCodec,
   });
@@ -314,6 +334,20 @@ class RoomOptions {
   /// room with `false` keeps it off. No effect on desktops, in browsers, and
   /// on devices without the sensor. See [Room.proximitySensorActive].
   final bool proximitySensor;
+
+  /// When the room keeps the screen on, so it doesn't dim or lock during a
+  /// call (`docs/design.md` §4.7). Default [KeepScreenAwake.whileVideo]:
+  /// while the room is joined and video is live.
+  ///
+  /// App-wide, like the platforms' switches: the screen is kept on while
+  /// any joined room wants it, and never while the proximity sensor is on
+  /// ([proximitySensor]; it owns the screen then). Android sets
+  /// `FLAG_KEEP_SCREEN_ON` on the activity's window, iOS
+  /// `isIdleTimerDisabled`, macOS holds an `IOPMAssertion`, Windows
+  /// `SetThreadExecutionState`, browsers a Screen Wake Lock; no permission
+  /// is needed. Not on Linux. [KeepScreenAwake.never] leaves the screen to
+  /// the app. See [Room.keepingScreenAwake].
+  final KeepScreenAwake keepScreenAwake;
 
   /// Pausing the simulcast layers of this room's video that no one pulls,
   /// and reporting which layers this room pulls of others' video

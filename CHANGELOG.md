@@ -11,6 +11,7 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 - **Automatic reconnection:** the room replaces a failed or expired SFU session, republishes under the same names and pulls again, with backoff.
 - **Screen share** on desktops (a source picker), the web (the browser's picker), Android (MediaProjection under the package's foreground service) and iOS (a Broadcast Upload Extension from the package's templates).
 - **Calls on phones:** one audio-route API, a foreground service on Android, interruptions, the proximity sensor, and system calls through Android Telecom and CallKit/PushKit.
+- **The screen stays on during video calls** on Android, iOS, macOS, Windows and the web (`RoomOptions.keepScreenAwake`).
 - **DataChannels**, reliable and unreliable, that follow participants across sessions.
 - **The broker client** (`HttpBrokerClient`) for the broker contract; reference brokers (a Cloudflare Worker and a Supabase Edge Function) live in the repository, not in the package.
 - **Release preparation:**
@@ -20,6 +21,10 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 
 ### Development history
 
+- **Fixed: the screen dimmed during a video call** (found in the Windows ↔ Pixel checkpoint, on a Pixel 10 with Android 16; `docs/design.md` §4.7, Keeping the screen on). The package now keeps the screen on, for every app, while a room is joined (connected, connecting or reconnecting) and video is live: the local camera or screen share is sent, or a remote video is subscribed and not muted by its publisher. A voice call lets the screen sleep as before, so the proximity sensor still turns it off at the ear, and while the sensor is on it always wins. It is released when the video stops, when the room gives up reconnecting, and on `leave()`.
+  - `RoomOptions.keepScreenAwake`: `KeepScreenAwake.whileVideo` (the default), `always` or `never` (for apps with their own wakelock). `Room.keepingScreenAwake` / `keepingScreenAwakeChanges` (app-wide, as the platform confirmed) and `Room.canKeepScreenAwake`.
+  - Android: `FLAG_KEEP_SCREEN_ON` on the activity's window (the plugin; no permission, no wake lock). iOS: `UIApplication.isIdleTimerDisabled`, the previous value restored. macOS: an `IOPMAssertion` (`PreventUserIdleDisplaySleep`) and Windows: `SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)`, both through `dart:ffi` with no new dependency. Web: the Screen Wake Lock API, requested again when the tab becomes visible. Linux: not supported.
+  - Tests: the policy and the room on fakes (`test/screen_awake/`), and `example/integration_test/screen_awake_test.dart` with `screen_awake_test_driver.sh` for Android.
 - **Fixed: on Windows the microphone wasn't the system's default** (found in the Windows ↔ Pixel checkpoint, on a desktop with six inputs). `flutter_webrtc` lists Windows audio devices in Core Audio's enumeration order (by endpoint ID, nothing to do with the user's choice), has no "default" entry, and opens the first one; and the device priority pushed the user's default down because its label said "Virtual" (SteelSeries Sonar's microphone). Now (`docs/design.md` §4.5):
   - `MediaDevice.isDefault`: on Windows the backend reads the default communications microphone and speaker from Core Audio (`dart:ffi`, no new dependency) and marks them; in browsers, Chromium's `default` and `communications` entries are marked.
   - Capture tries the system default right after the preferred device, ahead of the platform's order and even when it is virtual. The "iPhone Microphone" stays last, even as a browser's default.

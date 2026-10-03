@@ -1,6 +1,7 @@
 package dev.kammcs.cloudflare_realtime
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
@@ -12,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
+import android.view.WindowManager
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -21,8 +23,8 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
 
 /**
- * Call audio routing on Android (docs/design.md §4.6), interruptions and
- * the proximity sensor (§4.7), the call's foreground service
+ * Call audio routing on Android (docs/design.md §4.6), interruptions, the
+ * proximity sensor and keeping the screen on (§4.7), the call's foreground service
  * ([CallBackground], §4.7), system calls through Core-Telecom
  * ([SystemCallRegistry], §4.8), and the screen share's foreground service
  * ([ScreenCapture], §10).
@@ -61,6 +63,10 @@ class CloudflareRealtimePlugin :
     private var modeListener: Any? = null
     private lateinit var power: PowerManager
     private var proximityLock: PowerManager.WakeLock? = null
+    // FLAG_KEEP_SCREEN_ON wanted on the activity's window (Dart decides),
+    // and whether this plugin set it (an app's own wakelock may have).
+    private var keepScreenOn = false
+    private var setScreenFlag = false
     private lateinit var backgroundMethods: MethodChannel
     private lateinit var backgroundEvents: EventChannel
     private lateinit var background: CallBackground
@@ -107,6 +113,7 @@ class CloudflareRealtimePlugin :
         events.setStreamHandler(null)
         if (active) deactivate()
         setProximity(false)
+        setKeepScreenOn(false)
         backgroundMethods.setMethodCallHandler(null)
         backgroundEvents.setStreamHandler(null)
         background.dispose()
@@ -124,6 +131,8 @@ class CloudflareRealtimePlugin :
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
+        // A recreated activity (a rotation) has a new window.
+        applyKeepScreenOn(binding.activity)
         binding.addRequestPermissionsResultListener(screen)
         screen.activity = binding.activity
         binding.addOnNewIntentListener(newIntentListener)
@@ -136,6 +145,11 @@ class CloudflareRealtimePlugin :
         onAttachedToActivity(binding)
 
     override fun onDetachedFromActivity() {
+        // Off this window; [onAttachedToActivity] sets it on the next one.
+        if (setScreenFlag) {
+            activityBinding?.activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        setScreenFlag = false
         activityBinding?.removeRequestPermissionsResultListener(screen)
         activityBinding?.removeOnNewIntentListener(newIntentListener)
         activityBinding = null
@@ -152,6 +166,7 @@ class CloudflareRealtimePlugin :
                 "select" -> result.success(select(call.argument<String>("id") ?: ""))
                 "resume" -> result.success(resume())
                 "proximity" -> result.success(setProximity(call.argument<Boolean>("enabled") == true))
+                "keepScreenOn" -> result.success(setKeepScreenOn(call.argument<Boolean>("enabled") == true))
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
@@ -299,6 +314,38 @@ class CloudflareRealtimePlugin :
         // Held for the call; released when the route or the call changes.
         if (!lock.isHeld) lock.acquire()
         return lock.isHeld
+    }
+
+    // --- Keeping the screen on ------------------------------------------------
+
+    /**
+     * Keeps the screen on (no dimming, no lock) while [enabled], with
+     * `FLAG_KEEP_SCREEN_ON` on the activity's window: no permission, and
+     * it ends with the window. Dart decides when (a call with live video,
+     * docs/design.md §4.7); the proximity sensor's wake lock still turns
+     * the screen off near the ear. Returns whether the flag is set now:
+     * `false` without an activity (it is set when one attaches).
+     */
+    private fun setKeepScreenOn(enabled: Boolean): Boolean {
+        keepScreenOn = enabled
+        val activity = activityBinding?.activity ?: return false
+        return applyKeepScreenOn(activity)
+    }
+
+    private fun applyKeepScreenOn(activity: Activity): Boolean {
+        val window = activity.window ?: return false
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val isSet = window.attributes.flags and flag != 0
+        if (keepScreenOn && !isSet) {
+            window.addFlags(flag)
+            setScreenFlag = true
+        } else if (!keepScreenOn && setScreenFlag) {
+            // Only a flag this plugin set: an app's own wakelock (the same
+            // flag) stays.
+            window.clearFlags(flag)
+            setScreenFlag = false
+        }
+        return keepScreenOn
     }
 
     // --- Routes ----------------------------------------------------------

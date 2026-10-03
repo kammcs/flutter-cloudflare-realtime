@@ -3,7 +3,8 @@ import Flutter
 import UIKit
 
 /// The package's iOS plugin: call audio routing (docs/design.md §4.6),
-/// interruptions and the proximity sensor (§4.7), here; the camera paused
+/// interruptions, the proximity sensor and keeping the screen on (§4.7),
+/// here; the camera paused
 /// by the system (`CallBackground`, §4.7); system calls with CallKit and
 /// PushKit (`SystemCalls`, §4.8); and the screen share's Broadcast Upload
 /// Extension support (`ScreenBroadcast`, §10).
@@ -71,6 +72,8 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       name: "dev.kammcs.cloudflare_realtime/call_audio_events",
       binaryMessenger: registrar.messenger())
     events.setStreamHandler(instance)
+    // So the engine calls detachFromEngine(for:) (the screen's hold).
+    registrar.publish(instance)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -92,9 +95,44 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       // No-op on devices without the sensor (iPads): it reads back false.
       UIDevice.current.isProximityMonitoringEnabled = enabled
       result(UIDevice.current.isProximityMonitoringEnabled)
+    case "keepScreenOn":
+      let enabled = (call.arguments as? [String: Any])?["enabled"] as? Bool ?? false
+      setKeepScreenOn(enabled)
+      result(enabled)
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  // MARK: Keeping the screen on
+
+  // Engines holding the idle timer off, process-wide (each engine's Dart
+  // side already counts its own rooms), and the value to restore.
+  private static var screenHolders = 0
+  private static var savedIdleTimerDisabled = false
+  private var holdsScreen = false
+
+  /// Keeps the screen on (no dimming, no auto-lock) while [enabled], with
+  /// `UIApplication.isIdleTimerDisabled`; the value from before the first
+  /// holder is restored when the last one lets go, so an app's own setting
+  /// survives. Dart decides when (a call with live video, §4.7); the
+  /// proximity sensor still turns the screen off near the ear.
+  private func setKeepScreenOn(_ enabled: Bool) {
+    guard enabled != holdsScreen else { return }
+    holdsScreen = enabled
+    let app = UIApplication.shared
+    if enabled {
+      if Self.screenHolders == 0 { Self.savedIdleTimerDisabled = app.isIdleTimerDisabled }
+      Self.screenHolders += 1
+      app.isIdleTimerDisabled = true
+    } else {
+      Self.screenHolders -= 1
+      if Self.screenHolders == 0 { app.isIdleTimerDisabled = Self.savedIdleTimerDisabled }
+    }
+  }
+
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    setKeepScreenOn(false)
   }
 
   // MARK: Routes

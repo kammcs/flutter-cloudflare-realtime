@@ -442,6 +442,7 @@ class RemoteTrackPublication {
 
   void _notify() {
     _layers.publish();
+    _room._screenAwake.update();
     if (!_changes.isClosed) _changes.add(this);
   }
 
