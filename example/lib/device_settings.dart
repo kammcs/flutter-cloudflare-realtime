@@ -255,8 +255,9 @@ class DeviceSettingsSheet extends StatelessWidget {
 }
 
 /// The speakers [devices] lists; choosing one calls
-/// [Room.setAudioOutputDevice] (app-wide on native platforms).
-class AudioOutputDropdown extends StatelessWidget {
+/// [Room.setAudioOutputDevice] (app-wide on native platforms). A refused
+/// choice shows why and snaps back to the speaker in use.
+class AudioOutputDropdown extends StatefulWidget {
   const AudioOutputDropdown({
     super.key,
     required this.room,
@@ -266,37 +267,39 @@ class AudioOutputDropdown extends StatelessWidget {
 
   final Room room;
   final MediaDeviceList devices;
+
+  /// The speaker the room accepted last; `null` for the system default.
   final ValueNotifier<String?> output;
 
-  Future<void> _choose(BuildContext context, String? deviceId) async {
+  @override
+  State<AudioOutputDropdown> createState() => _AudioOutputDropdownState();
+}
+
+class _AudioOutputDropdownState extends State<AudioOutputDropdown> {
+  /// Counts refusals: a new count rebuilds the field on the speaker in use.
+  int _refusals = 0;
+
+  Future<void> _choose(String? deviceId) async {
     if (deviceId == null) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await room.setAudioOutputDevice(deviceId);
-      output.value = deviceId;
+      await widget.room.setAudioOutputDevice(deviceId);
+      widget.output.value = deviceId;
     } on AudioOutputException catch (e) {
-      // The room kept the previous speaker.
+      // The room kept the previous speaker: show that one again.
       debugPrint('Speaker refused: $e');
-      messenger.showSnackBar(SnackBar(content: Text(_refusal(e.reason))));
+      if (mounted) setState(() => _refusals++);
+      messenger.showSnackBar(SnackBar(content: Text(refusalMessage(e.reason))));
     }
   }
-
-  static String _refusal(AudioOutputFailure reason) => switch (reason) {
-    AudioOutputFailure.needsUserGesture =>
-      'The browser changes the speaker only right after a click or tap. '
-          'Choose it again.',
-    AudioOutputFailure.notFound =>
-      'That speaker is no longer available. Choose another one.',
-    AudioOutputFailure.other => 'Could not change the speaker.',
-  };
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
-      stream: devices.audioOutputsChanges,
-      initialData: devices.audioOutputs,
+      stream: widget.devices.audioOutputsChanges,
+      initialData: widget.devices.audioOutputs,
       builder: (context, snapshot) => ValueListenableBuilder<String?>(
-        valueListenable: output,
+        valueListenable: widget.output,
         builder: (context, chosen, _) {
           final outputs = [
             for (final device in snapshot.data ?? const <MediaDevice>[])
@@ -308,7 +311,7 @@ class AudioOutputDropdown extends StatelessWidget {
               outputs.where((d) => d.deviceId == chosen).firstOrNull ??
               outputs.where((d) => d.isDefault).firstOrNull;
           return DropdownButtonFormField<String>(
-            key: ValueKey(selected?.deviceId),
+            key: ValueKey((selected?.deviceId, _refusals)),
             initialValue: selected?.deviceId,
             isExpanded: true,
             decoration: const InputDecoration(
@@ -325,10 +328,22 @@ class AudioOutputDropdown extends StatelessWidget {
                   ),
                 ),
             ],
-            onChanged: outputs.isEmpty ? null : (id) => _choose(context, id),
+            onChanged: outputs.isEmpty ? null : _choose,
           );
         },
       ),
     );
   }
 }
+
+/// What to tell the user when the platform refused a speaker ([reason]).
+String refusalMessage(AudioOutputFailure reason) => switch (reason) {
+  AudioOutputFailure.needsUserGesture =>
+    'The browser changes the speaker only right after a click or tap. '
+        'Choose it again.',
+  AudioOutputFailure.notFound =>
+    'That speaker is no longer available. Choose another one.',
+  AudioOutputFailure.permissionDenied =>
+    'Allow microphone access in the browser to choose a speaker.',
+  AudioOutputFailure.other => 'Could not change the speaker.',
+};

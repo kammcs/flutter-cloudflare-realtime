@@ -49,6 +49,8 @@ class NativeRemoteAudioSink implements RemoteAudioSink {
   /// [AudioOutputFailure.notFound] when it isn't in the device list (macOS
   /// and Windows refuse an unknown ID), [AudioOutputFailure.other] for
   /// anything else, such as iOS failing to override the route.
+  /// `flutter_webrtc` checks no permission for outputs on native platforms,
+  /// so [AudioOutputFailure.permissionDenied] never comes from here.
   @override
   Future<void> setOutputDevice(String deviceId) async {
     try {

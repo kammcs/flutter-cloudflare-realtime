@@ -18,10 +18,15 @@ enum AudioOutputFailure {
   /// outputs again and pick one of those.
   notFound,
 
+  /// The page may not use the device: a browser's `SecurityError`. Chrome
+  /// refuses this way while the page has no microphone permission ("No
+  /// permission to use requested device"): ask the user to allow the
+  /// microphone, then choose the speaker again. Native platforms don't
+  /// report this (their refusals are [notFound] or [other]).
+  permissionDenied,
+
   /// Any other refusal; [AudioOutputException.cause] has the platform's
-  /// error. Chrome, for one, refuses with a `SecurityError` while the page
-  /// has no microphone permission ("No permission to use requested
-  /// device").
+  /// error.
   other,
 }
 
@@ -60,6 +65,7 @@ final class AudioOutputException implements Exception {
 AudioOutputFailure audioOutputFailureForName(String name) => switch (name) {
   'NotAllowedError' => AudioOutputFailure.needsUserGesture,
   'NotFoundError' => AudioOutputFailure.notFound,
+  'SecurityError' => AudioOutputFailure.permissionDenied,
   _ => AudioOutputFailure.other,
 };
 
@@ -72,5 +78,8 @@ AudioOutputFailure audioOutputFailureFromText(Object error) {
     return AudioOutputFailure.needsUserGesture;
   }
   if (text.contains('NotFoundError')) return AudioOutputFailure.notFound;
+  if (text.contains('SecurityError')) {
+    return AudioOutputFailure.permissionDenied;
+  }
   return AudioOutputFailure.other;
 }

@@ -153,7 +153,7 @@ void main() {
     for (final (name, reason) in [
       ('NotAllowedError', AudioOutputFailure.needsUserGesture),
       ('NotFoundError', AudioOutputFailure.notFound),
-      ('SecurityError', AudioOutputFailure.other),
+      ('SecurityError', AudioOutputFailure.permissionDenied),
       ('AbortError', AudioOutputFailure.other),
     ]) {
       test('$name: ${reason.name}', () async {
