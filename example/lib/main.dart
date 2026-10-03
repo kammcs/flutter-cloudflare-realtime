@@ -3,6 +3,7 @@ import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/material.dart';
 
 import 'audio_routes_sheet.dart';
+import 'call_diagnostics.dart';
 import 'call_page.dart';
 import 'dev_config.dart';
 import 'local_media_page.dart';
@@ -168,9 +169,12 @@ class _JoinPageState extends State<JoinPage> {
         await _joinPresenceOnly(roomId);
         return;
       }
+      // One source for the room and the dev-server signaling, so both react
+      // to the same change (and each change is logged once).
+      final networkChanges = createNetworkChangeSource();
       final setup = _choice == SignalingChoice.inMemory
           ? _inMemorySetup(roomId)
-          : _devServerSetup();
+          : _devServerSetup(networkChanges);
       if (call == null && _asSystemCall) {
         if (!await prepareSystemCalls()) {
           _showSnack('System calls are not supported here: a plain call.');
@@ -190,7 +194,7 @@ class _JoinPageState extends State<JoinPage> {
               broker: setup.broker,
               mediaBackend: widget.mediaBackend,
               // Faster recovery when the network changes (docs/design.md §8).
-              networkChanges: createNetworkChangeSource(),
+              networkChanges: networkChanges,
             ).join(
               roomId,
               signaling: setup.signaling,
@@ -333,13 +337,16 @@ class _JoinPageState extends State<JoinPage> {
     );
   }
 
-  CallSetup _devServerSetup() {
+  CallSetup _devServerSetup(NetworkChangeSource? networkChanges) {
     final dev = DevServerConfig.parse(
       serverUrl: _serverUrlController.text,
       token: _devTokenController.text,
       userName: _userNameController.text,
     );
     final signaling = dev.createSignaling(
+      networkChanges: networkChanges?.changes,
+      // A timeline next to the room's [reconnect] lines.
+      log: (message) => logDiagnostic('signaling', message),
       onError: (error) {
         if (!mounted) return;
         ScaffoldMessenger.of(context)

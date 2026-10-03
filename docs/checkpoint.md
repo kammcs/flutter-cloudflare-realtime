@@ -251,7 +251,7 @@ What to expect (the design is in [design.md §8](design.md#8-reconnection)):
 |---|---|---|
 | 0–7 s | *Connection lost (…). Reconnecting…* and the banner; the reason is `networkChanged` or `disconnectedTooLong`. The example polls network interfaces every 2 s, and a network change while disconnected re-sessions at once. Retries fail quietly while offline, spaced by backoff (up to 10 s apart). | Its video freezes. |
 | about 4–6 s | The chip may show `signaling: reconnecting` (up to 10 s of silence). | The dev server drops its socket (2 s heartbeat): *\<name\> left.* and its tiles disappear. |
-| 15 s: network restored | The network change cuts the backoff wait short; the room creates a new session and republishes the same tracks without restarting capture. *Reconnected in N s* (N ≈ the outage plus a few seconds). Presence rejoins with backoff (within about 10 s). | *\<name\> joined.*, and its video and audio return. |
+| 15 s: network restored | The network change cuts the backoff wait short; the room creates a new session and republishes the same tracks without restarting capture. *Reconnected in N s* (N ≈ the outage plus a few seconds). The same network change cuts the signaling's backoff short, so presence rejoins within a few seconds too; a connect that hangs (one started while offline) is abandoned after 10 s. The console's `[signaling]` lines give the timeline next to `[reconnect]`. | *\<name\> joined.*, and its video and audio return. |
 
 **Pass:** within **30 s of restoring the network**, without touching the app, the dropped device sees and hears everyone, and everyone sees and hears it, on each of Windows, macOS and Android.
 

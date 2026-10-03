@@ -27,14 +27,19 @@ void main() {
     errors = [];
   });
 
-  WsSignaling make() => WsSignaling(
+  WsSignaling make({
+    Stream<void>? networkChanges,
+    void Function(String message)? log,
+  }) => WsSignaling(
     url: Uri.parse('ws://dev.test/signaling?token=t'),
     connect: (url) {
       final channel = FakeWebSocketChannel(url);
       channels.add(channel);
       return channel;
     },
+    networkChanges: networkChanges,
     onError: errors.add,
+    log: log,
   );
 
   /// Joins [room] as [self] through a new fake socket, acknowledging it.
@@ -506,6 +511,201 @@ void main() {
         async.elapse(const Duration(seconds: 2));
         expect(calls, greaterThan(1));
         expect(error, isA<TimeoutException>());
+      });
+    });
+  });
+
+  group('network drops', () {
+    test('abandons a connect that never opens, and retries', () {
+      fakeAsync((async) {
+        final s = make();
+        joinOk(async, s).drop();
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 500));
+        expect(channels, hasLength(2));
+
+        // The connect hangs, as one started on a dead network does.
+        async.elapse(const Duration(milliseconds: 9999));
+        expect(channels[1].sink.closed, isFalse);
+        expect(channels, hasLength(2));
+        async.elapse(const Duration(milliseconds: 1));
+        expect(channels[1].sink.closed, isTrue);
+        expect(s.status, WsSignalingStatus.reconnecting);
+
+        // The next attempt follows the backoff (1 s) and gets through.
+        async.elapse(const Duration(seconds: 1));
+        expect(channels, hasLength(3));
+        final fresh = channels.last..open();
+        async.flushMicrotasks();
+        expect(s.status, WsSignalingStatus.connected);
+        expect(fresh.sent.single['type'], 'join');
+      });
+    });
+
+    test('abandons a hung connect during join, within the join timeout', () {
+      fakeAsync((async) {
+        final s = make();
+        var done = false;
+        s.join('r', alice).then((_) => done = true);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 10, milliseconds: 500));
+        expect(channels, hasLength(2));
+        final channel = channels.last..open();
+        async.flushMicrotasks();
+        channel.receive({'type': 'ack', 'id': channel.sent.single['id']});
+        async.flushMicrotasks();
+        expect(done, isTrue);
+      });
+    });
+
+    test('a network change during the backoff reconnects at once', () {
+      fakeAsync((async) {
+        final network = StreamController<void>.broadcast(sync: true);
+        final s = make(networkChanges: network.stream);
+        joinOk(async, s).drop();
+        async.flushMicrotasks();
+        // Attempts 1 and 2 fail; attempt 3 waits 2 s.
+        async.elapse(const Duration(milliseconds: 500));
+        channels.last.failToOpen();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 1));
+        channels.last.failToOpen();
+        async.flushMicrotasks();
+        expect(channels, hasLength(3));
+
+        async.elapse(const Duration(milliseconds: 300));
+        network.add(null);
+        async.flushMicrotasks();
+        expect(channels, hasLength(4));
+        channels.last.open();
+        async.flushMicrotasks();
+        expect(s.status, WsSignalingStatus.connected);
+
+        // The cancelled wait doesn't open another socket later.
+        async.elapse(const Duration(seconds: 5));
+        expect(channels, hasLength(4));
+      });
+    });
+
+    test('a network change restarts a pending connect', () {
+      fakeAsync((async) {
+        final network = StreamController<void>.broadcast(sync: true);
+        final s = make(networkChanges: network.stream);
+        joinOk(async, s).drop();
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 500));
+        expect(channels, hasLength(2));
+
+        async.elapse(const Duration(seconds: 3));
+        network.add(null);
+        async.flushMicrotasks();
+        expect(channels[1].sink.closed, isTrue);
+        expect(channels, hasLength(3));
+        final fresh = channels.last..open();
+        async.flushMicrotasks();
+        expect(s.status, WsSignalingStatus.connected);
+        expect(fresh.sent.single['type'], 'join');
+        // The abandoned socket's late failure changes nothing.
+        channels[1].failToOpen();
+        async.flushMicrotasks();
+        expect(s.status, WsSignalingStatus.connected);
+        expect(channels, hasLength(3));
+      });
+    });
+
+    test('a network change while connected pings at once', () {
+      fakeAsync((async) {
+        final network = StreamController<void>.broadcast(sync: true);
+        final s = make(networkChanges: network.stream);
+        final channel = joinOk(async, s);
+        final sent = channel.sent.length;
+        network.add(null);
+        async.flushMicrotasks();
+        expect(channel.sent.skip(sent), [
+          {'type': 'ping'},
+        ]);
+        expect(channels, hasLength(1));
+      });
+    });
+
+    test('listens to network changes only while in a room', () {
+      fakeAsync((async) {
+        final network = StreamController<void>.broadcast(sync: true);
+        final s = make(networkChanges: network.stream);
+        expect(network.hasListener, isFalse);
+        joinOk(async, s);
+        expect(network.hasListener, isTrue);
+        s.leave();
+        async.flushMicrotasks();
+        expect(network.hasListener, isFalse);
+        network.add(null);
+        async.flushMicrotasks();
+        expect(channels, hasLength(1));
+      });
+    });
+
+    test('logs a timeline of the drop and the rejoin', () {
+      fakeAsync((async) {
+        final network = StreamController<void>.broadcast(sync: true);
+        final lines = <String>[];
+        final s = make(networkChanges: network.stream, log: lines.add);
+        final first = joinOk(async, s);
+        list(first, json([alice, bob]));
+        async.flushMicrotasks();
+        expect(lines, [
+          'status: connecting',
+          'open in 0.0 s, joining',
+          'status: connected',
+          'joined',
+          'participants: 1 other',
+        ]);
+        lines.clear();
+
+        // The network goes: no pong, so the heartbeat gives up.
+        async.elapse(const Duration(seconds: 10));
+        // The first attempt hangs and is abandoned.
+        async.elapse(const Duration(seconds: 10, milliseconds: 500));
+        // The network is back during the next wait.
+        async.elapse(const Duration(milliseconds: 400));
+        network.add(null);
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 100));
+        final fresh = channels.last..open();
+        async.flushMicrotasks();
+        fresh.receive({'type': 'ack', 'id': fresh.sent.single['id']});
+        list(fresh, json([alice]));
+        async.flushMicrotasks();
+
+        expect(lines, [
+          'connection lost: no message for 10.0 s',
+          'status: reconnecting',
+          'attempt 1 in 0.5 s',
+          'attempt 1 failed: not open after 10.0 s, abandoned',
+          'attempt 2 in 1.0 s',
+          'network changed: attempt 2 now, backoff cut short after 0.4 s',
+          'open in 0.1 s, joining',
+          'status: connected',
+          'rejoined 11.0 s after the connection was lost, in 2 attempts',
+          'participants: 0 others',
+        ]);
+      });
+    });
+
+    test('logs why it stopped', () {
+      fakeAsync((async) {
+        final lines = <String>[];
+        final s = make(log: lines.add);
+        final channel = joinOk(async, s);
+        lines.clear();
+        channel
+          ..receive({'type': 'error', 'code': 'replaced', 'message': 'x'})
+          ..drop(WsSignaling.closeReplaced);
+        async.flushMicrotasks();
+        expect(lines, [
+          'connection lost: socket closed (code 4409)',
+          'stopped: WsSignalingException(replaced): x',
+          'status: closed',
+        ]);
       });
     });
   });
