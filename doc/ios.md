@@ -76,7 +76,7 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
 
 ## System calls: CallKit and VoIP pushes
 
-`SystemCalls.instance.configure()` sets up CallKit, and the app's calls then show in the system's call UI: the lock screen, Recents, a headset, a car or a watch (see [design.md §4.8](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#48-system-calls-callkit-and-android-telecom-native)). The iOS backend is unit-tested; its checks on devices are still under way ([roadmap, M11](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/roadmap.md)).
+`SystemCalls.instance.configure()` sets up CallKit, and the app's calls then show in the system's call UI: the lock screen, Recents, a headset, a car or a watch (see [design.md §4.8](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#48-system-calls-callkit-and-android-telecom-native)). The iOS backend is verified on an iPhone 16 Pro Max with iOS 27: the native tests on the device, `system_call_test.dart`, and by hand the ring on the lock screen, answering and declining from it, the system's mute, a real phone call holding the call and iOS resuming it, Recents, and outgoing calls. Still to check: VoIP pushes with the app killed, and headset buttons ([roadmap, M11](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/roadmap.md)).
 
 - **`Info.plist`:** add `voip` next to `audio` in `UIBackgroundModes` (above).
 - **Call audio:** CallKit activates the audio session when a call starts or is answered. Once `configure` has run, the package switches WebRTC to manual audio, so a call's audio starts only after CallKit activated the session. Don't activate the session yourself during a system call.

@@ -34,7 +34,7 @@ It doesn't include a signaling server, push delivery or a meeting UI: your app b
 | Verified against the real SFU | Pixel 10 (Android 16), emulator (API 34) | iPhone (iOS 27) | MacBook Pro (macOS 27) | Windows 11 | Chrome, Firefox, Safari (JS and Wasm) |
 
 - **Minimums:** Flutter 3.41 (Dart 3.11); Android 7.0 (API 24); iOS 15; macOS 10.15.
-- **Not verified yet:** screen share and speaker choice in Safari (both need a user gesture, which the tests can't give), VoIP pushes (CallKit is verified on an iPhone, by test and by hand), and Bluetooth and wired headsets on every phone. Linux isn't supported.
+- **Not verified yet:** VoIP pushes through APNs (CallKit is verified on an iPhone, by test and by hand), wired headsets and headset buttons on the phones (AirPods are verified on both), and screen share and speaker choice in Safari (both need a user gesture, which the tests can't give). Linux isn't supported.
 - "In Dart only" means the `SystemCalls` API works and emits the same events, without a system call UI.
 
 ## How it fits together
