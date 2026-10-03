@@ -1,12 +1,12 @@
 part of 'room.dart';
 
 // Publisher-side call quality (M12, docs/design.md §6.2 and §6.3): pausing
-// the simulcast layers no one pulls, announcing the size the camera really
-// captures, and the video codec.
+// the simulcast layers no one pulls, announcing the size the encoder really
+// gets, and the video codec.
 
-/// How often a published simulcast video's captured size is checked, to
-/// announce it again when it changes (a camera switch, a phone turned, a
-/// window resized).
+/// How often a published simulcast video's size is checked, to announce it
+/// again when it changes (a camera switch, a phone turned, a window resized,
+/// the CPU adaptation).
 const Duration _captureSizeInterval = Duration(seconds: 3);
 
 /// The codec a video publish with [codec] (or the room's
@@ -182,13 +182,14 @@ class _Paused {
   final List<SendEncoding> base;
 }
 
-/// Announces the size a published simulcast video really captures
-/// (docs/design.md §6.3): the `media-source` report of its track in
-/// `getStats()`, which follows rotation (a phone held upright captures
-/// portrait), camera switches and constraint changes. Subscribers' layer
-/// selection builds its ladder from that size (§6.1).
-class _CaptureSizeWatcher {
-  _CaptureSizeWatcher(this._room, this._publication);
+/// Announces the size a published simulcast video's encoder really gets
+/// (docs/design.md §6.3), so that subscribers' layer selection builds its
+/// ladder (§6.1) from the sizes the layers are sent at: the sending layers
+/// in `getStats()` scaled back up, else the `media-source` report of its
+/// track. It follows rotation (a phone held upright captures portrait),
+/// camera switches, constraint changes and libwebrtc's CPU adaptation.
+class _SentSizeWatcher {
+  _SentSizeWatcher(this._room, this._publication);
 
   final Room _room;
   final LocalMediaPublication _publication;
@@ -214,7 +215,7 @@ class _CaptureSizeWatcher {
     }, onError: (Object _) {});
   }
 
-  /// Reads the captured size now, and announces it if it changed.
+  /// Reads the size now, and announces it if it changed.
   Future<void> check() async {
     if (_checking || _stopped || _room._left) return;
     final track = _publication.publication.track;
@@ -222,7 +223,7 @@ class _CaptureSizeWatcher {
     if (track == null || info == null) return; // Muted: keep the last size.
     _checking = true;
     try {
-      final size = await _capturedSize(track);
+      final size = await _sentSize(track);
       if (size == null || _stopped || _room._left) return;
       final (width, height) = size;
       final current = _publication._simulcast;
@@ -243,7 +244,7 @@ class _CaptureSizeWatcher {
     }
   }
 
-  Future<(int, int)?> _capturedSize(MediaStreamTrack track) async {
+  Future<(int, int)?> _sentSize(MediaStreamTrack track) async {
     try {
       final reports = await _room._session.getStats();
       for (final report in reports) {
@@ -253,9 +254,12 @@ class _CaptureSizeWatcher {
             '${values['trackIdentifier']}' != track.id) {
           continue;
         }
+        // The layers first: the media-source has the camera's size, from
+        // before the CPU adaptation (a Pixel 10 encoding VP8 in software
+        // captured 720x1280 and sent 540x960), and none on Windows.
         final size =
-            _size(values['width'], values['height']) ??
-            _fromLayers(reports, report.id);
+            _fromLayers(reports, report.id) ??
+            _size(values['width'], values['height']);
         if (size != null) return size;
       }
     } catch (_) {
@@ -270,12 +274,15 @@ class _CaptureSizeWatcher {
     return null;
   }
 
-  /// The captured size from the encoded layers of the media source
-  /// [sourceId], for a `media-source` report without a size (Windows:
-  /// flutter_webrtc's capturer reports none, and its track settings are the
-  /// requested size). The sending layer with the smallest scale, scaled
-  /// back up; `null` while none sends a size, or when the CPU adaptation
-  /// shrinks the encoder's input.
+  /// The encoder's input size from the encoded layers of the media source
+  /// [sourceId]: the sending layer with the smallest scale, scaled back up.
+  /// It includes libwebrtc's CPU adaptation (`qualityLimitationReason:
+  /// cpu`), which shrinks every layer. `null` before a layer reports a
+  /// size, and while the layers are limited by `bandwidth`: libwebrtc's
+  /// quality scaler, which runs only while a single layer is active, may
+  /// then shrink the input, and announcing that would feed back into layer
+  /// pausing (a smaller ladder turns a second layer on, which stops the
+  /// scaler).
   (int, int)? _fromLayers(List<StatsReport> reports, String sourceId) {
     final info = _publication._simulcast;
     final scales = info?.scaleDownBy;
@@ -287,7 +294,7 @@ class _CaptureSizeWatcher {
       if (report.type != 'outbound-rtp' ||
           values['mediaSourceId'] != sourceId ||
           values['active'] == false ||
-          values['qualityLimitationReason'] == 'cpu') {
+          values['qualityLimitationReason'] == 'bandwidth') {
         continue;
       }
       final index = info.rids.indexOf('${values['rid']}');
@@ -325,12 +332,12 @@ class _CaptureSizeWatcher {
 
 /// The size [track] says it captures, from its settings, or `null`. Native
 /// platforms report the requested size here (Android: landscape even when
-/// it sends portrait); [_CaptureSizeWatcher] corrects it from the stats.
+/// it sends portrait); [_SentSizeWatcher] corrects it from the stats.
 (int, int)? _settingsSize(MediaStreamTrack? track) {
   if (track == null) return null;
   try {
     final settings = track.getSettings();
-    return _CaptureSizeWatcher._size(settings['width'], settings['height']);
+    return _SentSizeWatcher._size(settings['width'], settings['height']);
   } catch (_) {
     return null;
   }

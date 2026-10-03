@@ -117,7 +117,9 @@ void main() {
       }
       await published.publication.whenSending().timeout(_timeout);
       // Tell the other side the frame height of each layer we send, so it
-      // knows which height the low layer has.
+      // knows which height the low layer has. A snapshot: libwebrtc's CPU
+      // adaptation may shrink every layer later (a Pixel 10 went from
+      // 1280/640/320 to 960/480/240); the checks below still hold then.
       final heights = published.publication.kind == 'video'
           ? await _sentHeights(
               room.session,
@@ -249,9 +251,11 @@ void _log(String message) => debugPrint('[cross-device] $message');
 /// The rids asked for, for the log.
 String _layers(RemoteTrackPublication p) {
   final s = p.layerState;
+  final info = p.simulcast;
   return 'rid ${s.currentRid}, target ${s.targetRid}, '
       'auto ${s.automaticRid}, preferred ${s.preferredLayer?.name}, '
-      'pull ${p.subscription?.preferredRid}';
+      'pull ${p.subscription?.preferredRid}, '
+      'announced ${info?.width}x${info?.height}';
 }
 
 /// The participant's screen, else its camera, else its microphone.

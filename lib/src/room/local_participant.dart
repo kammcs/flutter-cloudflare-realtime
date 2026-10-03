@@ -162,8 +162,9 @@ class LocalParticipant implements Participant {
   /// light stays off) until [LocalMediaPublication.unmute].
   ///
   /// The announced layer size is the size the camera captures (from the
-  /// track, then from `getStats()`: portrait on a phone held upright), not
-  /// the preset, and it is announced again when it changes
+  /// track, then from `getStats()`: portrait on a phone held upright), as
+  /// the encoder gets it (smaller while libwebrtc's CPU adaptation scales
+  /// it down), not the preset, and it is announced again when it changes
   /// (`docs/design.md` §6.3). [codec] overrides [RoomOptions.videoCodec].
   ///
   /// Throws the capture's [MediaException] if the camera can't start (the
@@ -506,7 +507,7 @@ class LocalParticipant implements Participant {
     );
     _room._pausing.add(local);
     if (local._simulcast != null) {
-      local._captureSize = _CaptureSizeWatcher(_room, local)
+      local._sizeWatcher = _SentSizeWatcher(_room, local)
         ..start(tracks ?? mediaSource.broadcastTrackChanges);
     }
     _changed();
@@ -600,7 +601,8 @@ class LocalMediaPublication {
   SimulcastInfo? _simulcast;
 
   /// The simulcast layers announced for the track, or `null`. Their size is
-  /// the size the source captures, updated when it changes
+  /// the size the encoder gets from the source (the captured size, smaller
+  /// while the CPU adaptation scales it down), updated when it changes
   /// (`docs/design.md` §6.3).
   SimulcastInfo? get simulcast => _simulcast;
 
@@ -623,7 +625,7 @@ class LocalMediaPublication {
   /// its changes. Completes when the track is unpublished.
   Stream<Set<String>> get pausedLayersChanges => _pausedLayers.stream;
 
-  _CaptureSizeWatcher? _captureSize;
+  _SentSizeWatcher? _sizeWatcher;
   bool _unpublished = false;
   LocalMediaPublication? _companion;
   StreamSubscription<bool>? _broadcastingListener;
@@ -697,12 +699,12 @@ class LocalMediaPublication {
     unawaited(_broadcastingListener?.cancel());
     unawaited(_endedListener?.cancel());
     _watchdog?.dispose();
-    _captureSize?.stop();
+    _sizeWatcher?.stop();
     participant._room._pausing.remove(this);
     _broadcastingListener = null;
     _endedListener = null;
     _watchdog = null;
-    _captureSize = null;
+    _sizeWatcher = null;
     unawaited(_pausedLayers.close());
   }
 
