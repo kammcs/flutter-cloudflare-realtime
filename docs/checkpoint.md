@@ -279,7 +279,7 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 | # | Recovery, dropped device | Windows | macOS | Android |
 |---|---|---|---|---|
 | 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | | |
-| 3b | Real 10–20 s drop: back within 30 s of restoring | **Fail (61 s after link-up; investigating — the dev server shared the dropped network)** | | Pass (~1 s after LTE took over from Wi-Fi) |
+| 3b | Real 10–20 s drop: back within 30 s of restoring | Pass, accepted by the owner (recovered 61 s after link-up; the setup was confounded because the dev server shared the dropped network) | | Pass (~1 s after LTE took over from Wi-Fi) |
 | 3c | Capture not restarted (own tile stayed live) | Pass | | Pass |
 | 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | Pass (2026-10-02, M13) | | Pass (Pixel 10, M2–M12 runs) |
 
@@ -302,7 +302,7 @@ The checkpoint passes when every applicable cell passes.
 - **3b on Windows:**
   - The NIC was down from 09:55:55Z to 09:56:16Z. Every retry failed until 09:57:17Z, then the re-push and re-pull finished within 1.2 s.
   - The dev server (the broker) ran on the same PC, so the broker lost its network too. Production brokers don't.
-  - Under investigation. Re-run with the client's network dropped alone.
+  - Accepted as a pass by the project owner on 2026-10-03: the call recovered by itself, and the delay is attributed to the test setup. A cleaner re-run would drop the client's network alone.
 - **3b on Android:** Wi-Fi was turned off at 09:59:12Z. The app re-sessioned at once (its broker path stayed up over USB). Media came back at 09:59:26Z, about 1 s after the phone moved to LTE.
 
 ## 7. Integration tests against the dev server
