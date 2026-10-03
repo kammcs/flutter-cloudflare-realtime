@@ -274,7 +274,9 @@ class AudioOutputDropdown extends StatelessWidget {
     try {
       await room.setAudioOutputDevice(deviceId);
       output.value = deviceId;
-    } on Exception catch (e) {
+      // Not only `Exception`s: a browser refuses with a JS `DOMException`
+      // (Safari, outside a user gesture: `NotAllowedError`).
+    } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('Could not change the speaker: $e')),
       );

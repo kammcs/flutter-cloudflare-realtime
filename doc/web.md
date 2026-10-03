@@ -1,6 +1,6 @@
 # Web setup
 
-On the web the package runs on `flutter_webrtc`'s browser implementation. Verified in Chrome and Firefox, compiled to JavaScript and to WebAssembly; Safari is not verified yet.
+On the web the package runs on `flutter_webrtc`'s browser implementation. Verified in Chrome and Firefox, compiled to JavaScript and to WebAssembly, and in part in Safari (see [Browsers](#browsers)).
 
 ## HTTPS
 
@@ -31,14 +31,34 @@ Joining from a button press usually avoids the block. On native platforms `isAud
 
 ## Devices and permissions
 
-The browser asks for the camera and microphone when a capture starts. Before that, devices have no IDs or labels, so pick a device after the first capture. `Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`).
+The browser asks for the camera and microphone when a capture starts. Before that, devices have no IDs or labels, so pick a device after the first capture.
+
+`Room.setAudioOutputDevice` chooses the speaker where the browser supports `setSinkId` (`Room.canSelectAudioOutput`). **Call it from a user gesture** (a button's or menu item's `onPressed`, with nothing awaited before it): Safari refuses any device but the default outside one. A refused device throws the browser's error unchanged, a JavaScript `DOMException` (untyped under WebAssembly) whose `toString()` contains its name, such as `NotAllowedError`; it isn't an `Exception`, so catch it with a plain `catch (e)`. The output then stays as it was, for the audio playing now and for audio pulled later.
 
 ## Screen share
 
-`LocalParticipant.publishScreen()` takes no source: the browser's own picker opens (`ScreenShareSource.usesBrowserPicker`). A cancelled picker makes `publishScreen()` throw a `MediaCaptureException` (and `ScreenShareSource.start()` return `false`); the browser's "Stop sharing" button ends the share with `ScreenShareEndReason.userStopped`. `ScreenShareOptions(captureAudio: true)` publishes the audio the browser offers (tab audio in Chrome).
+`LocalParticipant.publishScreen()` takes no source: the browser's own picker opens (`ScreenShareSource.usesBrowserPicker`). Safari opens it only from a user gesture, so start a screen share from a button's `onPressed` (which suits every browser). A cancelled picker makes `publishScreen()` throw a `MediaCaptureException` (and `ScreenShareSource.start()` return `false`); the browser's "Stop sharing" button ends the share with `ScreenShareEndReason.userStopped`. `ScreenShareOptions(captureAudio: true)` publishes the audio the browser offers (tab audio in Chrome).
 
 ## Browsers
 
 - **Chrome:** every integration test passes, as JavaScript and as WebAssembly.
 - **Firefox:** every test passes, as JavaScript and as WebAssembly. H.264 needs Firefox's OpenH264 plugin; VP8, the default, doesn't. Firefox reports fewer statistics (for example no `qualityLimitationReason`), so those fields are `null`.
-- **Safari:** not verified yet.
+- **Safari:** Safari 27 (October 3, 2026, WebDriver with mock devices): `datachannel_echo`, `sfu_loopback`, `reconnect`, `camera_switch`, `late_publish`, `stats` and `publish_quality` pass, as JavaScript and as WebAssembly. In `audio_routing`, the `<audio>` element plays and every microphone reaches the other side; switching to a non-default output needs a user gesture, which a test can't give, so that part is expected to be refused there. The other tests are not verified in Safari yet. Safari-specific behaviour:
+  - `Room.setAudioOutputDevice` to any device but the default needs a user gesture ([Devices and permissions](#devices-and-permissions)).
+  - The screen picker (`getDisplayMedia`) needs a user gesture: start a screen share from a button press.
+  - Safari refuses the screen wake lock (`NotAllowedError`): the screen may dim during a video call, and the call itself works. The package logs the refusal, and `Room.isKeepingScreenAwake` is `false` while Safari refuses.
+
+## WebAssembly in Safari and Firefox
+
+Flutter 3.47.3's default loader runs the WebAssembly build only in Chromium browsers (its `wasmAllowList`), and falls back to JavaScript elsewhere. An app built with `--wasm` that wants WebAssembly in Safari or Firefox too sets `wasmAllowList` in its `web/flutter_bootstrap.js`:
+
+```js
+{{flutter_js}}
+{{flutter_build_config}}
+
+_flutter.loader.load({
+  config: {
+    wasmAllowList: { blink: true, webkit: true, gecko: true },
+  },
+});
+```

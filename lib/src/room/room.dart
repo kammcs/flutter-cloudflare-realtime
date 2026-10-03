@@ -380,7 +380,16 @@ class Room {
   /// On the web it applies to this room's audio elements (now and later),
   /// through `setSinkId`. On native platforms it calls `flutter_webrtc`'s
   /// `Helper.selectAudioOutput`, which switches the whole app's output.
+  ///
   /// Throws an [UnsupportedError] where [canSelectAudioOutput] is `false`.
+  /// The platform can also refuse the device; the call then completes with
+  /// the platform's error, unchanged, and the output stays as it was. In a
+  /// browser that error is a JavaScript `DOMException` (under WebAssembly
+  /// an untyped JS value), whose `toString()` contains its name:
+  /// `NotAllowedError` when the browser wants a user gesture (Safari, for any
+  /// device but the default), `NotFoundError` for an unknown [deviceId].
+  /// **In a browser, call it from a user gesture** (a button's `onPressed`),
+  /// with nothing awaited before it.
   Future<void> setAudioOutputDevice(String deviceId) {
     _checkNotLeft();
     return _audio.setOutput(deviceId);
