@@ -37,19 +37,19 @@ enum MutePolicy {
 /// Two independent switches, ported from partytracks' `makeBroadcastTrack`:
 ///
 /// - **Enabled** ([isEnabled]): whether the source captures at all. When
-///   enabled, [track] carries the live captured track; when disabled it is
+///   enabled, [trackChanges] carries the live captured track; when disabled it is
 ///   `null` and the device is released.
 /// - **Broadcasting** ([isBroadcasting]): whether the capture should be sent
-///   to other participants. [broadcastTrack] carries the track while the
+///   to other participants. [broadcastTrackChanges] carries the track while the
 ///   source is enabled *and* broadcasting, and `null` otherwise. Publishing
-///   (roadmap M2) sends [broadcastTrack], so "muted" means it is `null`.
+///   (roadmap M2) sends [broadcastTrackChanges], so "muted" means it is `null`.
 ///
 /// The switches are linked the same way as in partytracks:
 /// [startBroadcasting] enables the source, and [disable] stops broadcasting.
 /// What [stopBroadcasting] does to the capture is the [mutePolicy].
 ///
 /// Repairs happen inside the source: when a device is unplugged or a
-/// setting changes, the source captures again and [track] emits the new
+/// setting changes, the source captures again and [trackChanges] emits the new
 /// track. Listeners never need to re-subscribe.
 ///
 /// Failures are reported on [errors] and turn the source off; the methods
@@ -84,18 +84,18 @@ abstract class LocalMediaSource {
   bool _disposed = false;
 
   /// Whether the source should be capturing. Replays the current value.
-  Stream<bool> get enabled => _enabled.stream;
+  Stream<bool> get enabledChanges => _enabled.stream;
 
   /// Whether the source should be capturing.
   ///
-  /// Changes as soon as [enable] or [disable] is called; [currentTrack]
+  /// Changes as soon as [enable] or [disable] is called; [track]
   /// follows once capture has started or stopped. Turns `false` by itself
   /// when capture fails or a screen share ends.
   bool get isEnabled => _enabled.value;
 
   /// Whether the capture should be sent to others. Replays the current
   /// value.
-  Stream<bool> get broadcasting => _broadcasting.stream;
+  Stream<bool> get broadcastingChanges => _broadcasting.stream;
 
   /// Whether the capture should be sent to others.
   bool get isBroadcasting => _broadcasting.value;
@@ -105,17 +105,17 @@ abstract class LocalMediaSource {
   ///
   /// Emits a new track when the source repairs or changes its capture, for
   /// example after a device is unplugged.
-  Stream<CapturedTrack?> get track => _track.stream;
+  Stream<CapturedTrack?> get trackChanges => _track.stream;
 
   /// The live captured track, or `null`.
-  CapturedTrack? get currentTrack => _track.value;
+  CapturedTrack? get track => _track.value;
 
-  /// The track to send: [currentTrack] while broadcasting, else `null`.
+  /// The track to send: [track] while broadcasting, else `null`.
   /// Replays the current value.
-  Stream<CapturedTrack?> get broadcastTrack => _broadcastTrack.stream;
+  Stream<CapturedTrack?> get broadcastTrackChanges => _broadcastTrack.stream;
 
-  /// The track to send: [currentTrack] while broadcasting, else `null`.
-  CapturedTrack? get currentBroadcastTrack => _broadcastTrack.value;
+  /// The track to send: [track] while broadcasting, else `null`.
+  CapturedTrack? get broadcastTrack => _broadcastTrack.value;
 
   /// Capture failures: permission denied, every device failing, a screen
   /// source that can't be found. The source is disabled when one arrives.
@@ -133,7 +133,7 @@ abstract class LocalMediaSource {
     _enabled.set(true);
     _syncBroadcastTrack();
     await _runner.run();
-    return isEnabled && currentTrack != null;
+    return isEnabled && track != null;
   }
 
   /// Turns the source off, stops broadcasting, and waits until the capture
@@ -223,7 +223,7 @@ abstract class LocalMediaSource {
 
   void _syncBroadcastTrack() {
     if (_broadcastTrack.isClosed) return;
-    _broadcastTrack.set(isEnabled && isBroadcasting ? currentTrack : null);
+    _broadcastTrack.set(isEnabled && isBroadcasting ? track : null);
     didChangeState();
   }
 
@@ -242,7 +242,7 @@ abstract class LocalMediaSource {
   @protected
   Future<void> requestReconcile() => _disposed ? Future.value() : _runner.run();
 
-  /// Publishes [track] as [currentTrack], and updates [broadcastTrack].
+  /// Publishes [track] as [track], and updates [broadcastTrackChanges].
   @protected
   void setTrack(CapturedTrack? track) {
     if (_track.isClosed) return;
@@ -269,7 +269,7 @@ abstract class LocalMediaSource {
   }
 
   /// Called after every change to [isEnabled], [isBroadcasting] or
-  /// [currentTrack]. Subclasses with extra tracks sync them here.
+  /// [track]. Subclasses with extra tracks sync them here.
   @protected
   void didChangeState() {}
 

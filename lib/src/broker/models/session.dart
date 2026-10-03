@@ -111,7 +111,7 @@ class SessionTrackState {
         sessionId: optString(json, 'sessionId'),
         trackName: optString(json, 'trackName'),
         kind: optString(json, 'kind'),
-        simulcast: optObject(json, 'simulcast', SimulcastConfig.fromJson),
+        simulcast: optObject(json, 'simulcast', SimulcastOptions.fromJson),
         status:
             optEnum(json, 'status', ResourceStatus.values) ??
             ResourceStatus.unknown,
@@ -133,7 +133,7 @@ class SessionTrackState {
   final String? kind;
 
   /// Simulcast preferences, if returned.
-  final SimulcastConfig? simulcast;
+  final SimulcastOptions? simulcast;
 
   /// The track's status. Closed tracks can stay listed as `inactive`.
   final ResourceStatus status;

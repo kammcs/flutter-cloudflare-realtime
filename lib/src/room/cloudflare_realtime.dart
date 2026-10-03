@@ -14,14 +14,14 @@ import 'room_options.dart';
 /// Creates the [BrokerClient] for one room. The default is
 /// [HttpBrokerClient].
 typedef BrokerClientFactory =
-    BrokerClient Function(BrokerConfig config, String roomId);
+    BrokerClient Function(BrokerOptions config, String roomId);
 
 /// Connects an [SfuSession] through [broker]. The default is
 /// [SfuSession.connect].
 typedef SfuSessionConnector =
     Future<SfuSession> Function(BrokerClient broker, SfuSessionOptions options);
 
-BrokerClient _defaultBrokerClient(BrokerConfig config, String roomId) =>
+BrokerClient _defaultBrokerClient(BrokerOptions config, String roomId) =>
     HttpBrokerClient(config: config, roomId: roomId);
 
 Future<SfuSession> _defaultConnect(
@@ -33,7 +33,7 @@ Future<SfuSession> _defaultConnect(
 ///
 /// ```dart
 /// final realtime = CloudflareRealtime(
-///   broker: BrokerConfig(
+///   broker: BrokerOptions(
 ///     baseUrl: Uri.parse('https://api.example.com/realtime'),
 ///     headers: () async => {'Authorization': 'Bearer ${await getAppJwt()}'},
 ///   ),
@@ -79,7 +79,7 @@ class CloudflareRealtime {
        _wrapTrack = wrapTrack ?? wrapTrackInMediaStream;
 
   /// Where the broker is and how to authenticate to it.
-  final BrokerConfig broker;
+  final BrokerOptions broker;
 
   /// Where local media is captured from.
   final MediaBackend mediaBackend;

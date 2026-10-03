@@ -126,7 +126,7 @@ class RoomHarness {
   final FakeAppLifecycle lifecycle = FakeAppLifecycle();
 
   late final CloudflareRealtime realtime = CloudflareRealtime(
-    broker: BrokerConfig(
+    broker: BrokerOptions(
       baseUrl: Uri.parse('https://broker.test/realtime'),
       headers: () async => const {},
     ),

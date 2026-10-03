@@ -201,7 +201,7 @@ class _JoinPageState extends State<JoinPage> {
         await setup.disposeSignaling();
         rethrow;
       }
-      if (call != null && call.outgoing && !call.isEnded) {
+      if (call != null && call.isOutgoing && !call.isEnded) {
         // The room is the other side here: it "answered".
         await call.reportConnected();
       }
@@ -302,7 +302,7 @@ class _JoinPageState extends State<JoinPage> {
       signaling: signaling,
       participantId: name,
       displayName: name,
-      broker: BrokerConfig(
+      broker: BrokerOptions(
         baseUrl: Uri.parse(_brokerUrlController.text.trim()),
         headers: () async => {
           if (token.isNotEmpty) 'Authorization': 'Bearer $token',

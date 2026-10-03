@@ -8,7 +8,7 @@
 //    Alice's outbound audio packets, microphone energy and encoded video
 //    frames, and Bob's received audio and decoded frames, must keep
 //    rising. iOS: the audio must keep flowing and the camera must be
-//    reported paused (LocalCameraPausedEvent, background), then resumed.
+//    reported paused (RoomCameraPausedEvent, background), then resumed.
 //    The test logs `BACKGROUND NOW` and waits up to 2 minutes for the app
 //    to go to the background, then `FOREGROUND NOW` and waits for it to
 //    come back: on Android, background_test_driver.sh does both with adb
@@ -19,8 +19,8 @@
 //    microphone alone, gone once nothing is published.
 // 2. Interruptions (Android): the example's MainActivity takes the audio
 //    focus as another client would (a media player, an assistant). A
-//    transient loss interrupts the call (CallInterruptedEvent, otherAudio)
-//    and getting the focus back resumes it (CallResumedEvent); after a
+//    transient loss interrupts the call (RoomAudioInterruptedEvent, otherAudio)
+//    and getting the focus back resumes it (RoomAudioResumedEvent); after a
 //    permanent loss, Room.resumeAudio() takes it back. Bob must hear Alice
 //    again afterwards. A phone call or Siri needs a person (checkpoint.md).
 // 3. The proximity sensor (phones): on for a voice call on the earpiece,
@@ -157,7 +157,7 @@ void main() {
       if (ios) {
         expect(alice.cameraPause, CameraPauseReason.background);
         expect(
-          events.whereType<LocalCameraPausedEvent>().map((e) => e.reason),
+          events.whereType<RoomCameraPausedEvent>().map((e) => e.reason),
           contains(CameraPauseReason.background),
         );
       }
@@ -167,7 +167,7 @@ void main() {
       _log('back in the foreground');
       await _rising(alice, bob, 'back in the foreground', video: true);
       if (ios) {
-        expect(events.whereType<LocalCameraResumedEvent>(), isNotEmpty);
+        expect(events.whereType<RoomCameraResumedEvent>(), isNotEmpty);
         expect(alice.cameraPause, isNull);
       }
 
@@ -213,13 +213,13 @@ void main() {
         }),
         isTrue,
       );
-      final interrupted = await events.next<CallInterruptedEvent>();
+      final interrupted = await events.next<RoomAudioInterruptedEvent>();
       _log('interrupted: ${interrupted.reason.name}');
       expect(interrupted.reason, CallInterruptionReason.otherAudio);
       expect(alice.audioInterruption, CallInterruptionReason.otherAudio);
-      expect(mic.muted, isFalse, reason: 'not announced as muted');
+      expect(mic.isMuted, isFalse, reason: 'not announced as muted');
       await _support.invokeMethod<void>('releaseAudioFocus');
-      final resumed = await events.next<CallResumedEvent>();
+      final resumed = await events.next<RoomAudioResumedEvent>();
       _log('resumed after ${resumed.reason.name}');
       expect(alice.audioInterruption, isNull);
       await _rising(alice, bob, 'after a transient loss');
@@ -233,12 +233,12 @@ void main() {
         }),
         isTrue,
       );
-      await events.next<CallInterruptedEvent>();
+      await events.next<RoomAudioInterruptedEvent>();
       await _support.invokeMethod<void>('releaseAudioFocus');
       await Future<void>.delayed(const Duration(seconds: 1));
       expect(alice.audioInterruption, isNotNull, reason: 'no focus back');
       expect(await alice.resumeAudio(), isTrue);
-      await events.next<CallResumedEvent>();
+      await events.next<RoomAudioResumedEvent>();
       await _rising(alice, bob, 'after resumeAudio()');
     },
     skip: settings.skip || !android,
@@ -251,15 +251,15 @@ void main() {
       await permissions();
       final (alice, _) = await join('proximity');
       await alice.localParticipant.publishMicrophone();
-      final headset = alice.currentAudioRoutes.any((r) => r.kind.isExternal);
+      final headset = alice.audioRoutes.any((r) => r.kind.isExternal);
       if (headset) {
         _log('a headset is connected: the sensor stays off');
-        expect(alice.proximitySensorActive, isFalse);
+        expect(alice.isProximitySensorActive, isFalse);
         return;
       }
       // A tablet or an emulator has no earpiece: its voice calls play on
       // the speaker, where the sensor stays off.
-      if (!alice.currentAudioRoutes.any(
+      if (!alice.audioRoutes.any(
         (r) => r.kind == AudioRouteKind.earpiece,
       )) {
         _log('no earpiece: the sensor stays off');
@@ -300,12 +300,12 @@ Future<void> _eventually(Future<bool> Function() check, String what) async {
 }
 
 Future<void> _expectProximity(Room room, bool on, String when) async {
-  final active = await room.proximitySensorChanges
+  final active = await room.proximitySensorActiveChanges
       .firstWhere((value) => value == on)
       .timeout(const Duration(seconds: 5), onTimeout: () => !on);
   _log(
-    'proximity $when: ${room.proximitySensorActive} '
-    '(route ${room.currentAudioRoute})',
+    'proximity $when: ${room.isProximitySensorActive} '
+    '(route ${room.audioRoute})',
   );
   expect(active, on, reason: 'proximity sensor $when');
 }

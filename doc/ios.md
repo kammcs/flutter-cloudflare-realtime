@@ -35,11 +35,11 @@ iOS asks for the camera and microphone the first time a capture starts. Bluetoot
 
 With the `audio` background mode, iOS keeps the app running during a call: any call with a published or received audio track keeps the audio session active.
 
-iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `LocalCameraPausedEvent` / `LocalCameraResumedEvent` report it (with a `CameraPauseReason`: `background`, `inUseByAnotherApp`, `multipleForegroundApps`, `systemPressure` or `other`). Keeping the camera running in the background needs picture-in-picture, which is planned ([roadmap, M14](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/roadmap.md#m14-notes-picture-in-picture-and-the-ios-camera-in-the-background)).
+iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `RoomCameraPausedEvent` / `RoomCameraResumedEvent` report it (with a `CameraPauseReason`: `background`, `inUseByAnotherApp`, `multipleForegroundApps`, `systemPressure` or `other`). Keeping the camera running in the background needs picture-in-picture, which is planned ([roadmap, M14](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/roadmap.md#m14-notes-picture-in-picture-and-the-ios-camera-in-the-background)).
 
 ## Interruptions and the proximity sensor
 
-- **Interruptions:** a phone call, Siri, an alarm or another app taking the audio pauses the call: `CallInterruptedEvent`, `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). iOS doesn't say what interrupted, so the reason is `unknown` (or `held` while a system call is on hold). The call resumes by itself when the system gives the audio back or the app returns to the foreground (`CallResumedEvent`); `Room.resumeAudio()` tries at once.
+- **Interruptions:** a phone call, Siri, an alarm or another app taking the audio pauses the call: `RoomAudioInterruptedEvent`, `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). iOS doesn't say what interrupted, so the reason is `unknown` (or `held` while a system call is on hold). The call resumes by itself when the system gives the audio back or the app returns to the foreground (`RoomAudioResumedEvent`); `Room.resumeAudio()` tries at once.
 - **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
 - **The screen stays on during a video call** (`isIdleTimerDisabled`, restored afterwards): it doesn't dim or lock while the camera or a screen share is sent or a remote video is shown, and sleeps as usual in a voice call. If your app keeps the screen on itself, pass `RoomOptions(keepScreenAwake: KeepScreenAwake.never)`; `KeepScreenAwake.always` keeps it on for voice calls too (except at the ear). `Room.keepingScreenAwake` says whether it's on.
 
@@ -80,7 +80,7 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
 - **`Info.plist`:** add `voip` next to `audio` in `UIBackgroundModes` (above).
 - **Call audio:** CallKit activates the audio session when a call starts or is answered. Once `configure` has run, the package switches WebRTC to manual audio, so a call's audio starts only after CallKit activated the session. Don't activate the session yourself during a system call.
 - **Attach the call to the room** with `Room.attachSystemCall(call)`: the system's mute and the microphone stay in step, the room leaves when the call ends, and the call ends when the room is left.
-- **Optional:** `SystemCallsConfig.iconTemplateImageName` (a 40×40 pt template image in your asset catalog) and `ringtoneSound` (a sound file in your bundle).
+- **Optional:** `SystemCallsOptions.iconTemplateImageName` (a 40×40 pt template image in your asset catalog) and `ringtoneSound` (a sound file in your bundle).
 - **China mainland:** apps on the China mainland App Store must not use CallKit. There, don't call `configure`.
 
 **VoIP pushes** wake the app for an incoming call (`SystemCalls.instance.voipPush`). They need the following:

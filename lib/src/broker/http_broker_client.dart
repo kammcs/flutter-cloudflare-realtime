@@ -18,7 +18,7 @@ const _sessionErrorCode = 'session_error';
 /// [BrokerClient] over HTTPS, using `package:http`.
 ///
 /// One instance serves one room: every request carries the app's headers
-/// (from [BrokerConfig.headers]) and `X-Realtime-Room: <roomId>`.
+/// (from [BrokerOptions.headers]) and `X-Realtime-Room: <roomId>`.
 ///
 /// If the broker returns `X-Realtime-Session-Token` from `sessions/new`, the
 /// token is kept per session ID and sent back on every later call for that
@@ -41,7 +41,7 @@ class HttpBrokerClient implements BrokerClient {
   }
 
   /// The broker configuration.
-  final BrokerConfig config;
+  final BrokerOptions config;
 
   /// The room sent in `X-Realtime-Room` on every call.
   final String roomId;

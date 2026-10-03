@@ -139,8 +139,8 @@ class _SourceGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<ScreenPickerState>(
-      stream: picker.state,
-      initialData: picker.currentState,
+      stream: picker.stateChanges,
+      initialData: picker.state,
       builder: (context, snapshot) {
         final state = snapshot.data!;
         final colors = Theme.of(context).colorScheme;

@@ -142,9 +142,9 @@ class SystemCallException implements Exception {
 ///
 /// Several settings exist on one platform only; the other ignores them.
 @immutable
-class SystemCallsConfig {
+class SystemCallsOptions {
   /// Creates a configuration.
-  const SystemCallsConfig({
+  const SystemCallsOptions({
     this.supportsVideo = true,
     this.maximumCalls = 1,
     this.supportsHolding = true,
@@ -197,7 +197,7 @@ class SystemCallsConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is SystemCallsConfig &&
+      other is SystemCallsOptions &&
       other.supportsVideo == supportsVideo &&
       other.maximumCalls == maximumCalls &&
       other.supportsHolding == supportsHolding &&

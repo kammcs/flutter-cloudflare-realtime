@@ -58,7 +58,7 @@ class FakeSystemCallBackend implements SystemCallBackend {
   /// The token [registerVoipPush] completes with.
   String? token;
 
-  SystemCallsConfig? config;
+  SystemCallsOptions? config;
 
   final StreamController<SystemCallSignal> _signals =
       StreamController.broadcast();
@@ -81,7 +81,7 @@ class FakeSystemCallBackend implements SystemCallBackend {
   }
 
   @override
-  Future<bool> configure(SystemCallsConfig config) async {
+  Future<bool> configure(SystemCallsOptions config) async {
     calls.add('configure');
     this.config = config;
     return configureResult;

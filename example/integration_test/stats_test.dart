@@ -16,7 +16,7 @@
 // 3. Both rate the connection good or excellent (a healthy LAN).
 // 4. Alice's session is failed with reconnection off, so she stays in
 //    signaling but her media stops: she is lost to herself at once, and
-//    Bob rates her lost within ConnectionQualityConfig.lostAfter.
+//    Bob rates her lost within ConnectionQualityOptions.lostAfter.
 //
 // Skipped unless CF_REALTIME_BROKER_URL is set; see broker_settings.dart.
 
@@ -63,7 +63,7 @@ void main() {
       addTearDown(bob.leave);
       for (final room in [alice, bob]) {
         final sub = room.events.listen((e) {
-          if (e is ConnectionQualityChangedEvent) {
+          if (e is ParticipantConnectionQualityChangedEvent) {
             _log(
               '${room == alice ? 'Alice' : 'Bob'} sees '
               '${e.participant.participantId.split('-').take(2).join('-')} '
@@ -164,7 +164,7 @@ void main() {
       expect(micStats?.codec, 'audio/opus');
       expect(micStats?.bitrate, greaterThan(0), reason: '$micStats');
       // The same through the publication.
-      expect(cam.currentStats?.layers, hasLength(3));
+      expect(cam.stats?.layers, hasLength(3));
 
       // 2. The subscriber.
       final aliceAtBob = bob.participant(alice.localParticipant.participantId)!;
@@ -234,7 +234,7 @@ Future<void> _askForPermissions() async {
   }
 }
 
-/// Waits for a [Room.stats] snapshot that passes [test].
+/// Waits for a [Room.statsChanges] snapshot that passes [test].
 Future<RoomStats> _until(
   Room room,
   String what,
@@ -243,7 +243,7 @@ Future<RoomStats> _until(
 }) async {
   RoomStats? last;
   try {
-    return await room.stats
+    return await room.statsChanges
         .firstWhere((stats) {
           last = stats;
           return test(stats);

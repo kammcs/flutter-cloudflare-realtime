@@ -9,7 +9,7 @@ sealed class Participant {
   /// The app data announced with the participant, such as a display name.
   Map<String, Object?>? get metadata;
 
-  /// Whether the participant is speaking now ([Room.activeSpeakers]).
+  /// Whether the participant is speaking now ([Room.activeSpeakersChanges]).
   bool get isSpeaking;
 
   /// How well the participant's media gets through (`docs/design.md`
@@ -19,7 +19,7 @@ sealed class Participant {
   ConnectionQuality get connectionQuality;
 
   /// [connectionQuality], replaying the current value to each new
-  /// listener, then its changes ([ConnectionQualityChangedEvent]).
+  /// listener, then its changes ([ParticipantConnectionQualityChangedEvent]).
   /// Completes when the participant leaves (or after [Room.leave]).
   Stream<ConnectionQuality> get connectionQualityChanges;
 }

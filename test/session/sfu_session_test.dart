@@ -48,7 +48,7 @@ void main() {
         'bundlePolicy': 'max-bundle',
         'sdpSemantics': 'unified-plan',
       });
-      expect(session.currentConnectionState, SfuConnectionState.initial);
+      expect(session.connectionState, SfuConnectionState.initial);
       expect(h.pc.log, isEmpty, reason: 'nothing negotiated until a push');
     });
 
@@ -614,7 +614,7 @@ void main() {
       expect(sub.preferredRid, 'b');
       expect(sub.remoteSessionId, 'peer');
       expect(sub.track, same(h.pc.byMid('r1')!.receiverTrack));
-      expect(await sub.trackStream.first, same(sub.track));
+      expect(await sub.trackChanges.first, same(sub.track));
     });
 
     test('sends no simulcast block without a preferred rid', () async {
@@ -1310,7 +1310,7 @@ void main() {
     test('maps the PC state and replays the current value', () async {
       final session = await h.connect();
       final states = <SfuConnectionState>[];
-      final sub = session.connectionState.listen(states.add);
+      final sub = session.connectionStateChanges.listen(states.add);
       await pumpEventQueue();
 
       h.pc.emitConnectionState(
@@ -1333,7 +1333,7 @@ void main() {
         SfuConnectionState.disconnected,
         SfuConnectionState.connected,
       ]);
-      expect(await session.connectionState.first, SfuConnectionState.connected);
+      expect(await session.connectionStateChanges.first, SfuConnectionState.connected);
 
       await session.close();
       await pumpEventQueue();
@@ -1369,7 +1369,7 @@ void main() {
         isA<SfuSessionGone>().having((f) => f.exception, 'exception', gone),
       ]);
       expect(session.failure, isA<SfuSessionGone>());
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(session.isUsable, isFalse);
       expect(pub.state, SfuTrackState.interrupted);
       expect(pub.session, isNull);
@@ -1559,7 +1559,7 @@ void main() {
           PeerConnectionFailureKind.connectionFailed,
         ),
       );
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(sub.state, SfuTrackState.interrupted);
       expect(sub.track, isNotNull, reason: 'keeps the last track');
     });
@@ -1753,7 +1753,7 @@ void main() {
           PeerConnectionFailureKind.signalingStuck,
         ),
       );
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(
         () => session.subscribe(remoteSessionId: 'p', trackName: 't'),
         throwsA(isA<SfuSessionFailedException>()),
@@ -1813,7 +1813,7 @@ void main() {
       );
       final oldTrack = sub.track;
       final tracks = <MediaStreamTrack>[];
-      sub.trackStream.listen(tracks.add);
+      sub.trackChanges.listen(tracks.add);
 
       firstPc.emitConnectionState(
         RTCPeerConnectionState.RTCPeerConnectionStateFailed,
@@ -1910,7 +1910,7 @@ void main() {
         expect(h.pc.closed, isTrue);
         expect(h.broker.forgotten, ['session-1']);
         expect(session.isClosed, isTrue);
-        expect(session.currentConnectionState, SfuConnectionState.closed);
+        expect(session.connectionState, SfuConnectionState.closed);
         expect(pub.state, SfuTrackState.interrupted);
         expect(session.failure, isNull);
         expect(await session.failures.toList(), isEmpty);

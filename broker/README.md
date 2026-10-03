@@ -89,7 +89,7 @@ npx wrangler deploy
 
 - **Session store:** a Durable Object per session (`RealtimeSessionObject`, SQLite-backed, so it works on the Workers Free plan). An alarm deletes each record after `SESSION_TTL_SECONDS` (default 24 hours). The migration in `wrangler.toml` creates the class on first deploy. **Why not Workers KV:** a peer pulls a new session within seconds, often from another Cloudflare location, and KV can take up to a minute to make a write visible elsewhere. That would cause spurious `403`s on pulls. Durable Objects are strongly consistent.
 - **Local development:** put secrets in `cloudflare-worker/.dev.vars` (git-ignored) and run `npx wrangler dev`.
-- The broker is served at the Worker's root unless you set `BASE_PATH` (for example `/realtime` when you route `api.example.com/realtime/*` to it). Point the Flutter `BrokerConfig.baseUrl` at the same URL.
+- The broker is served at the Worker's root unless you set `BASE_PATH` (for example `/realtime` when you route `api.example.com/realtime/*` to it). Point the Flutter `BrokerOptions.baseUrl` at the same URL.
 
 ## Supabase Edge Function
 
@@ -106,7 +106,7 @@ supabase functions deploy realtime-broker --no-verify-jwt
 
 Replace the placeholders with your values. Don't paste real secrets into shell history on shared machines; `supabase secrets set --env-file <file>` reads them from a (git-ignored) file.
 
-- **URL:** `https://<project-ref>.supabase.co/functions/v1/realtime-broker`. Use it as the Flutter `BrokerConfig.baseUrl`. The function strips the `/realtime-broker` prefix (override with `BASE_PATH`).
+- **URL:** `https://<project-ref>.supabase.co/functions/v1/realtime-broker`. Use it as the Flutter `BrokerOptions.baseUrl`. The function strips the `/realtime-broker` prefix (override with `BASE_PATH`).
 - **JWT verification:** the function verifies the caller's token itself with `auth.getUser`, so the gateway check is off (`verify_jwt = false` in `config.toml`, or `--no-verify-jwt`). CORS preflights carry no token, so the gateway check would block Flutter Web.
 - **Session store:** the migration creates `public.realtime_broker_sessions` with RLS enabled, no policies, and no privileges for `anon` or `authenticated`. Only the service role (which the function uses, from the platform-provided `SUPABASE_SERVICE_ROLE_KEY`) can read or write it. Expired rows are ignored; the migration shows an optional `pg_cron` cleanup job.
 - **Other environment:** `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are provided by the platform. Optional: `SESSION_TTL_SECONDS`, `TURN_TTL_SECONDS`, `EXTRA_ALLOWED_HEADERS`.

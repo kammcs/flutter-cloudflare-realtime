@@ -7,18 +7,18 @@ enum ReconnectReason {
   peerConnectionFailed,
 
   /// The peer connection stayed `disconnected` for longer than
-  /// [ReconnectTriggerConfig.disconnectedTimeout].
+  /// [ReconnectTriggerOptions.disconnectedTimeout].
   disconnectedTooLong,
 
   /// The peer connection didn't reach `connected` within
-  /// [ReconnectTriggerConfig.connectTimeout].
+  /// [ReconnectTriggerOptions.connectTimeout].
   connectTimeout,
 
   /// The network changed and the connection is (or soon went) down.
   networkChanged,
 
   /// The app came back to the foreground after longer than
-  /// [ReconnectTriggerConfig.backgroundThreshold] in the background.
+  /// [ReconnectTriggerOptions.backgroundThreshold] in the background.
   resumedFromBackground,
 
   /// The broker or SFU reported that the session is gone (HTTP 410,
@@ -32,9 +32,9 @@ enum ReconnectReason {
 /// Tuning for when the package replaces a broken SFU session
 /// (design.md §8).
 @immutable
-class ReconnectTriggerConfig {
+class ReconnectTriggerOptions {
   /// Creates a trigger configuration.
-  const ReconnectTriggerConfig({
+  const ReconnectTriggerOptions({
     this.disconnectedTimeout = const Duration(seconds: 5),
     this.connectTimeout = const Duration(seconds: 15),
     this.networkChangeWindow = const Duration(seconds: 10),
@@ -65,7 +65,7 @@ class ReconnectTriggerConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is ReconnectTriggerConfig &&
+      other is ReconnectTriggerOptions &&
       other.disconnectedTimeout == disconnectedTimeout &&
       other.connectTimeout == connectTimeout &&
       other.networkChangeWindow == networkChangeWindow &&
@@ -94,7 +94,7 @@ class ReconnectTriggerConfig {
 /// re-session. Call [reset] when a new session (a new peer connection)
 /// replaces the old one.
 ///
-/// Rules (see [ReconnectTriggerConfig] for the durations):
+/// Rules (see [ReconnectTriggerOptions] for the durations):
 ///
 /// - `failed` triggers at once.
 /// - `disconnected` triggers after `disconnectedTimeout`, or at once if a
@@ -109,13 +109,13 @@ class ReconnectTriggerConfig {
 /// - `closed` clears the timers: the package closed the connection itself.
 ///
 /// Internal: not exported from the package barrel. Apps tune it through
-/// [ReconnectTriggerConfig].
+/// [ReconnectTriggerOptions].
 class ReconnectTrigger {
   /// Creates a trigger.
-  ReconnectTrigger([this.config = const ReconnectTriggerConfig()]);
+  ReconnectTrigger([this.config = const ReconnectTriggerOptions()]);
 
   /// The configuration.
-  final ReconnectTriggerConfig config;
+  final ReconnectTriggerOptions config;
 
   RTCPeerConnectionState? _state;
   Duration? _disconnectedSince;

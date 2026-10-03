@@ -51,7 +51,7 @@ void main() {
       expect(publication.state, SfuTrackState.active);
       expect(publication.mid, isNotNull);
       await publication.whenSending().timeout(timeout);
-      await publisher.connectionState
+      await publisher.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 
@@ -63,7 +63,7 @@ void main() {
       );
       expect(subscription.state, SfuTrackState.active);
       expect(subscription.track?.kind, track.kind);
-      await subscriber.connectionState
+      await subscriber.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 

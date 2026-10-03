@@ -67,7 +67,7 @@ import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 // 1. Point the package at your broker. `headers` runs before every request,
 //    so it can refresh an expiring token.
 final realtime = CloudflareRealtime(
-  broker: BrokerConfig(
+  broker: BrokerOptions(
     baseUrl: Uri.parse('https://api.example.com/realtime'),
     headers: () async => {'Authorization': 'Bearer ${await getAppJwt()}'},
   ),

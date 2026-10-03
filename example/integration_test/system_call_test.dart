@@ -107,7 +107,7 @@ void main() {
 
   Future<void> configure() async {
     expect(await calls.configure(), isTrue, reason: 'system calls supported');
-    expect(calls.supported, isTrue);
+    expect(calls.isSupported, isTrue);
     addTearDown(() async {
       for (final call in calls.calls) {
         await call.end();
@@ -123,34 +123,34 @@ void main() {
     alice.attachSystemCall(call);
     final mic = await alice.localParticipant.publishMicrophone();
     await mic.publication.whenSending().timeout(_timeout);
-    expect(call.muted, isFalse);
-    expect(mic.muted, isFalse);
+    expect(call.isMuted, isFalse);
+    expect(mic.isMuted, isFalse);
     await _rising(alice, bob, 'in the call');
     if (android) await _checkTelecom('active');
 
     // The system's mute mutes the publication...
     await call.setMuted(true);
-    await _until(() => mic.muted, 'the system mute mutes the microphone');
-    expect(call.muted, isTrue);
+    await _until(() => mic.isMuted, 'the system mute mutes the microphone');
+    expect(call.isMuted, isTrue);
     await call.setMuted(false);
-    await _until(() => !mic.muted, 'the system unmute unmutes it');
-    expect(call.muted, isFalse);
+    await _until(() => !mic.isMuted, 'the system unmute unmutes it');
+    expect(call.isMuted, isFalse);
     // ...and the publication's mute the system's.
     await mic.setMuted(true);
-    await _until(() => call.muted, "muting the microphone mutes the call");
+    await _until(() => call.isMuted, "muting the microphone mutes the call");
     await mic.setMuted(false);
-    await _until(() => !call.muted, 'and unmuting it unmutes the call');
+    await _until(() => !call.isMuted, 'and unmuting it unmutes the call');
     if (android) {
       // Telecom (a car, a watch) mutes the global microphone.
       expect(
         await _support.invokeMethod<bool>('setMicrophoneMute', {'muted': true}),
         isTrue,
       );
-      await _until(() => call.muted, "Telecom's mute reaches the call");
-      await _until(() => mic.muted, 'and the microphone');
+      await _until(() => call.isMuted, "Telecom's mute reaches the call");
+      await _until(() => mic.isMuted, 'and the microphone');
       await _support.invokeMethod<bool>('setMicrophoneMute', {'muted': false});
-      await _until(() => !call.muted, "Telecom's unmute reaches the call");
-      await _until(() => !mic.muted, 'and the microphone');
+      await _until(() => !call.isMuted, "Telecom's unmute reaches the call");
+      await _until(() => !mic.isMuted, 'and the microphone');
     }
     _log('mute in step both ways');
     await _rising(alice, bob, 'after the mutes');
@@ -158,7 +158,7 @@ void main() {
     // Hold: the room's audio is interrupted, then resumed.
     await call.setHeld(true);
     await _until(() => call.state == SystemCallState.held, 'the call is held');
-    final interrupted = await events.next<CallInterruptedEvent>();
+    final interrupted = await events.next<RoomAudioInterruptedEvent>();
     expect(interrupted.reason, CallInterruptionReason.held);
     expect(alice.audioInterruption, CallInterruptionReason.held);
     if (android) await _checkTelecom('held');
@@ -167,7 +167,7 @@ void main() {
       () => call.state == SystemCallState.active,
       'the call is active again',
     );
-    final resumed = await events.next<CallResumedEvent>();
+    final resumed = await events.next<RoomAudioResumedEvent>();
     expect(resumed.reason, CallInterruptionReason.held);
     expect(alice.audioInterruption, isNull);
     _log('held and resumed');
@@ -190,20 +190,20 @@ void main() {
       expect(endpoints, isNull, reason: 'iOS has no endpoints');
     }
     await _until(
-      () => alice.currentAudioRoutes.isNotEmpty,
+      () => alice.audioRoutes.isNotEmpty,
       'the routes are listed',
     );
     _log(
-      'routes: ${alice.currentAudioRoutes.map((r) => r.kind.name)}, '
-      'current ${alice.currentAudioRoute?.kind.name}',
+      'routes: ${alice.audioRoutes.map((r) => r.kind.name)}, '
+      'current ${alice.audioRoute?.kind.name}',
     );
     if (android) {
-      for (final route in alice.currentAudioRoutes) {
+      for (final route in alice.audioRoutes) {
         expect(route.id, matches(_uuid), reason: 'routes are endpoints');
       }
     }
     for (final kind in [AudioRouteKind.speaker, AudioRouteKind.earpiece]) {
-      final route = alice.currentAudioRoutes
+      final route = alice.audioRoutes
           .where((r) => r.kind == kind)
           .firstOrNull;
       if (route == null) {
@@ -213,7 +213,7 @@ void main() {
       }
       await alice.selectAudioRoute(route);
       await _until(
-        () => alice.currentAudioRoute?.kind == kind,
+        () => alice.audioRoute?.kind == kind,
         'the ${kind.name} is selected',
       );
       _log('selected the ${kind.name}');
@@ -238,7 +238,7 @@ void main() {
         handle: const CallHandle('integration-test'),
         displayName: 'Integration test',
       );
-      expect(call.outgoing, isTrue);
+      expect(call.isOutgoing, isTrue);
       expect(call.state, SystemCallState.dialing);
       expect(calls.calls, contains(call));
       final listed = await _native.invokeListMethod<Map<Object?, Object?>>(
@@ -294,7 +294,7 @@ void main() {
         displayName: 'Integration test',
         payload: {'room': settings.room},
       );
-      expect(call.outgoing, isFalse);
+      expect(call.isOutgoing, isFalse);
       expect(call.state, SystemCallState.ringing);
       if (android) {
         await _eventually(

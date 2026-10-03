@@ -129,14 +129,14 @@ void main() {
     final mic = daveP.microphone!;
     final screenAudio = daveP.screenAudio!;
     expect(sink.playing.keys, unorderedEquals([mic.id, screenAudio.id]));
-    expect(sink.playing[mic.id], same(mic.currentTrack!.track));
+    expect(sink.playing[mic.id], same(mic.track!.track));
 
     await mic.unsubscribe();
     await _settle();
     expect(sink.playing.keys, [screenAudio.id]);
     await mic.subscribe();
     await _settle();
-    expect(sink.playing[mic.id], same(mic.currentTrack!.track));
+    expect(sink.playing[mic.id], same(mic.track!.track));
 
     // Unpublished: its audio stops.
     await dave.update(
@@ -152,7 +152,7 @@ void main() {
     await alice.leave();
     expect(sink.disposed, isTrue);
     expect(sink.playing, isEmpty);
-    expect(alice.audioPlaybackBlocked, isFalse);
+    expect(alice.isAudioPlaybackBlocked, isFalse);
     dave.dispose();
   });
 
@@ -175,7 +175,7 @@ void main() {
       ),
     );
     await _settle();
-    expect(sink.playing[mic.id], same(mic.currentTrack!.track));
+    expect(sink.playing[mic.id], same(mic.track!.track));
     expect(sink.playing[mic.id], isNot(same(first)));
     await alice.leave();
     dave.dispose();
@@ -189,11 +189,11 @@ void main() {
 
     final dave = await joinDave('dave-1', {'dave-mic': _mic});
     await _settle();
-    expect(alice.audioPlaybackBlocked, isTrue);
+    expect(alice.isAudioPlaybackBlocked, isTrue);
 
     expect(await alice.startAudio(), isTrue);
     expect(sink.resumes, 1);
-    expect(alice.audioPlaybackBlocked, isFalse);
+    expect(alice.isAudioPlaybackBlocked, isFalse);
     await _settle();
     expect(states, [false, true, false]);
 
@@ -223,7 +223,7 @@ void main() {
     final alice = await h.join('alice');
     final dave = await joinDave('dave-1', {'dave-mic': _mic});
     await _settle();
-    expect(alice.audioPlaybackBlocked, isFalse);
+    expect(alice.isAudioPlaybackBlocked, isFalse);
     expect(await alice.startAudio(), isTrue);
     await alice.leave();
     dave.dispose();

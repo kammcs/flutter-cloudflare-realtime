@@ -78,7 +78,7 @@ class LocalTrackPublication {
   SfuTrackState get state => _state.value;
 
   /// The state, replaying the current value to each new listener.
-  Stream<SfuTrackState> get states => _state.stream;
+  Stream<SfuTrackState> get stateChanges => _state.stream;
 
   /// Why the publication failed or was interrupted, if it did.
   Object? get error => _error;
@@ -245,13 +245,13 @@ class LocalTrackPublication {
 ///
 /// Like [LocalTrackPublication], it outlives its session: after a failure it
 /// is [SfuTrackState.interrupted], and [SfuSession.resubscribe] pulls it
-/// again on a new session. [trackStream] then emits the new
+/// again on a new session. [trackChanges] then emits the new
 /// [MediaStreamTrack].
 class RemoteTrackSubscription {
   RemoteTrackSubscription._({
     required String remoteSessionId,
     required this.trackName,
-    required SimulcastConfig? simulcast,
+    required SimulcastOptions? simulcast,
   }) : _remoteSessionId = remoteSessionId,
        _simulcast = simulcast;
 
@@ -259,7 +259,7 @@ class RemoteTrackSubscription {
   final String trackName;
 
   String _remoteSessionId;
-  SimulcastConfig? _simulcast;
+  SimulcastOptions? _simulcast;
   final StateStream<SfuTrackState> _state = StateStream(
     SfuTrackState.pending,
     distinct: true,
@@ -279,7 +279,7 @@ class RemoteTrackSubscription {
 
   /// The simulcast preferences sent with the pull and its updates, or null
   /// for a track pulled without them.
-  SimulcastConfig? get simulcast => _simulcast;
+  SimulcastOptions? get simulcast => _simulcast;
 
   /// The simulcast layer this subscription asks for, if any.
   String? get preferredRid => _simulcast?.preferredRid;
@@ -288,7 +288,7 @@ class RemoteTrackSubscription {
   SfuTrackState get state => _state.value;
 
   /// The state, replaying the current value to each new listener.
-  Stream<SfuTrackState> get states => _state.stream;
+  Stream<SfuTrackState> get stateChanges => _state.stream;
 
   /// Why the subscription failed or was interrupted, if it did.
   Object? get error => _error;
@@ -305,7 +305,7 @@ class RemoteTrackSubscription {
 
   /// The received track: replays the current one to each new listener, then
   /// emits each new one (for example after [SfuSession.resubscribe]).
-  Stream<MediaStreamTrack> get trackStream =>
+  Stream<MediaStreamTrack> get trackChanges =>
       _track.stream.where((t) => t != null).cast<MediaStreamTrack>();
 
   /// Asks the SFU for another simulcast layer through `tracks/update`. See
@@ -329,7 +329,7 @@ class RemoteTrackSubscription {
     _close();
   }
 
-  SimulcastConfig _withRid(String rid) => SimulcastConfig(
+  SimulcastOptions _withRid(String rid) => SimulcastOptions(
     preferredRid: rid,
     priorityOrdering: _simulcast?.priorityOrdering,
     ridNotAvailable:

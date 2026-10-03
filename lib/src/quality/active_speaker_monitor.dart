@@ -7,7 +7,7 @@ import 'active_speaker_config.dart';
 import 'active_speaker_detector.dart';
 import 'audio_level_source.dart';
 
-/// Polls an [AudioLevelSource] every [ActiveSpeakerConfig.pollInterval] and
+/// Polls an [AudioLevelSource] every [ActiveSpeakerOptions.pollInterval] and
 /// runs the samples through an [ActiveSpeakerDetector].
 ///
 /// - Polls never overlap: a tick that arrives while the previous
@@ -26,7 +26,7 @@ class ActiveSpeakerMonitor {
   /// started here. Tests pass fake time.
   ActiveSpeakerMonitor({
     required AudioLevelSource source,
-    ActiveSpeakerConfig config = const ActiveSpeakerConfig(),
+    ActiveSpeakerOptions config = const ActiveSpeakerOptions(),
     String? localParticipantId,
     Duration Function()? clock,
   }) : _source = source,
@@ -60,7 +60,7 @@ class ActiveSpeakerMonitor {
   );
 
   /// The tuning.
-  ActiveSpeakerConfig get config => _detector.config;
+  ActiveSpeakerOptions get config => _detector.config;
 
   /// Whether the poll timer is running.
   bool get isRunning => _timer != null;

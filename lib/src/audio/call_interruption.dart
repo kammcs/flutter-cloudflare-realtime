@@ -3,7 +3,7 @@ library;
 
 /// What took a call's audio away (`docs/design.md` §4.7).
 ///
-/// Reported by [Room.audioInterruption] and [CallInterruptedEvent]. The
+/// Reported by [Room.audioInterruption] and [RoomAudioInterruptedEvent]. The
 /// platforms say different amounts: Android tells a phone call from another
 /// app's audio, iOS doesn't say.
 enum CallInterruptionReason {

@@ -6,7 +6,7 @@ part of 'room.dart';
 /// [RoomStatsOptions.interval] feeds both:
 ///
 /// - **Polling** runs while the room is joined and either someone listens
-///   to [Room.stats] (or a publication's `stats`), or connection quality is
+///   to [Room.statsChanges] (or a publication's `stats`), or connection quality is
 ///   on ([RoomStatsOptions.connectionQuality], the default). With quality
 ///   off and no listener, nothing is polled. [Room.getStats] takes one
 ///   snapshot whenever asked. Polls never overlap, and a failed poll is
@@ -55,7 +55,7 @@ class _RoomStats {
   StreamSubscription<RoomConnectionState>? _stateListener;
 
   RoomStatsOptions get _options => _room.options.stats;
-  ConnectionQualityConfig? get _quality => _options.connectionQuality;
+  ConnectionQualityOptions? get _quality => _options.connectionQuality;
 
   /// Whether the poll timer runs.
   bool get isPolling => _timer != null;
@@ -204,13 +204,13 @@ class _RoomStats {
   /// - **Remote:** what we receive from them: loss, audio jitter, video
   ///   freezes ([remoteQualitySample]), over their pulled, unmuted tracks.
   ///   `lost` when none of those received anything for
-  ///   [ConnectionQualityConfig.lostAfter] while they are in signaling.
+  ///   [ConnectionQualityOptions.lostAfter] while they are in signaling.
   ///   With nothing pulled or everything muted, the level stays.
   /// - Each goes through a [QualityTracker] (hysteresis).
   void _rate(RoomStats stats) {
     final config = _quality;
     if (config == null) return;
-    final state = _room.currentConnectionState;
+    final state = _room.connectionState;
     if (state == RoomConnectionState.reconnecting ||
         state == RoomConnectionState.disconnected) {
       return; // [_onRoomState] has set lost/unknown.
@@ -231,7 +231,7 @@ class _RoomStats {
       final id = remote.participantId;
       final tracks = [
         for (final t in stats.remoteOf(id))
-          if (!(remote._publications[t.trackName]?.muted ?? true)) t,
+          if (!(remote._publications[t.trackName]?.isMuted ?? true)) t,
       ];
       if (tracks.isEmpty) {
         _remoteLastFlow.remove(id);
@@ -289,13 +289,13 @@ class _RoomStats {
   void _setLocal(ConnectionQuality quality) {
     if (local.isClosed || local.value == quality) return;
     local.set(quality);
-    _room._emit(ConnectionQualityChangedEvent(_room.localParticipant, quality));
+    _room._emit(ParticipantConnectionQualityChangedEvent(_room.localParticipant, quality));
   }
 
   void _setRemote(RemoteParticipant remote, ConnectionQuality quality) {
     final state = remote._quality;
     if (state.isClosed || state.value == quality) return;
     state.set(quality);
-    _room._emit(ConnectionQualityChangedEvent(remote, quality));
+    _room._emit(ParticipantConnectionQualityChangedEvent(remote, quality));
   }
 }

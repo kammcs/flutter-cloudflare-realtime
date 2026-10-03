@@ -344,10 +344,10 @@ class _LayerOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<RemoteTrackStats?>(
       // Listening makes the room poll its stats (every 2 s).
-      stream: publication.stats,
-      initialData: publication.currentStats,
+      stream: publication.statsChanges,
+      initialData: publication.stats,
       builder: (context, stats) => StreamBuilder<RemoteTrackLayerState>(
-        stream: publication.layerChanges,
+        stream: publication.layerStateChanges,
         initialData: publication.layerState,
         builder: (context, snapshot) {
           final state = snapshot.data!;
@@ -414,8 +414,8 @@ class _LocalStatsOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final room = publication.participant.room;
     return StreamBuilder<RoomStats>(
-      stream: room.stats,
-      initialData: room.currentStats,
+      stream: room.statsChanges,
+      initialData: room.stats,
       builder: (context, snapshot) {
         final stats = snapshot.data;
         final track = stats?.local[publication.trackName];

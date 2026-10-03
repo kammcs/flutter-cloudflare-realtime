@@ -41,11 +41,11 @@ class _RoomScreenAwake {
   // is subscribed and not muted by its publisher.
   bool get _videoLive =>
       _room.localParticipant._publications.any(
-        (p) => p.kind == TrackKind.video && !p._unpublished && !p.muted,
+        (p) => p.kind == TrackKind.video && !p._unpublished && !p.isMuted,
       ) ||
       _room._remotes.values.any(
         (r) => r.trackPublications.any(
-          (p) => p.kind == TrackKind.video && p.isSubscribed && !p.muted,
+          (p) => p.kind == TrackKind.video && p.isSubscribed && !p.isMuted,
         ),
       );
 

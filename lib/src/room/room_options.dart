@@ -120,8 +120,8 @@ class ReconnectOptions {
   /// Creates reconnection options.
   const ReconnectOptions({
     this.enabled = true,
-    this.backoff = const BackoffConfig(),
-    this.trigger = const ReconnectTriggerConfig(),
+    this.backoff = const BackoffOptions(),
+    this.trigger = const ReconnectTriggerOptions(),
     this.stablePeriod = const Duration(seconds: 10),
   });
 
@@ -137,13 +137,13 @@ class ReconnectOptions {
   /// up to 500 ms before the first attempt, doubling to 10 s, giving up
   /// after 2 minutes. A failing signaling update during a reconnection is
   /// retried with the same schedule.
-  final BackoffConfig backoff;
+  final BackoffOptions backoff;
 
   /// When a session counts as broken: `failed` at once, `disconnected`
   /// after 5 s (at once after a network change), a stuck connect after
   /// 15 s, a return from 30 s or more in the background, or a
   /// session-gone (410) error.
-  final ReconnectTriggerConfig trigger;
+  final ReconnectTriggerOptions trigger;
 
   /// How long a new session must last before [backoff] starts over. A
   /// session that breaks sooner continues the previous schedule, so a
@@ -195,17 +195,17 @@ class RoomOptions {
     this.autoSubscribe = const AutoSubscribe(),
     this.defaultVideoLayer = SimulcastLayer.medium,
     this.sessionOptions = const SfuSessionOptions(),
-    this.pullRetry = const BackoffConfig(
+    this.pullRetry = const BackoffOptions(
       initialDelay: Duration(milliseconds: 250),
       maxDelay: Duration(seconds: 4),
       maxAttempts: 8,
       maxElapsed: Duration(minutes: 1),
     ),
     this.reconnect = const ReconnectOptions(),
-    this.layerSelection = const LayerSelectionConfig(),
+    this.layerSelection = const LayerSelectionOptions(),
     this.hiddenVideoLinger = const Duration(seconds: 5),
     this.leaseReleaseGrace = const Duration(milliseconds: 500),
-    this.activeSpeaker = const ActiveSpeakerConfig(),
+    this.activeSpeaker = const ActiveSpeakerOptions(),
     this.stats = const RoomStatsOptions(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
     this.speakerphone,
@@ -238,7 +238,7 @@ class RoomOptions {
   /// muted track that never sent, can fail. The room retries it with this
   /// backoff, and again whenever the publisher's state changes (for example
   /// when they unmute or move to a new session).
-  final BackoffConfig pullRetry;
+  final BackoffOptions pullRetry;
 
   /// How a broken SFU session is replaced. Default: automatically, see
   /// [ReconnectOptions].
@@ -247,8 +247,8 @@ class RoomOptions {
   /// How simulcast layers are picked from the size of the views that show
   /// a remote video (`docs/design.md` §6.1), and the `simulcast` fallback
   /// settings sent with pulls and `tracks/update`
-  /// ([LayerSelectionConfig.ridNotAvailable] is `asciibetical` by default).
-  final LayerSelectionConfig layerSelection;
+  /// ([LayerSelectionOptions.ridNotAvailable] is `asciibetical` by default).
+  final LayerSelectionOptions layerSelection;
 
   /// How long a remote video stays pulled, at its lowest layer, after every
   /// view showing it became hidden (`visible: false`, or a covered route),
@@ -270,21 +270,21 @@ class RoomOptions {
 
   /// Active-speaker detection (`docs/design.md` §7): how often audio levels
   /// are read and how they are smoothed. `null` turns detection off: then
-  /// [Room.activeSpeakers] stays empty and no stats are polled.
-  final ActiveSpeakerConfig? activeSpeaker;
+  /// [Room.activeSpeakersChanges] stays empty and no stats are polled.
+  final ActiveSpeakerOptions? activeSpeaker;
 
   /// Typed stats and connection quality (`docs/design.md` §7.1): how often
-  /// [Room.stats] reads `getStats()` (2 s), and how
+  /// [Room.statsChanges] reads `getStats()` (2 s), and how
   /// [LocalParticipant.connectionQuality] and
   /// [RemoteParticipant.connectionQuality] are rated. Quality is on by
   /// default, which polls for as long as the room is joined; with
   /// `RoomStatsOptions(connectionQuality: null)` the room polls only while
-  /// someone listens to [Room.stats].
+  /// someone listens to [Room.statsChanges].
   final RoomStatsOptions stats;
 
   /// How long a local screen share may go without a captured or encoded
   /// frame, counted while the room is connected, before the room reports
-  /// [LocalScreenShareStalledEvent]. On macOS that is the symptom of a
+  /// [LocalTrackStalledEvent]. On macOS that is the symptom of a
   /// missing Screen Recording permission. Checked once a second through
   /// `getStats()` while a share captures. Default 8 s; `null` turns the
   /// check off.
@@ -332,7 +332,7 @@ class RoomOptions {
   /// The proximity sensor is on only while call audio plays on the earpiece
   /// and no room has video; never on the speaker or a headset. Any joined
   /// room with `false` keeps it off. No effect on desktops, in browsers, and
-  /// on devices without the sensor. See [Room.proximitySensorActive].
+  /// on devices without the sensor. See [Room.isProximitySensorActive].
   final bool proximitySensor;
 
   /// When the room keeps the screen on, so it doesn't dim or lock during a
@@ -346,7 +346,7 @@ class RoomOptions {
   /// `isIdleTimerDisabled`, macOS holds an `IOPMAssertion`, Windows
   /// `SetThreadExecutionState`, browsers a Screen Wake Lock; no permission
   /// is needed. Not on Linux. [KeepScreenAwake.never] leaves the screen to
-  /// the app. See [Room.keepingScreenAwake].
+  /// the app. See [Room.isKeepingScreenAwake].
   final KeepScreenAwake keepScreenAwake;
 
   /// Pausing the simulcast layers of this room's video that no one pulls,

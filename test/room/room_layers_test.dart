@@ -187,7 +187,7 @@ void main() {
       expect(h.closesOf(bob), hasLength(1));
       expect(cam.isSubscribed, isFalse);
       expect(cam.layerState.released, isTrue);
-      expect(cam.currentTrack, isNull);
+      expect(cam.track, isNull);
 
       // Back on screen: pulled again at once, at the right layer.
       reporter.reportDemand(cam.id, 'v', _stage);
@@ -195,7 +195,7 @@ void main() {
       expect(h.pullsOf(bob), ['ann-1/c@b', 'ann-1/c@a']);
       expect(cam.isSubscribed, isTrue);
       expect(cam.layerState.released, isFalse);
-      expect(cam.currentTrack, isNotNull);
+      expect(cam.track, isNotNull);
       lease.release();
     });
   });
@@ -278,7 +278,7 @@ void main() {
       final cam = bob.participant('ann')!.camera!;
       final reporter = bob.layerReporter;
       final states = <RemoteTrackLayerState>[];
-      cam.layerChanges.listen(states.add);
+      cam.layerStateChanges.listen(states.add);
       reporter.reportDemand(cam.id, 'v', _thumb);
       final lease = cam.retain();
       pump();

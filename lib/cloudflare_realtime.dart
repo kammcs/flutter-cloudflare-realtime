@@ -28,7 +28,7 @@ export 'src/calls/system_call_types.dart'
         SystemCallErrorCode,
         SystemCallException,
         SystemCallState,
-        SystemCallsConfig;
+        SystemCallsOptions;
 export 'src/calls/system_calls.dart'
     show
         SystemCall,
@@ -117,16 +117,16 @@ export 'src/signaling/signaling.dart' show Signaling;
 // connection quality (design.md §6, §7, §7.1).
 // The detectors, the stats poller and the layer controller stay internal:
 // the Room owns them and exposes their results.
-export 'src/quality/active_speaker_config.dart' show ActiveSpeakerConfig;
+export 'src/quality/active_speaker_config.dart' show ActiveSpeakerOptions;
 export 'src/quality/call_stats.dart';
 export 'src/quality/connection_quality.dart'
     show
         ConnectionQuality,
-        ConnectionQualityConfig,
+        ConnectionQualityOptions,
         QualityThresholds,
         RoomStatsOptions;
 export 'src/quality/layer_pausing.dart' show LayerPausingOptions;
-export 'src/quality/layer_selection.dart' show LayerSelectionConfig, TileDemand;
+export 'src/quality/layer_selection.dart' show LayerSelectionOptions, TileDemand;
 export 'src/quality/layer_selection_controller.dart' show LayerDemandReporter;
 export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
 
@@ -134,7 +134,7 @@ export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
 // stays internal.
 export 'src/reconnect/app_lifecycle_source.dart'
     show AppLifecycleSource, FlutterAppLifecycleSource;
-export 'src/reconnect/backoff.dart' show BackoffConfig;
+export 'src/reconnect/backoff.dart' show BackoffOptions;
 export 'src/reconnect/network_change_source.dart' show NetworkChangeSource;
 export 'src/reconnect/reconnect_trigger.dart'
-    show ReconnectReason, ReconnectTriggerConfig;
+    show ReconnectReason, ReconnectTriggerOptions;

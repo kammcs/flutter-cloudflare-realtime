@@ -22,9 +22,9 @@ import 'package:flutter/foundation.dart';
 ///    first speaker is dominant at once, and a dominant speaker who falls
 ///    silent stays dominant until someone else takes over.
 @immutable
-class ActiveSpeakerConfig {
+class ActiveSpeakerOptions {
   /// Creates an active-speaker configuration.
-  const ActiveSpeakerConfig({
+  const ActiveSpeakerOptions({
     this.pollInterval = const Duration(milliseconds: 250),
     this.smoothingTimeConstant = const Duration(milliseconds: 300),
     this.speakingThreshold = 0.04,
@@ -87,7 +87,7 @@ class ActiveSpeakerConfig {
   final Duration mutedActivationTime;
 
   /// Returns a copy with the given fields replaced.
-  ActiveSpeakerConfig copyWith({
+  ActiveSpeakerOptions copyWith({
     Duration? pollInterval,
     Duration? smoothingTimeConstant,
     double? speakingThreshold,
@@ -98,7 +98,7 @@ class ActiveSpeakerConfig {
     Duration? dominantSwitchTime,
     bool? localCanBeDominant,
     Duration? mutedActivationTime,
-  }) => ActiveSpeakerConfig(
+  }) => ActiveSpeakerOptions(
     pollInterval: pollInterval ?? this.pollInterval,
     smoothingTimeConstant: smoothingTimeConstant ?? this.smoothingTimeConstant,
     speakingThreshold: speakingThreshold ?? this.speakingThreshold,
@@ -113,7 +113,7 @@ class ActiveSpeakerConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is ActiveSpeakerConfig &&
+      other is ActiveSpeakerOptions &&
       other.pollInterval == pollInterval &&
       other.smoothingTimeConstant == smoothingTimeConstant &&
       other.speakingThreshold == speakingThreshold &&

@@ -2,7 +2,7 @@ import 'common.dart';
 import 'json.dart';
 
 /// How the SFU picks a simulcast layer, for both
-/// [SimulcastConfig.priorityOrdering] and [SimulcastConfig.ridNotAvailable].
+/// [SimulcastOptions.priorityOrdering] and [SimulcastOptions.ridNotAvailable].
 enum SimulcastOrdering {
   /// Don't switch layers (the SFU's default).
   none,
@@ -16,17 +16,17 @@ enum SimulcastOrdering {
 /// Wire shape:
 /// `{"preferredRid": "a", "priorityOrdering"?: "none" | "asciibetical",
 /// "ridNotAvailable"?: "none" | "asciibetical"}`.
-class SimulcastConfig {
+class SimulcastOptions {
   /// Creates simulcast preferences.
-  const SimulcastConfig({
+  const SimulcastOptions({
     required this.preferredRid,
     this.priorityOrdering,
     this.ridNotAvailable,
   });
 
   /// Parses the wire shape. Unknown ordering values parse as null.
-  factory SimulcastConfig.fromJson(Map<String, Object?> json) =>
-      SimulcastConfig(
+  factory SimulcastOptions.fromJson(Map<String, Object?> json) =>
+      SimulcastOptions(
         preferredRid: reqString(json, 'preferredRid'),
         priorityOrdering: optEnum(
           json,
@@ -61,7 +61,7 @@ class SimulcastConfig {
 
   @override
   String toString() =>
-      'SimulcastConfig(preferredRid: $preferredRid, '
+      'SimulcastOptions(preferredRid: $preferredRid, '
       'priorityOrdering: ${priorityOrdering?.name}, '
       'ridNotAvailable: ${ridNotAvailable?.name})';
 }
@@ -112,7 +112,7 @@ class TrackObject {
     trackName: optString(json, 'trackName'),
     kind: optString(json, 'kind'),
     bidirectionalMediaStream: optBool(json, 'bidirectionalMediaStream'),
-    simulcast: optObject(json, 'simulcast', SimulcastConfig.fromJson),
+    simulcast: optObject(json, 'simulcast', SimulcastOptions.fromJson),
   );
 
   /// `local` to push, `remote` to pull.
@@ -137,7 +137,7 @@ class TrackObject {
   final bool? bidirectionalMediaStream;
 
   /// Simulcast preferences for a pulled track.
-  final SimulcastConfig? simulcast;
+  final SimulcastOptions? simulcast;
 
   /// The wire shape. Null fields are omitted.
   Map<String, Object?> toJson() {
@@ -183,7 +183,7 @@ class TrackResult with SfuErrorFields {
     sessionId: optString(json, 'sessionId'),
     trackName: optString(json, 'trackName'),
     kind: optString(json, 'kind'),
-    simulcast: optObject(json, 'simulcast', SimulcastConfig.fromJson),
+    simulcast: optObject(json, 'simulcast', SimulcastOptions.fromJson),
     errorCode: optString(json, 'errorCode'),
     errorDescription: optString(json, 'errorDescription'),
   );
@@ -205,7 +205,7 @@ class TrackResult with SfuErrorFields {
   final String? kind;
 
   /// The simulcast preferences the SFU applied, when it returns them.
-  final SimulcastConfig? simulcast;
+  final SimulcastOptions? simulcast;
 
   @override
   final String? errorCode;

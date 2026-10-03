@@ -148,7 +148,7 @@ class _Call {
             signaling: signaling,
             participantId: 'ada',
             displayName: 'ada',
-            broker: BrokerConfig(
+            broker: BrokerOptions(
               baseUrl: Uri.parse('https://broker.test/realtime'),
               headers: () async => const {},
             ),

@@ -155,7 +155,7 @@ class _DeviceSourceControls extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         StreamBuilder<bool>(
-          stream: source.enabled,
+          stream: source.enabledChanges,
           initialData: source.isEnabled,
           builder: (context, snapshot) => SwitchListTile(
             secondary: Icon(icon),
@@ -165,7 +165,7 @@ class _DeviceSourceControls extends StatelessWidget {
           ),
         ),
         StreamBuilder<bool>(
-          stream: source.broadcasting,
+          stream: source.broadcastingChanges,
           initialData: source.isBroadcasting,
           builder: (context, snapshot) => SwitchListTile(
             secondary: const Icon(Icons.podcasts),
@@ -184,8 +184,8 @@ class _DeviceSourceControls extends StatelessWidget {
         ),
         if (preview != null)
           StreamBuilder<CapturedTrack?>(
-            stream: source.track,
-            initialData: source.currentTrack,
+            stream: source.trackChanges,
+            initialData: source.track,
             builder: (context, snapshot) => preview!(snapshot.data),
           ),
       ],
@@ -201,8 +201,8 @@ class _AudioOutputs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
-      stream: devices.audioOutputs,
-      initialData: devices.currentDevicesOfKind(MediaDeviceKind.audioOutput),
+      stream: devices.audioOutputsChanges,
+      initialData: devices.devicesOfKind(MediaDeviceKind.audioOutput),
       builder: (context, snapshot) {
         final outputs = snapshot.data ?? const [];
         if (outputs.isEmpty) {
@@ -247,8 +247,8 @@ class _ScreenShareControlsState extends State<_ScreenShareControls> {
       return const Text('Screen share is not available on this platform.');
     }
     return StreamBuilder<CapturedTrack?>(
-      stream: screen.track,
-      initialData: screen.currentTrack,
+      stream: screen.trackChanges,
+      initialData: screen.track,
       builder: (context, snapshot) {
         final track = snapshot.data;
         return Column(
@@ -297,8 +297,8 @@ class _SourceGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<ScreenPickerState>(
-      stream: picker.state,
-      initialData: picker.currentState,
+      stream: picker.stateChanges,
+      initialData: picker.state,
       builder: (context, snapshot) {
         final state = snapshot.data!;
         return Column(

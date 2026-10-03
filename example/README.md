@@ -36,7 +36,7 @@ The **Local media** button (camera-and-mic icon on the join screen) opens a loca
 
 ## Multi-device calls with the dev server
 
-[`tools/dev-server/`](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/tools/dev-server/README.md) is a DEV ONLY local broker plus WebSocket presence signaling. `lib/ws_signaling.dart` (`WsSignaling`) is the `Signaling` client for it. `lib/dev_config.dart` (`DevServerConfig`) turns a server URL, the dev token and a user name into a `BrokerConfig` and a `WsSignaling`. Debug Android builds allow cleartext HTTP to reach the server on a LAN IP; release builds don't. See the dev server's README for the step-by-step setup.
+[`tools/dev-server/`](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/tools/dev-server/README.md) is a DEV ONLY local broker plus WebSocket presence signaling. `lib/ws_signaling.dart` (`WsSignaling`) is the `Signaling` client for it. `lib/dev_config.dart` (`DevServerConfig`) turns a server URL, the dev token and a user name into a `BrokerOptions` and a `WsSignaling`. Debug Android builds allow cleartext HTTP to reach the server on a LAN IP; release builds don't. See the dev server's README for the step-by-step setup.
 
 The platform folders show the setup a host app needs ([setup guides](https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/doc)): permissions and usage descriptions, the macOS entitlements, the iOS background modes and Broadcast Upload Extension, and the Android activity that answers system calls.
 

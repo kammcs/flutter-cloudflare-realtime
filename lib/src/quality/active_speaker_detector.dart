@@ -28,7 +28,7 @@ class ActiveSpeakerSnapshot {
   final List<String> speakers;
 
   /// The dominant speaker, for a "stage" layout. Changes only after
-  /// [ActiveSpeakerConfig.dominantSwitchTime]; stays set while everyone is
+  /// [ActiveSpeakerOptions.dominantSwitchTime]; stays set while everyone is
   /// silent. `null` until someone has spoken.
   final String? dominantSpeaker;
 
@@ -71,9 +71,9 @@ class _Participant {
 /// Turns periodic audio-level samples into active speakers.
 ///
 /// Pure logic: no timers, no WebRTC. Feed it with [addSample] (the
-/// [ActiveSpeakerConfig.pollInterval] poller does this) and read the
+/// [ActiveSpeakerOptions.pollInterval] poller does this) and read the
 /// returned [ActiveSpeakerSnapshot]. The algorithm is described on
-/// [ActiveSpeakerConfig].
+/// [ActiveSpeakerOptions].
 ///
 /// A participant missing from a sample counts as silent (level 0), so its
 /// smoothed level decays and it stops speaking normally. Its state is
@@ -87,12 +87,12 @@ class ActiveSpeakerDetector {
   /// [localParticipantId] is the key under which samples carry the local
   /// microphone level; `null` if they don't.
   ActiveSpeakerDetector({
-    this.config = const ActiveSpeakerConfig(),
+    this.config = const ActiveSpeakerOptions(),
     this.localParticipantId,
   });
 
   /// The tuning.
-  final ActiveSpeakerConfig config;
+  final ActiveSpeakerOptions config;
 
   /// The key of the local participant in samples, if any.
   final String? localParticipantId;
@@ -117,7 +117,7 @@ class ActiveSpeakerDetector {
   /// While muted, the local participant is left out of
   /// [ActiveSpeakerSnapshot.speakers] (nobody hears them) and feeds
   /// [ActiveSpeakerSnapshot.localSpeakingWhileMuted] instead, with
-  /// [ActiveSpeakerConfig.mutedActivationTime]. Changing it restarts the
+  /// [ActiveSpeakerOptions.mutedActivationTime]. Changing it restarts the
   /// local participant's speaking state, so the hint doesn't show the moment
   /// someone mutes mid-sentence.
   set localMuted(bool muted) {

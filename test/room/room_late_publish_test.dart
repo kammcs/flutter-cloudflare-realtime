@@ -25,7 +25,7 @@ class _MaxRandom implements math.Random {
 }
 
 const _backoff = ReconnectOptions(
-  backoff: BackoffConfig(
+  backoff: BackoffOptions(
     initialDelay: Duration(seconds: 1),
     maxDelay: Duration(seconds: 4),
     maxAttempts: 3,
@@ -41,7 +41,7 @@ const _late = RoomOptions(connectEarly: false, reconnect: _backoff);
 const _lateFast = RoomOptions(
   connectEarly: false,
   reconnect: ReconnectOptions(
-    backoff: BackoffConfig(
+    backoff: BackoffOptions(
       initialDelay: Duration(milliseconds: 5),
       maxDelay: Duration(milliseconds: 10),
       maxAttempts: 3,
@@ -173,7 +173,7 @@ void main() {
           events.whereType<LocalTrackPublishedEvent>().single.publication,
           mic,
         );
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
 
         // Announced once, on the new session; the old one never carried it.
         final announced = h.announced('alice')!;
@@ -334,7 +334,7 @@ void main() {
         throwsA(isA<SessionGoneException>()),
       );
       expect(alice.session, same(first));
-      expect(alice.currentConnectionState, RoomConnectionState.disconnected);
+      expect(alice.connectionState, RoomConnectionState.disconnected);
       await alice.leave();
     });
 
@@ -428,7 +428,7 @@ void main() {
         h.join('alice', options: _early).then((r) {
           alice = r;
           // The state the room was returned in, then its changes.
-          r.connectionState.listen(states.add);
+          r.connectionStateChanges.listen(states.add);
         });
         pump();
 
@@ -459,14 +459,14 @@ void main() {
     test('a joined room is connecting until the peer connection connects', () {
       fake((async, pump) {
         final alice = join(pump, 'alice', _early);
-        expect(alice.currentConnectionState, RoomConnectionState.connecting);
+        expect(alice.connectionState, RoomConnectionState.connecting);
         h
             .pcOf(alice)
             .emitConnectionState(
               RTCPeerConnectionState.RTCPeerConnectionStateConnected,
             );
         pump();
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         alice.leave();
         pump();
       });
@@ -490,7 +490,7 @@ void main() {
         pump();
         expect(alice.session.sessionId, 'session-2');
         expect(alice.session.hasNegotiated, isTrue);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         expect(events.whereType<RoomReconnectedEvent>(), hasLength(1));
         expect(h.announced('alice')!.sessionId, 'session-2');
         alice.leave();
@@ -506,7 +506,7 @@ void main() {
             );
         final alice = join(pump, 'alice', _early);
         expect(alice.session.isUsable, isTrue);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         h.broker.onEstablishDataChannels = null;
         LocalMediaPublication? mic;
         alice.localParticipant.publishMicrophone().then((p) => mic = p);
@@ -530,7 +530,7 @@ void main() {
         expect(second, isNot(same(first)));
         expect(h.callsOf(alice, 'datachannels/establish'), hasLength(1));
         expect(second.hasNegotiated, isTrue);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         alice.leave();
         pump();
       });

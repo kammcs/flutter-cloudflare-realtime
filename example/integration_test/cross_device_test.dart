@@ -130,7 +130,7 @@ void main() {
       _log('sending ${published.source.name}, layers $heights');
 
       // The other device, with a camera or microphone.
-      final peer = await room.participants
+      final peer = await room.participantsChanges
           .map((list) => list.where((p) => _mediaOf(p) != null))
           .firstWhere((peers) => peers.isNotEmpty)
           .timeout(_peerTimeout)
@@ -149,8 +149,8 @@ void main() {
         'simulcast ${remote.simulcast != null}, layer heights $peerHeights',
       );
 
-      final track = await remote.track
-          .startWith(remote.currentTrack)
+      final track = await remote.trackChanges
+          .startWith(remote.track)
           .firstWhere(
             (t) =>
                 t != null && remote.subscriptionState == SfuTrackState.active,

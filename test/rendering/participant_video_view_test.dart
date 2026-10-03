@@ -168,7 +168,7 @@ void main() {
 
       await _drive(tester, camera.enable());
       await _settle(tester);
-      final stream = camera.currentTrack!.stream;
+      final stream = camera.track!.stream;
       expect(log, ['initialize', 'setStream(${stream.id})']);
       expect(find.text('video ${stream.id} cover mirrored'), findsOneWidget);
 
@@ -209,13 +209,13 @@ void main() {
       );
       await _drive(tester, camera.enable());
       await _settle(tester);
-      var stream = camera.currentTrack!.stream;
+      var stream = camera.track!.stream;
       expect(find.text('video ${stream.id} cover mirrored'), findsOneWidget);
 
       await _drive(tester, camera.switchCamera());
       await _settle(tester);
-      stream = camera.currentTrack!.stream;
-      expect(camera.currentTrack!.device, back);
+      stream = camera.track!.stream;
+      expect(camera.track!.device, back);
       expect(find.text('video ${stream.id} cover'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
@@ -228,7 +228,7 @@ void main() {
       (tester) async {
         final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
         await _drive(tester, camera.enable());
-        final stream = camera.currentTrack!.stream;
+        final stream = camera.track!.stream;
 
         // A parent that rebuilds for unrelated reasons (speaking highlights,
         // stats, audio levels), each time with a new view widget for the
@@ -279,7 +279,7 @@ void main() {
         ),
       );
       await _settle(tester);
-      final stream = camera.currentTrack!.stream;
+      final stream = camera.track!.stream;
       expect(find.text('video ${stream.id} contain'), findsOneWidget);
 
       await _drive(tester, camera.disable());
@@ -416,7 +416,7 @@ void main() {
       expect(cam.isSubscribed, isTrue);
       await _settle(tester);
       expect(h.pullsOf(bob), ['ann-1/c']);
-      final stream = cam.currentTrack!.stream;
+      final stream = cam.track!.stream;
       expect(log, ['initialize', 'setStream(${stream.id})']);
       expect(find.text('video ${stream.id} cover'), findsOneWidget);
 
@@ -468,7 +468,7 @@ void main() {
       );
       await tester.pumpWidget(build(0));
       await _settle(tester);
-      final stream = cam.currentTrack!.stream;
+      final stream = cam.track!.stream;
       expect(log, ['initialize', 'setStream(${stream.id})']);
 
       for (var n = 1; n <= 10; n++) {
@@ -600,7 +600,7 @@ void main() {
       await _drive(tester, cam.subscribe());
       await _settle(tester);
       expect(
-        find.text('video ${cam.currentTrack!.stream.id} cover'),
+        find.text('video ${cam.track!.stream.id} cover'),
         findsOneWidget,
       );
 

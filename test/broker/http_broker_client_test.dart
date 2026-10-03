@@ -66,7 +66,7 @@ void main() {
     BrokerHeadersProvider? headers,
   }) => HttpBrokerClient(
     roomId: 'room-1',
-    config: BrokerConfig(
+    config: BrokerOptions(
       baseUrl: Uri.parse(base),
       headers:
           headers ??
@@ -183,7 +183,7 @@ void main() {
             TrackObject.remote(
               sessionId: 'p1',
               trackName: 'cam',
-              simulcast: SimulcastConfig(
+              simulcast: SimulcastOptions(
                 preferredRid: 'b',
                 ridNotAvailable: SimulcastOrdering.asciibetical,
               ),
@@ -229,7 +229,7 @@ void main() {
               sessionId: 'p1',
               trackName: 'cam',
               mid: '3',
-              simulcast: SimulcastConfig(preferredRid: 'c'),
+              simulcast: SimulcastOptions(preferredRid: 'c'),
             ),
           ],
         ),
@@ -442,7 +442,7 @@ void main() {
       expect(
         () => HttpBrokerClient(
           roomId: '',
-          config: BrokerConfig(
+          config: BrokerOptions(
             baseUrl: Uri.parse('https://x'),
             headers: () async => {},
           ),
@@ -452,7 +452,7 @@ void main() {
       expect(
         () => HttpBrokerClient(
           roomId: 'a\r\nb',
-          config: BrokerConfig(
+          config: BrokerOptions(
             baseUrl: Uri.parse('https://x'),
             headers: () async => {},
           ),
@@ -761,7 +761,7 @@ void main() {
     test('an owned client is created when none is injected', () {
       final owned = HttpBrokerClient(
         roomId: 'r',
-        config: BrokerConfig(
+        config: BrokerOptions(
           baseUrl: Uri.parse('https://x'),
           headers: () async => {},
         ),

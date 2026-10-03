@@ -117,7 +117,7 @@ void main() {
         expect(pc.statsCalls, 0, reason: 'nobody listens');
 
         final snapshots = <RoomStats>[];
-        final first = bob.stats.listen(snapshots.add);
+        final first = bob.statsChanges.listen(snapshots.add);
         pump();
         expect(pc.statsCalls, 1, reason: 'a snapshot at once');
         async.elapse(const Duration(seconds: 4));
@@ -127,11 +127,11 @@ void main() {
 
         // A second listener shares the polls and gets the latest at once.
         final late = <RoomStats>[];
-        final second = bob.stats.listen(late.add);
+        final second = bob.statsChanges.listen(late.add);
         pump();
         expect(late, [snapshots.last]);
         expect(pc.statsCalls, 3);
-        expect(bob.currentStats, same(snapshots.last));
+        expect(bob.stats, same(snapshots.last));
 
         first.cancel();
         async.elapse(const Duration(seconds: 2));
@@ -149,7 +149,7 @@ void main() {
         expect(pc.statsCalls, 5);
         expect(taken.interval, isNotNull, reason: 'rates since the last');
 
-        final sub = bob.stats.listen(null);
+        final sub = bob.statsChanges.listen(null);
         pump();
         expect(pc.statsCalls, 6);
         bob.leave();
@@ -194,7 +194,7 @@ void main() {
         );
         final pc = h.pcOf(bob);
         final snapshots = <RoomStats>[];
-        final sub = bob.stats.listen(snapshots.add);
+        final sub = bob.statsChanges.listen(snapshots.add);
         pump();
         pc.failNext('getStats', StateError('renegotiating'));
         async.elapse(const Duration(seconds: 2));
@@ -246,15 +246,15 @@ void main() {
         final camStats = <LocalTrackStats?>[];
         final micStats = <RemoteTrackStats?>[];
         final subs = [
-          cam.stats.listen(camStats.add),
-          annMic.stats.listen(micStats.add),
+          cam.statsChanges.listen(camStats.add),
+          annMic.statsChanges.listen(micStats.add),
         ];
         pump();
         bytes = 100000;
         async.elapse(const Duration(seconds: 2));
         pump();
 
-        final stats = bob.currentStats!;
+        final stats = bob.stats!;
         expect(
           stats.connection!.roundTripTime,
           const Duration(milliseconds: 20),
@@ -275,8 +275,8 @@ void main() {
 
         expect(camStats.last, same(local));
         expect(micStats.last, same(remote));
-        expect(cam.currentStats, same(local));
-        expect(annMic.currentStats, same(remote));
+        expect(cam.stats, same(local));
+        expect(annMic.stats, same(remote));
         for (final s in subs) {
           s.cancel();
         }
@@ -290,7 +290,7 @@ void main() {
       run((async, pump) {
         final bob = join(pump, 'bob');
         final snapshots = <RoomStats>[];
-        final sub = bob.stats.listen(snapshots.add);
+        final sub = bob.statsChanges.listen(snapshots.add);
         pump();
         async.elapse(const Duration(seconds: 2));
         pump();
@@ -321,10 +321,10 @@ void main() {
         'lost when their media stops, and back', () {
       run((async, pump) {
         final bob = join(pump, 'bob', options: _withQuality);
-        final events = <ConnectionQualityChangedEvent>[];
+        final events = <ParticipantConnectionQualityChangedEvent>[];
         bob.events
-            .where((e) => e is ConnectionQualityChangedEvent)
-            .cast<ConnectionQualityChangedEvent>()
+            .where((e) => e is ParticipantConnectionQualityChangedEvent)
+            .cast<ParticipantConnectionQualityChangedEvent>()
             .listen(events.add);
         final ann = _Puppet(h, 'ann')..announce({'m': _mic});
         pump();
@@ -425,7 +425,7 @@ void main() {
             connectEarly: false,
             activeSpeaker: null,
             reconnect: ReconnectOptions(
-              backoff: BackoffConfig(initialDelay: Duration(seconds: 3)),
+              backoff: BackoffOptions(initialDelay: Duration(seconds: 3)),
             ),
           ),
         );
@@ -450,14 +450,14 @@ void main() {
 
         bob.debugSimulateConnectionFailure();
         pump();
-        expect(bob.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(bob.connectionState, RoomConnectionState.reconnecting);
         expect(bob.localParticipant.connectionQuality, ConnectionQuality.lost);
         expect(annP.connectionQuality, ConnectionQuality.unknown);
 
         async.elapse(const Duration(seconds: 4));
         pump();
         expect(
-          bob.currentConnectionState,
+          bob.connectionState,
           isNot(RoomConnectionState.reconnecting),
         );
         // The new session's stats rate everyone again.
@@ -516,7 +516,7 @@ void main() {
           .listen(null, onDone: annLeft.complete);
       final statsDone = Completer<void>();
       final localDone = Completer<void>();
-      bob.stats.listen(null, onDone: statsDone.complete);
+      bob.statsChanges.listen(null, onDone: statsDone.complete);
       bob.localParticipant.connectionQualityChanges.listen(
         null,
         onDone: localDone.complete,

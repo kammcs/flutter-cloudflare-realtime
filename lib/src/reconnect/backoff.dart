@@ -16,9 +16,9 @@ import 'package:flutter/foundation.dart';
 /// attempt, whichever comes first. Either limit can be `null` for "no
 /// limit"; with both `null` it retries forever.
 @immutable
-class BackoffConfig {
+class BackoffOptions {
   /// Creates a backoff configuration.
-  const BackoffConfig({
+  const BackoffOptions({
     this.initialDelay = const Duration(milliseconds: 500),
     this.maxDelay = const Duration(seconds: 10),
     this.multiplier = 2.0,
@@ -46,13 +46,13 @@ class BackoffConfig {
 
   /// Returns a copy with the given fields replaced. (It can't clear
   /// [maxAttempts] or [maxElapsed]; use the constructor for that.)
-  BackoffConfig copyWith({
+  BackoffOptions copyWith({
     Duration? initialDelay,
     Duration? maxDelay,
     double? multiplier,
     int? maxAttempts,
     Duration? maxElapsed,
-  }) => BackoffConfig(
+  }) => BackoffOptions(
     initialDelay: initialDelay ?? this.initialDelay,
     maxDelay: maxDelay ?? this.maxDelay,
     multiplier: multiplier ?? this.multiplier,
@@ -62,7 +62,7 @@ class BackoffConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is BackoffConfig &&
+      other is BackoffOptions &&
       other.initialDelay == initialDelay &&
       other.maxDelay == maxDelay &&
       other.multiplier == multiplier &&
@@ -75,7 +75,7 @@ class BackoffConfig {
 
   @override
   String toString() =>
-      'BackoffConfig(initial: $initialDelay, max: $maxDelay, '
+      'BackoffOptions(initial: $initialDelay, max: $maxDelay, '
       'x$multiplier, maxAttempts: $maxAttempts, maxElapsed: $maxElapsed)';
 }
 
@@ -99,7 +99,7 @@ class BackoffConfig {
 /// deterministic.
 ///
 /// Internal: not exported from the package barrel. The Room's reconnection
-/// owns it; apps tune it through [BackoffConfig].
+/// owns it; apps tune it through [BackoffOptions].
 class Backoff {
   /// Creates a backoff with [config].
   ///
@@ -123,7 +123,7 @@ class Backoff {
   }
 
   /// The configuration.
-  final BackoffConfig config;
+  final BackoffOptions config;
 
   final math.Random _random;
   final Duration Function() _clock;
@@ -148,8 +148,8 @@ class Backoff {
   }
 
   /// Returns the delay before the next attempt, or `null` when the episode
-  /// is exhausted (by [BackoffConfig.maxAttempts] or
-  /// [BackoffConfig.maxElapsed]).
+  /// is exhausted (by [BackoffOptions.maxAttempts] or
+  /// [BackoffOptions.maxElapsed]).
   ///
   /// The first call after construction or [reset] starts the episode clock.
   Duration? nextDelay() {

@@ -4,7 +4,7 @@ part of 'room.dart';
 ///
 /// The same object represents the participant for as long as they are in
 /// the room; its state changes in place. [changes] (and
-/// [Room.participants]) emit when it does.
+/// [Room.participantsChanges]) emit when it does.
 class RemoteParticipant implements Participant {
   RemoteParticipant._(this._room, ParticipantState state)
     : participantId = state.participantId,
@@ -67,7 +67,7 @@ class RemoteParticipant implements Participant {
   Stream<RemoteParticipant> get changes => _changes.stream;
 
   /// Whether the participant is speaking now: they are in
-  /// [Room.activeSpeakers].
+  /// [Room.activeSpeakersChanges].
   @override
   bool get isSpeaking =>
       _room._speakers.monitor.currentSpeakers.contains(participantId);
@@ -80,20 +80,20 @@ class RemoteParticipant implements Participant {
 
   /// The participant's smoothed microphone level, `0..1` (0 while not
   /// pulled or silent), for a level meter. Updated every
-  /// [ActiveSpeakerConfig.pollInterval].
+  /// [ActiveSpeakerOptions.pollInterval].
   double get audioLevel =>
       _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
 
   /// [audioLevel], replaying the current value to each new listener and
   /// then emitting its changes.
-  Stream<double> get audioLevels => _room._speakers.monitor.snapshots
+  Stream<double> get audioLevelChanges => _room._speakers.monitor.snapshots
       .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
       .distinct();
 
   /// How well this participant's media arrives (`docs/design.md` §7.1):
   /// the loss, audio jitter and video freezes on their pulled tracks, and
   /// [ConnectionQuality.lost] when none of their pulled, unmuted tracks
-  /// received anything for [ConnectionQualityConfig.lostAfter] while they
+  /// received anything for [ConnectionQualityOptions.lostAfter] while they
   /// are still in the room. It reflects their uplink and this client's
   /// downlink together; compare with [LocalParticipant.connectionQuality].
   /// [ConnectionQuality.unknown] until something of theirs is pulled, and
@@ -221,12 +221,12 @@ class RemoteTrackLease {
 /// The room pulls the track only while it is subscribed: automatically for
 /// the kinds in [RoomOptions.autoSubscribe], after [subscribe], or while a
 /// [RemoteTrackLease] (such as a [ParticipantVideoView]'s) holds it. The
-/// pulled track arrives on [track], wrapped in a `MediaStream` for
+/// pulled track arrives on [trackChanges], wrapped in a `MediaStream` for
 /// rendering.
 ///
 /// When the publisher moves to a new session (they reconnected), the room
-/// pulls the track again from there and [track] emits the new one. When the
-/// track is unpublished, the subscription is closed and [track] emits
+/// pulls the track again from there and [trackChanges] emits the new one. When the
+/// track is unpublished, the subscription is closed and [trackChanges] emits
 /// `null`.
 class RemoteTrackPublication {
   RemoteTrackPublication._(this.participant, this.trackName, TrackInfo info)
@@ -288,9 +288,9 @@ class RemoteTrackPublication {
   SimulcastInfo? get simulcast => _info.simulcast;
 
   /// Whether the publisher has muted the track (they send no media).
-  bool get muted => _info.muted;
+  bool get isMuted => _info.muted;
 
-  /// [muted], replaying the current value to each new listener.
+  /// [isMuted], replaying the current value to each new listener.
   Stream<bool> get mutedChanges => _muted.stream;
 
   /// Whether the track should be pulled: auto-subscribed, [subscribe]d or
@@ -331,34 +331,34 @@ class RemoteTrackPublication {
 
   /// [layerState], replaying the current value to each new listener and
   /// emitting its changes. Completes when the track is closed.
-  Stream<RemoteTrackLayerState> get layerChanges => _layers.state.stream;
+  Stream<RemoteTrackLayerState> get layerStateChanges => _layers.state.stream;
 
   /// The pulled track, ready to render, or `null` while not subscribed (or
   /// not pulled yet).
-  RenderableTrack? get currentTrack => _track.value;
+  RenderableTrack? get track => _track.value;
 
   /// The pulled track, replaying the current one to each new listener. It
   /// emits a new one when the track is pulled again (for example from the
   /// publisher's new session), and `null` when unsubscribed. The room
   /// disposes each stream it replaces.
-  Stream<RenderableTrack?> get track => _track.stream;
+  Stream<RenderableTrack?> get trackChanges => _track.stream;
 
-  /// This track's typed stats from [Room.stats] (`docs/design.md` §7.1),
+  /// This track's typed stats from [Room.statsChanges] (`docs/design.md` §7.1),
   /// replaying the latest: `null` while it isn't pulled on the room's
   /// current session. Listening makes the room poll.
-  Stream<RemoteTrackStats?> get stats =>
+  Stream<RemoteTrackStats?> get statsChanges =>
       _room._stats.stream.map((stats) => stats.remote[id]);
 
-  /// This track's stats in the latest [Room.stats] snapshot, if any.
-  RemoteTrackStats? get currentStats => _room._stats.latest?.remote[id];
+  /// This track's stats in the latest [Room.statsChanges] snapshot, if any.
+  RemoteTrackStats? get stats => _room._stats.latest?.remote[id];
 
-  /// Emits this publication whenever [muted], [isSubscribed],
-  /// [currentTrack], [subscriptionState] or [error] changes. Completes when
+  /// Emits this publication whenever [isMuted], [isSubscribed],
+  /// [track], [subscriptionState] or [error] changes. Completes when
   /// the track is closed.
   Stream<RemoteTrackPublication> get changes => _changes.stream;
 
   /// Subscribes (pulls the track) and completes once the pull has been
-  /// attempted. The track then arrives on [track]. A failed pull is retried
+  /// attempted. The track then arrives on [trackChanges]. A failed pull is retried
   /// (see [RoomOptions.pullRetry]); check [error] or listen for
   /// [TrackSubscriptionFailedEvent].
   Future<void> subscribe() {
@@ -566,7 +566,7 @@ class RemoteTrackPublication {
     final first = subscription.track;
     if (first != null) await _wrap(subscription, first);
     if (!identical(_subscription, subscription) || _track.isClosed) return;
-    _trackListener = subscription.trackStream.listen((track) {
+    _trackListener = subscription.trackChanges.listen((track) {
       if (identical(_track.value?.track, track)) return;
       unawaited(_wrap(subscription, track));
     });
@@ -697,5 +697,5 @@ class RemoteTrackPublication {
   @override
   String toString() =>
       'RemoteTrackPublication($id, ${kind.name}, ${source.name}'
-      '${muted ? ', muted' : ''}${isSubscribed ? ', subscribed' : ''})';
+      '${isMuted ? ', muted' : ''}${isSubscribed ? ', subscribed' : ''})';
 }

@@ -106,7 +106,7 @@ void main() {
           .id;
 
       final speakers = <List<String>>[];
-      bob.activeSpeakers.listen(speakers.add);
+      bob.activeSpeakersChanges.listen(speakers.add);
       final annSpeaking = <bool>[];
       bob.participant('ann')!.speakingChanges.listen(annSpeaking.add);
 
@@ -124,8 +124,8 @@ void main() {
       ];
 
       poll(3);
-      expect(bob.currentActiveSpeakers, ['ann']);
-      expect(bob.currentDominantSpeaker, 'ann');
+      expect(bob.activeSpeakers, ['ann']);
+      expect(bob.dominantSpeaker, 'ann');
       expect(bob.participant('ann')!.isSpeaking, isTrue);
       expect(bob.participant('ann')!.audioLevel, greaterThan(0.1));
       expect(bob.participant('cat')!.isSpeaking, isFalse);
@@ -134,12 +134,12 @@ void main() {
       // Cat speaks up, louder; the order follows.
       catLevel = 0.6;
       poll(3);
-      expect(bob.currentActiveSpeakers, ['cat', 'ann']);
+      expect(bob.activeSpeakers, ['cat', 'ann']);
 
       // Ann stops: released after the hold time.
       annLevel = 0;
       poll(8);
-      expect(bob.currentActiveSpeakers, ['cat']);
+      expect(bob.activeSpeakers, ['cat']);
       expect(bob.participant('ann')!.isSpeaking, isFalse);
       expect(speakers, [
         isEmpty,
@@ -153,13 +153,13 @@ void main() {
       cat.signaling.leave();
       pump();
       poll();
-      expect(bob.currentActiveSpeakers, isEmpty);
+      expect(bob.activeSpeakers, isEmpty);
 
       bob.leave();
       ann.signaling.dispose();
       cat.signaling.dispose();
       pump();
-      expect(bob.currentActiveSpeakers, isEmpty);
+      expect(bob.activeSpeakers, isEmpty);
     });
   });
 
@@ -187,15 +187,15 @@ void main() {
         ];
 
         final levels = <double>[];
-        bob.localParticipant.audioLevels.listen(levels.add);
+        bob.localParticipant.audioLevelChanges.listen(levels.add);
         poll(3);
         expect(bob.localParticipant.isSpeaking, isTrue);
-        expect(bob.currentActiveSpeakers, ['bob']);
+        expect(bob.activeSpeakers, ['bob']);
         // Its own track's level only, not the other source's.
         expect(bob.localParticipant.audioLevel, inInclusiveRange(0.2, 0.5));
         expect(levels.last, bob.localParticipant.audioLevel);
         expect(
-          bob.currentDominantSpeaker,
+          bob.dominantSpeaker,
           isNull,
           reason: 'local not dominant',
         );
@@ -204,7 +204,7 @@ void main() {
         pump();
         poll(6);
         expect(bob.localParticipant.isSpeaking, isFalse);
-        expect(bob.currentActiveSpeakers, isEmpty);
+        expect(bob.activeSpeakers, isEmpty);
         expect(bob.localParticipant.audioLevel, lessThan(0.05));
         // Not detectable: the muted sender has no track, so no level.
         expect(bob.localParticipant.canDetectSpeakingWhileMuted, isFalse);
@@ -241,12 +241,12 @@ void main() {
       pc.stats = [_inbound('in', mid: mid, level: 0.5)];
       poll(3);
       expect(pc.statsCalls, 3);
-      expect(bob.currentActiveSpeakers, ['ann']);
+      expect(bob.activeSpeakers, ['ann']);
 
       pc.failNext('getStats', StateError('renegotiating'));
       poll();
       expect(pc.statsCalls, 4);
-      expect(bob.currentActiveSpeakers, ['ann'], reason: 'skipped');
+      expect(bob.activeSpeakers, ['ann'], reason: 'skipped');
 
       bob.leave();
       pump();
@@ -278,7 +278,7 @@ void main() {
       pc.stats = [_inbound('in', mid: mid, level: 0.5)];
       poll(8);
       expect(pc.statsCalls, 0);
-      expect(bob.currentActiveSpeakers, isEmpty);
+      expect(bob.activeSpeakers, isEmpty);
       bob.leave();
       ann.signaling.dispose();
       pump();

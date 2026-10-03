@@ -64,7 +64,7 @@ class SfuDataChannelException extends SfuSessionException {
 /// Like track publications, a channel outlives its session. When the
 /// session fails or closes, the channel becomes
 /// [SfuDataChannelState.interrupted]; moving it to a new session keeps its
-/// [messages] and [states] streams, so listeners carry on.
+/// [messages] and [stateChanges] streams, so listeners carry on.
 sealed class SfuDataChannel {
   SfuDataChannel._(this.name, this.profile);
 
@@ -100,7 +100,7 @@ sealed class SfuDataChannel {
   SfuDataChannelState get state => _state.value;
 
   /// The state, replaying the current value to each new listener.
-  Stream<SfuDataChannelState> get states => _state.stream;
+  Stream<SfuDataChannelState> get stateChanges => _state.stream;
 
   /// Why the channel failed or was interrupted, if it did.
   Object? get error => _error;
@@ -120,7 +120,7 @@ sealed class SfuDataChannel {
   /// [SfuSessionException] if it becomes interrupted, failed or closed
   /// first.
   Future<void> whenOpen() async {
-    await for (final state in states) {
+    await for (final state in stateChanges) {
       switch (state) {
         case SfuDataChannelState.open:
           return;

@@ -139,7 +139,7 @@ void main() {
       final alice = await h.join('alice');
       final events = _record(alice);
       final share = await alice.localParticipant.publishScreen();
-      final track = share.mediaSource.currentTrack!.track as FakeTrack;
+      final track = share.mediaSource.track!.track as FakeTrack;
       track.endExternally();
       await _settle();
       expect(share.isPublished, isFalse);
@@ -163,7 +163,7 @@ void main() {
       final events = _record(alice);
       final share = await alice.localParticipant.publishScreen();
       expect(service.calls, ['consent', 'start', startsWith('watch:')]);
-      final track = share.mediaSource.currentTrack!.track as FakeTrack;
+      final track = share.mediaSource.track!.track as FakeTrack;
 
       service.stopFromSystem(track.id);
       await _settle();
@@ -304,14 +304,14 @@ void main() {
       h.pcOf(alice).statsProvider = () => [
         StatsReport('ms', 'media-source', 0, {
           'kind': 'video',
-          'trackIdentifier': share.mediaSource.currentTrack?.track.id,
+          'trackIdentifier': share.mediaSource.track?.track.id,
           'frames': frames,
         }),
       ];
     }
 
-    List<LocalScreenShareStalledEvent> stalled(List<RoomEvent> events) =>
-        events.whereType<LocalScreenShareStalledEvent>().toList();
+    List<LocalTrackStalledEvent> stalled(List<RoomEvent> events) =>
+        events.whereType<LocalTrackStalledEvent>().toList();
 
     test('reports a share without frames once', () {
       run((async, alice, share, events) {
@@ -396,7 +396,7 @@ void main() {
               RTCPeerConnectionState.RTCPeerConnectionStateConnecting,
             );
         async.elapse(const Duration(seconds: 10));
-        expect(alice.currentConnectionState, RoomConnectionState.connecting);
+        expect(alice.connectionState, RoomConnectionState.connecting);
         expect(stalled(events), isEmpty);
         h
             .pcOf(alice)

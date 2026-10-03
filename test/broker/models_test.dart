@@ -53,7 +53,7 @@ void main() {
       const track = TrackObject.remote(
         sessionId: 'pub-1',
         trackName: 'cam',
-        simulcast: SimulcastConfig(
+        simulcast: SimulcastOptions(
           preferredRid: 'b',
           priorityOrdering: SimulcastOrdering.asciibetical,
           ridNotAvailable: SimulcastOrdering.asciibetical,
@@ -74,7 +74,7 @@ void main() {
     });
 
     test('simulcast omits unset orderings', () {
-      expect(const SimulcastConfig(preferredRid: 'a').toJson(), {
+      expect(const SimulcastOptions(preferredRid: 'a').toJson(), {
         'preferredRid': 'a',
       });
     });
@@ -229,7 +229,7 @@ void main() {
             sessionId: 'p',
             trackName: 'cam',
             mid: '8',
-            simulcast: SimulcastConfig(preferredRid: 'c'),
+            simulcast: SimulcastOptions(preferredRid: 'c'),
           ),
         ],
       );

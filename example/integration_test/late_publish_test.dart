@@ -62,12 +62,12 @@ void main() {
     _log('joined (connectEarly: $connectEarly); idle for ${_idle.inSeconds} s');
     await Future<void>.delayed(_idle);
     _log(
-      'after idling: session ${alice.session.currentConnectionState.name}, '
-      'room ${alice.currentConnectionState.name}',
+      'after idling: session ${alice.session.connectionState.name}, '
+      'room ${alice.connectionState.name}',
     );
     if (connectEarly) {
       expect(
-        alice.session.currentConnectionState,
+        alice.session.connectionState,
         SfuConnectionState.connected,
         reason: 'the session connected at join',
       );
@@ -106,7 +106,7 @@ void main() {
 
     await published.publication.whenSending().timeout(_timeout);
     await _received(bob, alice, published.kind);
-    expect(alice.currentConnectionState, RoomConnectionState.connected);
+    expect(alice.connectionState, RoomConnectionState.connected);
   }
 
   testWidgets(
@@ -145,7 +145,7 @@ Future<void> _received(Room bob, Room alice, TrackKind kind) async {
   final deadline = DateTime.now().add(_timeout);
   RemoteTrackPublication? pulled;
   while (pulled == null && DateTime.now().isBefore(deadline)) {
-    for (final p in bob.currentParticipants) {
+    for (final p in bob.participants) {
       final track = kind == TrackKind.video ? p.camera : p.microphone;
       if (p.sessionId == alice.session.sessionId &&
           track != null &&
@@ -159,7 +159,7 @@ Future<void> _received(Room bob, Room alice, TrackKind kind) async {
   }
   if (pulled == null) {
     // What Bob has, for the next time this fails.
-    for (final p in bob.currentParticipants) {
+    for (final p in bob.participants) {
       final track = kind == TrackKind.video ? p.camera : p.microphone;
       _log(
         'Bob sees ${p.participantId} on ${p.sessionId} (Alice is on '

@@ -514,18 +514,18 @@ void main() {
         'camera, and leaves it', () async {
       final alice = await h.join('alice');
       expect(alice.canSelectAudioRoute, isTrue);
-      expect(alice.currentAudioRoute, _earpiece);
-      expect(alice.speakerphone, isFalse);
+      expect(alice.audioRoute, _earpiece);
+      expect(alice.isSpeakerphoneOn, isFalse);
 
       await alice.localParticipant.publishCamera();
       await _settle();
-      expect(alice.currentAudioRoute, _speaker);
-      expect(alice.speakerphone, isTrue);
+      expect(alice.audioRoute, _speaker);
+      expect(alice.isSpeakerphoneOn, isTrue);
 
       await alice.selectAudioRoute(_earpiece);
-      expect(alice.currentAudioRoute, _earpiece);
+      expect(alice.audioRoute, _earpiece);
       await alice.setSpeakerphone(true);
-      expect(alice.currentAudioRoute, _speaker);
+      expect(alice.audioRoute, _speaker);
 
       await alice.leave();
       expect(phone.calls.last, 'deactivate');
@@ -539,7 +539,7 @@ void main() {
           'alice',
           options: const RoomOptions(connectEarly: false, speakerphone: true),
         );
-        expect(alice.currentAudioRoute, _speaker);
+        expect(alice.audioRoute, _speaker);
         await alice.leave();
       },
     );
@@ -557,8 +557,8 @@ void main() {
       await bob.localParticipant.publishMicrophone();
       await _settle();
       final pulled = alice.participant('bob')!.microphone!;
-      final remote = pulled.currentTrack!.track;
-      final local = mic.mediaSource.currentBroadcastTrack!.track;
+      final remote = pulled.track!.track;
+      final local = mic.mediaSource.broadcastTrack!.track;
       expect(alice.canDetectAudioInterruptions, isTrue);
 
       phone.interrupt(
@@ -567,19 +567,19 @@ void main() {
       await _settle();
       expect(alice.audioInterruption, CallInterruptionReason.phoneCall);
       expect(
-        events.whereType<CallInterruptedEvent>().single.reason,
+        events.whereType<RoomAudioInterruptedEvent>().single.reason,
         CallInterruptionReason.phoneCall,
       );
       expect(remote.enabled, isFalse);
       expect(local.enabled, isFalse);
-      expect(mic.muted, isFalse, reason: 'not announced as muted');
+      expect(mic.isMuted, isFalse, reason: 'not announced as muted');
       expect(h.announced('alice')!.tracks.values.single.muted, isFalse);
 
       phone.interrupt(const AudioInterruptionSignal.ended());
       await _settle();
       expect(alice.audioInterruption, isNull);
       expect(
-        events.whereType<CallResumedEvent>().single.reason,
+        events.whereType<RoomAudioResumedEvent>().single.reason,
         CallInterruptionReason.phoneCall,
       );
       expect(remote.enabled, isTrue);
@@ -600,7 +600,7 @@ void main() {
         const AudioInterruptionSignal.began(CallInterruptionReason.otherAudio),
       );
       await _settle();
-      final track = source.currentBroadcastTrack!.track;
+      final track = source.broadcastTrack!.track;
       expect(track.enabled, isFalse);
 
       phone.refuseResume = true;
@@ -623,9 +623,9 @@ void main() {
     test('proximity follows the route; RoomOptions.proximitySensor turns it '
         'off', () async {
       final alice = await h.join('alice');
-      expect(alice.proximitySensorActive, isTrue);
+      expect(alice.isProximitySensorActive, isTrue);
       await alice.setSpeakerphone(true);
-      expect(alice.proximitySensorActive, isFalse);
+      expect(alice.isProximitySensorActive, isFalse);
       await alice.leave();
       expect(phone.proximityOn, isFalse);
 
@@ -633,8 +633,8 @@ void main() {
         'bob',
         options: const RoomOptions(proximitySensor: false),
       );
-      expect(bob.currentAudioRoute, _earpiece);
-      expect(bob.proximitySensorActive, isFalse);
+      expect(bob.audioRoute, _earpiece);
+      expect(bob.isProximitySensorActive, isFalse);
       await bob.leave();
     });
 
@@ -644,14 +644,14 @@ void main() {
       final alice = await h.join('alice');
       expect(alice.canSelectAudioRoute, isFalse);
       expect(alice.canSetSpeakerphone, isFalse);
-      expect(alice.currentAudioRoutes, isEmpty);
-      expect(alice.currentAudioRoute, isNull);
+      expect(alice.audioRoutes, isEmpty);
+      expect(alice.audioRoute, isNull);
       expect(() => alice.setSpeakerphone(true), throwsUnsupportedError);
       expect(() => alice.selectAudioRoute(_speaker), throwsUnsupportedError);
       expect(alice.canDetectAudioInterruptions, isFalse);
       expect(alice.audioInterruption, isNull);
       expect(await alice.resumeAudio(), isTrue);
-      expect(alice.proximitySensorActive, isFalse);
+      expect(alice.isProximitySensorActive, isFalse);
       await alice.leave();
     });
   });

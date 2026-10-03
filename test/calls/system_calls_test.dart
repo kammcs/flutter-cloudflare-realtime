@@ -214,7 +214,7 @@ void main() {
         'video': true,
         'outgoing': true,
       });
-      expect(const SystemCallsConfig(ringtoneSound: 'ring.caf').toMap(), {
+      expect(const SystemCallsOptions(ringtoneSound: 'ring.caf').toMap(), {
         'supportsVideo': true,
         'maximumCalls': 1,
         'supportsHolding': true,
@@ -254,7 +254,7 @@ void main() {
       test('without the native side, configure says unsupported', () async {
         expect(
           await MethodChannelSystemCallBackend().configure(
-            const SystemCallsConfig(),
+            const SystemCallsOptions(),
           ),
           isFalse,
         );
@@ -286,7 +286,7 @@ void main() {
           };
         });
         final backend = MethodChannelSystemCallBackend();
-        expect(await backend.configure(const SystemCallsConfig()), isTrue);
+        expect(await backend.configure(const SystemCallsOptions()), isTrue);
         await expectLater(
           backend.reportIncomingCall(
             const SystemCallInfo(id: _id, handle: _ada),
@@ -378,7 +378,7 @@ void main() {
     test('an incoming call: ringing, answered from the system, held, muted, '
         'ended', () async {
       expect(await calls().configure(), isTrue);
-      expect(calls().supported, isTrue);
+      expect(calls().isSupported, isTrue);
       final events = <SystemCallEvent>[];
       calls().events.listen(events.add);
 
@@ -408,7 +408,7 @@ void main() {
       system.system(const CallMutedSignal(_id, muted: true));
       system.system(const CallDtmfSignal(_id, '5'));
       await _settle();
-      expect(call.muted, isTrue);
+      expect(call.isMuted, isTrue);
 
       system.system(
         const CallEndedSignal(_id, SystemCallEndReason.remoteEnded),
@@ -444,7 +444,7 @@ void main() {
 
       await call.setMuted(true);
       await _settle();
-      expect(call.muted, isTrue);
+      expect(call.isMuted, isTrue);
 
       await call.end();
       await _settle();
@@ -480,7 +480,7 @@ void main() {
         handle: _ada,
         video: true,
       );
-      expect(call.outgoing, isTrue);
+      expect(call.isOutgoing, isTrue);
       expect(call.state, SystemCallState.dialing);
       await call.reportConnecting();
       expect(call.state, SystemCallState.connecting);
@@ -489,7 +489,7 @@ void main() {
       expect(() => call.reportConnected(), throwsStateError);
       await call.update(displayName: 'Ada L.', video: false);
       expect(call.displayName, 'Ada L.');
-      expect(call.video, isFalse);
+      expect(call.isVideo, isFalse);
       expect(system.calls, [
         'configure',
         'startOutgoingCall $_id',
@@ -569,14 +569,14 @@ void main() {
       () async {
         system.configureResult = false;
         expect(await calls().configure(), isFalse);
-        expect(calls().supported, isFalse);
-        expect(calls().voipPush.supported, isFalse);
+        expect(calls().isSupported, isFalse);
+        expect(calls().voipPush.isSupported, isFalse);
         final call = await calls().reportIncomingCall(handle: _ada);
         await call.answer();
         await call.setMuted(true);
         await _settle();
         expect(call.state, SystemCallState.active);
-        expect(call.muted, isTrue);
+        expect(call.isMuted, isTrue);
         await call.end();
         await _settle();
         expect(call.endReason, SystemCallEndReason.local);
@@ -604,7 +604,7 @@ void main() {
         ..supportsVoipPush = true
         ..token = 'beef';
       await calls().configure();
-      expect(calls().voipPush.supported, isTrue);
+      expect(calls().voipPush.isSupported, isTrue);
       expect(await calls().voipPush.register(), 'beef');
       expect(calls().voipPush.token, 'beef');
       system.system(const VoipTokenSignal('f00d'));
@@ -784,26 +784,26 @@ void main() {
       // The lock screen mutes, then unmutes.
       system.system(const CallMutedSignal(_id, muted: true));
       await _settle();
-      expect(mic.muted, isTrue);
+      expect(mic.isMuted, isTrue);
       expect(system.calls.where((c) => c.startsWith('setMuted')), isEmpty);
       system.system(const CallMutedSignal(_id, muted: false));
       await _settle();
-      expect(mic.muted, isFalse);
+      expect(mic.isMuted, isFalse);
 
       // The app mutes: the system's button follows, nothing loops.
       await mic.mute();
       await _settle();
       expect(system.calls.last, 'setMuted $_id true');
-      expect(call.muted, isTrue);
-      expect(mic.muted, isTrue);
+      expect(call.isMuted, isTrue);
+      expect(mic.isMuted, isTrue);
 
       // Quick toggles end where the app left them.
       await mic.unmute();
       await mic.mute();
       await mic.unmute();
       await _settle();
-      expect(mic.muted, isFalse);
-      expect(call.muted, isFalse);
+      expect(mic.isMuted, isFalse);
+      expect(call.isMuted, isFalse);
 
       await alice.leave();
     });
@@ -817,7 +817,7 @@ void main() {
       alice.attachSystemCall(call);
       final mic = await alice.localParticipant.publishMicrophone();
       await _settle();
-      expect(mic.muted, isTrue, reason: 'the system was muted');
+      expect(mic.isMuted, isTrue, reason: 'the system was muted');
       await alice.leave();
 
       final bob = await h.join('bob');
@@ -828,8 +828,8 @@ void main() {
       bob.attachSystemCall(call2);
       await _settle();
       expect(system.calls.last, 'setMuted $_id2 true');
-      expect(call2.muted, isTrue);
-      expect(bobMic.muted, isTrue);
+      expect(call2.isMuted, isTrue);
+      expect(bobMic.isMuted, isTrue);
       await bob.leave();
     });
 

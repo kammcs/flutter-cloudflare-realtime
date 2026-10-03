@@ -177,10 +177,10 @@ class SfuSession {
 
   /// The connection state, replaying the current value to each new
   /// listener. Completes after [close].
-  Stream<SfuConnectionState> get connectionState => _connectionState.stream;
+  Stream<SfuConnectionState> get connectionStateChanges => _connectionState.stream;
 
   /// The current connection state.
-  SfuConnectionState get currentConnectionState => _connectionState.value;
+  SfuConnectionState get connectionState => _connectionState.value;
 
   /// Why the session failed, or null if it hasn't.
   SfuSessionFailure? get failure => _failure;
@@ -210,7 +210,7 @@ class SfuSession {
 
   /// Whether an SDP exchange has completed on this session (a push, a pull
   /// or [establishConnection]), so its peer connection has something to
-  /// connect. Until then [connectionState] stays
+  /// connect. Until then [connectionStateChanges] stays
   /// [SfuConnectionState.initial] and the SFU may expire the session.
   bool get hasNegotiated => _negotiated;
   bool _negotiated = false;
@@ -372,7 +372,7 @@ class SfuSession {
       trackName: trackName,
       simulcast: preferredRid == null
           ? null
-          : SimulcastConfig(
+          : SimulcastOptions(
               preferredRid: preferredRid,
               priorityOrdering: priorityOrdering,
               ridNotAvailable: ridNotAvailable,
@@ -384,7 +384,7 @@ class SfuSession {
   /// Pulls an existing [subscription] on this session, from
   /// [remoteSessionId] if given (the publisher moved to a new session) or
   /// from its current [RemoteTrackSubscription.remoteSessionId]. Its
-  /// [RemoteTrackSubscription.trackStream] then emits the new track.
+  /// [RemoteTrackSubscription.trackChanges] then emits the new track.
   ///
   /// Throws a [StateError] if the subscription is closed or still on a
   /// session.
@@ -450,7 +450,7 @@ class SfuSession {
   /// the same batch does.
   Future<void> _updateLayer(
     RemoteTrackSubscription subscription,
-    SimulcastConfig config,
+    SimulcastOptions config,
   ) async {
     final request = ++subscription._layerRequests;
     var waited = Duration.zero;
@@ -611,7 +611,7 @@ class SfuSession {
   /// Runs on the operation queue. Does nothing if something was negotiated
   /// already ([hasNegotiated]) or the transport is set up. Completes once
   /// the SFU's offer is answered, not when the peer connection connects
-  /// (watch [connectionState]). Throws the broker's exception or an
+  /// (watch [connectionStateChanges]). Throws the broker's exception or an
   /// [SfuRequestException] if that fails; a `SessionGoneException` also
   /// fails the session, like any call.
   Future<void> establishConnection() {
@@ -1380,7 +1380,7 @@ class SfuSession {
 
   @override
   String toString() =>
-      'SfuSession($sessionId, ${currentConnectionState.name}'
+      'SfuSession($sessionId, ${connectionState.name}'
       '${_failure == null ? '' : ', $_failure'})';
 }
 
@@ -1642,7 +1642,7 @@ class _UpdateItem extends _OpItem {
   _UpdateItem(this.subscription, this.config);
 
   final RemoteTrackSubscription subscription;
-  final SimulcastConfig config;
+  final SimulcastOptions config;
 }
 
 class _CloseItem extends _OpItem {

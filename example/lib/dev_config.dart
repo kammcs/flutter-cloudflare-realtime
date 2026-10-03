@@ -12,7 +12,7 @@ import 'ws_signaling.dart';
 
 /// The dev server's URL, its dev token, and who you are.
 ///
-/// It produces the two things a call needs: a [BrokerConfig] for the SFU
+/// It produces the two things a call needs: a [BrokerOptions] for the SFU
 /// session ([brokerConfig]) and a [WsSignaling] for presence
 /// ([createSignaling]). Both point at the same server.
 ///
@@ -130,8 +130,8 @@ class DevServerConfig {
   };
 
   /// The broker settings: the server's root, with [brokerHeaders].
-  BrokerConfig brokerConfig({Duration timeout = const Duration(seconds: 15)}) =>
-      BrokerConfig(
+  BrokerOptions brokerConfig({Duration timeout = const Duration(seconds: 15)}) =>
+      BrokerOptions(
         baseUrl: serverUrl,
         headers: () async => brokerHeaders,
         timeout: timeout,

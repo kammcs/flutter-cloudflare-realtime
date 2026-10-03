@@ -51,16 +51,16 @@ class MediaDeviceList {
 
   /// Every device, in the order the platform lists them. Replays the current
   /// list to new listeners.
-  Stream<List<MediaDevice>> get devices => _devices.stream;
+  Stream<List<MediaDevice>> get devicesChanges => _devices.stream;
 
   /// The current device list. Empty until the first enumeration finishes.
-  List<MediaDevice> get currentDevices => _devices.value;
+  List<MediaDevice> get devices => _devices.value;
 
   /// Devices of one [kind]: replays the current list, then emits when it
   /// changes.
-  Stream<List<MediaDevice>> devicesOfKind(MediaDeviceKind kind) {
+  Stream<List<MediaDevice>> devicesOfKindChanges(MediaDeviceKind kind) {
     List<MediaDevice>? previous;
-    return devices.map((all) => _ofKind(all, kind)).where((list) {
+    return devicesChanges.map((all) => _ofKind(all, kind)).where((list) {
       if (previous != null && _listEquality.equals(previous, list)) {
         return false;
       }
@@ -70,20 +70,20 @@ class MediaDeviceList {
   }
 
   /// The current devices of one [kind].
-  List<MediaDevice> currentDevicesOfKind(MediaDeviceKind kind) =>
-      _ofKind(currentDevices, kind);
+  List<MediaDevice> devicesOfKind(MediaDeviceKind kind) =>
+      _ofKind(devices, kind);
 
-  /// Microphones. See [devicesOfKind].
-  Stream<List<MediaDevice>> get audioInputs =>
-      devicesOfKind(MediaDeviceKind.audioInput);
+  /// Microphones. See [devicesOfKindChanges].
+  Stream<List<MediaDevice>> get audioInputsChanges =>
+      devicesOfKindChanges(MediaDeviceKind.audioInput);
 
-  /// Cameras. See [devicesOfKind].
-  Stream<List<MediaDevice>> get videoInputs =>
-      devicesOfKind(MediaDeviceKind.videoInput);
+  /// Cameras. See [devicesOfKindChanges].
+  Stream<List<MediaDevice>> get videoInputsChanges =>
+      devicesOfKindChanges(MediaDeviceKind.videoInput);
 
-  /// Speakers and headsets. See [devicesOfKind].
-  Stream<List<MediaDevice>> get audioOutputs =>
-      devicesOfKind(MediaDeviceKind.audioOutput);
+  /// Speakers and headsets. See [devicesOfKindChanges].
+  Stream<List<MediaDevice>> get audioOutputsChanges =>
+      devicesOfKindChanges(MediaDeviceKind.audioOutput);
 
   static List<MediaDevice> _ofKind(
     List<MediaDevice> all,
@@ -108,7 +108,7 @@ class MediaDeviceList {
     }
   }
 
-  /// Stops watching for device changes and completes [devices].
+  /// Stops watching for device changes and completes [devicesChanges].
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

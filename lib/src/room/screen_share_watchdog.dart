@@ -1,7 +1,7 @@
 part of 'room.dart';
 
 /// Reports a local screen share whose capture delivers no frames
-/// ([LocalScreenShareStalledEvent]; `docs/design.md` §10).
+/// ([LocalTrackStalledEvent]; `docs/design.md` §10).
 ///
 /// On macOS a missing Screen Recording permission doesn't make
 /// `getDisplayMedia` fail: `flutter_webrtc` returns a live track and
@@ -24,7 +24,7 @@ class _ScreenShareWatchdog {
     this._share, {
     required this.timeout,
   }) {
-    _tracks = _share.track.listen(_onTrack);
+    _tracks = _share.trackChanges.listen(_onTrack);
   }
 
   final Room _room;
@@ -59,7 +59,7 @@ class _ScreenShareWatchdog {
       dispose();
       return;
     }
-    if (_room.currentConnectionState != RoomConnectionState.connected ||
+    if (_room.connectionState != RoomConnectionState.connected ||
         _room.isReconnecting) {
       return;
     }
@@ -82,7 +82,7 @@ class _ScreenShareWatchdog {
     _withoutFrames += interval;
     if (_withoutFrames < timeout) return;
     _stopTimer();
-    _room._emit(LocalScreenShareStalledEvent(_publication, _stalledError()));
+    _room._emit(LocalTrackStalledEvent(_publication, _stalledError()));
   }
 
   /// Whether the capture of [track] produced frames: `true` or `false`

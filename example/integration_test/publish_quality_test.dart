@@ -126,8 +126,8 @@ void main() {
       _log(
         'captured ${source.$1}x${source.$2} (${source.$3}), announced '
         '${announced!.width}x${announced.height} '
-        '(the camera reported ${published.mediaSource.currentTrack?.track.getSettings()['width']}x'
-        '${published.mediaSource.currentTrack?.track.getSettings()['height']})',
+        '(the camera reported ${published.mediaSource.track?.track.getSettings()['width']}x'
+        '${published.mediaSource.track?.track.getSettings()['height']})',
       );
       await _poll(
         () async => cam.simulcast,
@@ -332,7 +332,7 @@ void _log(String message) => debugPrint('[publish-quality] $message');
 /// Alice's camera as Bob sees it.
 Future<RemoteTrackPublication> _remoteCamera(Room bob, Room alice) => _poll(
   () async {
-    for (final p in bob.currentParticipants) {
+    for (final p in bob.participants) {
       if (p.sessionId == alice.session.sessionId && p.camera != null) {
         return p.camera;
       }

@@ -3,7 +3,7 @@ library;
 
 /// Why the system paused the local camera (`docs/design.md` §4.7).
 ///
-/// Reported on iOS by [Room.cameraPause] and [LocalCameraPausedEvent]. The
+/// Reported on iOS by [Room.cameraPause] and [RoomCameraPausedEvent]. The
 /// track stays published and live; it sends no frames until the camera runs
 /// again, which it does by itself.
 enum CameraPauseReason {

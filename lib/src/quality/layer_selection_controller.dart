@@ -49,7 +49,7 @@ class _Subscription {
 ///   right layer, and so is a change from paused to a layer, so video
 ///   appears as soon as a tile scrolls into view. Every other change
 ///   (between layers, or to paused) is emitted only after the new choice
-///   has stood for [LayerSelectionConfig.debounce]; if the choice goes back
+///   has stood for [LayerSelectionOptions.debounce]; if the choice goes back
 ///   to the emitted one before then, nothing is emitted.
 /// - [onChange] is called synchronously, from [reportDemand],
 ///   [removeView] or [setLadder] for the immediate cases and from a timer
@@ -66,13 +66,13 @@ class LayerSelectionController implements LayerDemandReporter {
   /// for it; it defaults to [SimulcastLadder.h720].
   LayerSelectionController({
     required this.onChange,
-    this.config = const LayerSelectionConfig(),
+    this.config = const LayerSelectionOptions(),
     SimulcastLadder? defaultLadder,
   }) : _policy = SimulcastLayerPolicy(config),
        defaultLadder = defaultLadder ?? SimulcastLadder.h720;
 
   /// The tuning.
-  final LayerSelectionConfig config;
+  final LayerSelectionOptions config;
 
   /// The ladder assumed for subscriptions without their own.
   final SimulcastLadder defaultLadder;

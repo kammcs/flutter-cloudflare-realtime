@@ -58,7 +58,7 @@ void main() {
       /// Waits until Bob receives Alice's track from her current session,
       /// as a different track than [before] (a new pull), and returns it.
       Future<RenderableTrack> received({RenderableTrack? before}) async {
-        final remote = await bob.participants
+        final remote = await bob.participantsChanges
             .map((list) => list.where((p) => p.participantId.contains('alice')))
             .firstWhere((matches) => matches.isNotEmpty)
             .timeout(timeout);
@@ -72,7 +72,7 @@ void main() {
             )
             .timeout(timeout);
         final publication = participant.trackPublication(trackName)!;
-        return publication.track
+        return publication.trackChanges
             .where(
               (t) =>
                   t != null &&
@@ -86,7 +86,7 @@ void main() {
             .timeout(timeout);
       }
 
-      Future<void> connected(Room room) => room.session.connectionState
+      Future<void> connected(Room room) => room.session.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 
@@ -121,8 +121,8 @@ void main() {
       await received(before: second);
       await connected(bob);
 
-      expect(alice.currentConnectionState, RoomConnectionState.connected);
-      expect(bob.currentConnectionState, RoomConnectionState.connected);
+      expect(alice.connectionState, RoomConnectionState.connected);
+      expect(bob.connectionState, RoomConnectionState.connected);
     },
     skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),

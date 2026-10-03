@@ -37,11 +37,11 @@ class DeviceDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
-      stream: source.devices,
-      initialData: source.currentDevices,
+      stream: source.devicesChanges,
+      initialData: source.devices,
       builder: (context, devices) => StreamBuilder<MediaDevice?>(
-        stream: source.activeDevice,
-        initialData: source.currentActiveDevice,
+        stream: source.activeDeviceChanges,
+        initialData: source.activeDevice,
         builder: (context, active) {
           final list = devices.data ?? const [];
           final selected = list
@@ -74,7 +74,7 @@ class DeviceDropdown extends StatelessWidget {
 }
 
 /// The local microphone's level as a small bar, from the active-speaker
-/// polling ([LocalParticipant.audioLevels]): what is sent, so it stays
+/// polling ([LocalParticipant.audioLevelChanges]): what is sent, so it stays
 /// empty while muted.
 class MicLevelMeter extends StatelessWidget {
   const MicLevelMeter({super.key, required this.participant, this.width = 48});
@@ -94,7 +94,7 @@ class MicLevelMeter extends StatelessWidget {
     return SizedBox(
       width: width,
       child: StreamBuilder<double>(
-        stream: participant.audioLevels,
+        stream: participant.audioLevelChanges,
         initialData: participant.audioLevel,
         builder: (context, snapshot) => ClipRRect(
           borderRadius: BorderRadius.circular(2),
@@ -132,15 +132,15 @@ class MicStatus extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: StreamBuilder<MediaDevice?>(
-          stream: source.activeDevice,
-          initialData: source.currentActiveDevice,
+          stream: source.activeDeviceChanges,
+          initialData: source.activeDevice,
           builder: (context, snapshot) {
             final device = snapshot.data;
             return Row(
               mainAxisSize: MainAxisSize.min,
               spacing: 8,
               children: [
-                Icon(mic.muted ? Icons.mic_off : Icons.mic, size: 16),
+                Icon(mic.isMuted ? Icons.mic_off : Icons.mic, size: 16),
                 Flexible(
                   child: Text(
                     device == null ? 'No microphone' : deviceLabel(device, 0),
@@ -284,8 +284,8 @@ class AudioOutputDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<MediaDevice>>(
-      stream: devices.audioOutputs,
-      initialData: devices.currentDevicesOfKind(MediaDeviceKind.audioOutput),
+      stream: devices.audioOutputsChanges,
+      initialData: devices.devicesOfKind(MediaDeviceKind.audioOutput),
       builder: (context, snapshot) => ValueListenableBuilder<String?>(
         valueListenable: output,
         builder: (context, chosen, _) {

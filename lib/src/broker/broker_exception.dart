@@ -122,7 +122,7 @@ class BrokerNetworkException extends BrokerException {
   String get _kind => 'BrokerNetworkException';
 }
 
-/// The request took longer than [BrokerConfig.timeout]. It was aborted.
+/// The request took longer than [BrokerOptions.timeout]. It was aborted.
 class BrokerTimeoutException extends BrokerNetworkException {
   /// Creates the exception.
   const BrokerTimeoutException({required super.operation, this.timeout});

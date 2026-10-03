@@ -23,7 +23,7 @@ class _FakeSource implements AudioLevelSource {
   }
 }
 
-const _config = ActiveSpeakerConfig(smoothingTimeConstant: Duration.zero);
+const _config = ActiveSpeakerOptions(smoothingTimeConstant: Duration.zero);
 const _tick = Duration(milliseconds: 250);
 
 void main() {
