@@ -137,15 +137,19 @@ class _CallPageState extends State<CallPage> {
     if (widget.systemCall case final call?) {
       // Mute in step with the system's; the room leaves when the call ends
       // (for example from the lock screen), and ends it when it leaves.
-      _room.attachSystemCall(call);
+      // The join screen attached it already (attaching again changes
+      // nothing); answered and ended on a locked iPhone, the call may be
+      // over by the time this page is built, and the page then leaves.
+      if (!call.isEnded && !_room.hasLeft) _room.attachSystemCall(call);
       call.whenEnded.then((reason) {
         _show('The system call ended (${reason.name}).');
         _leave();
       });
     }
-    if (widget.publishOnStart) {
+    if (widget.publishOnStart && !_room.hasLeft) {
       _run(() async {
-        await _local.publishMicrophone();
+        // A system call's microphone is published by the join screen.
+        if (_local.microphone == null) await _local.publishMicrophone();
         await _local.publishCamera();
       });
     }

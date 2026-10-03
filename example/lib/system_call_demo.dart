@@ -38,51 +38,90 @@ Future<bool> prepareSystemCalls() async {
 
 bool _askedFullScreen = false;
 
-/// Shows the ringing [call] in the app too, with Answer and Decline, and
-/// completes with whether it was answered: here, in the system's UI (the
-/// notification, a headset, a watch), or not at all.
-Future<bool> showIncomingCall(BuildContext context, SystemCall call) async {
-  final answered = await showDialog<bool>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => _IncomingCallDialog(call: call),
-  );
-  return answered ?? false;
+/// Begins a UIKit background task on iOS, so Dart keeps running for a
+/// while (about 30 s) after the app leaves the foreground, and completes
+/// with the function that ends it (safe to call more than once). Elsewhere,
+/// or if iOS refuses, it does nothing.
+///
+/// The example's stand-in for a VoIP push: it keeps **Simulate incoming
+/// call**'s delay running on a locked iPhone, and the join of a call
+/// answered from the lock screen. The native side is the `example/
+/// background_task` channel in `example/ios/Runner/AppDelegate.swift`.
+Future<Future<void> Function()> beginBackgroundTask(String name) async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return _noTask;
+  int? id;
+  try {
+    id = await _backgroundTask.invokeMethod<int>('begin', {'name': name});
+  } catch (_) {
+    // Best effort: without it, the work waits for the app to come back.
+  }
+  if (id == null) return _noTask;
+  var ended = false;
+  return () async {
+    if (ended) return;
+    ended = true;
+    try {
+      await _backgroundTask.invokeMethod<void>('end', {'id': id});
+    } catch (_) {
+      // The task expired, and its handler ended it.
+    }
+  };
 }
 
-class _IncomingCallDialog extends StatefulWidget {
+const _backgroundTask = MethodChannel('example/background_task');
+
+Future<void> _noTask() async {}
+
+/// Shows the ringing [call] in the app too, with Answer and Decline, and
+/// completes with whether it was answered: here, in the system's UI (the
+/// lock screen, the notification, a headset, a watch), or not at all (it
+/// ended).
+///
+/// The outcome comes from the call, not from the dialog: on a locked iPhone
+/// the app is in the background, where Flutter builds no widgets (no
+/// frames) until it comes back, so the dialog isn't even built while the
+/// call is answered or declined on the lock screen. The dialog goes once the
+/// call stops ringing.
+Future<bool> showIncomingCall(BuildContext context, SystemCall call) async {
+  final navigator = Navigator.of(context);
+  // stateChanges replays the current state; it closes once the call ends.
+  final outcome = Completer<SystemCallState>();
+  final subscription = call.stateChanges.listen(
+    (state) {
+      if (state != SystemCallState.ringing && !outcome.isCompleted) {
+        outcome.complete(state);
+      }
+    },
+    onDone: () {
+      if (!outcome.isCompleted) outcome.complete(SystemCallState.ended);
+    },
+  );
+  final dialog = DialogRoute<void>(
+    context: context,
+    barrierDismissible: false,
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
+    builder: (_) => _IncomingCallDialog(call: call),
+  );
+  unawaited(navigator.push(dialog));
+  final state = await outcome.future;
+  unawaited(subscription.cancel());
+  if (dialog.isActive) navigator.removeRoute(dialog);
+  return state != SystemCallState.ended;
+}
+
+class _IncomingCallDialog extends StatelessWidget {
   const _IncomingCallDialog({required this.call});
 
   final SystemCall call;
 
-  @override
-  State<_IncomingCallDialog> createState() => _IncomingCallDialogState();
-}
-
-class _IncomingCallDialogState extends State<_IncomingCallDialog> {
-  late final StreamSubscription<SystemCallState> _state;
-
-  @override
-  void initState() {
-    super.initState();
-    // Answered or ended anywhere: the dialog goes.
-    _state = widget.call.stateChanges.listen((state) {
-      if (state == SystemCallState.ringing || !mounted) return;
-      Navigator.of(context).pop(state != SystemCallState.ended);
-    });
-  }
-
-  @override
-  void dispose() {
-    _state.cancel();
-    super.dispose();
-  }
-
-  Future<void> _try(Future<void> Function() action) async {
+  Future<void> _try(
+    BuildContext context,
+    Future<void> Function() action,
+  ) async {
     try {
       await action();
     } on Object catch (e) {
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$e')));
       }
@@ -91,7 +130,6 @@ class _IncomingCallDialogState extends State<_IncomingCallDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final call = widget.call;
     return AlertDialog(
       icon: Icon(call.isVideo ? Icons.videocam : Icons.ring_volume),
       title: Text(call.displayName ?? call.handle.value),
@@ -101,11 +139,11 @@ class _IncomingCallDialogState extends State<_IncomingCallDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => _try(call.end),
+          onPressed: () => _try(context, call.end),
           child: const Text('Decline'),
         ),
         FilledButton(
-          onPressed: () => _try(call.answer),
+          onPressed: () => _try(context, call.answer),
           child: const Text('Answer'),
         ),
       ],
