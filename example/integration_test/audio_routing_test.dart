@@ -1,7 +1,9 @@
 // Call audio routing on phones, the same way on Android and iOS
 // (docs/design.md §4.6), through a real broker:
 //
-// - a voice call starts on the earpiece (or a connected headset);
+// - a voice call starts on the earpiece (or a connected headset; the
+//   speaker on a device without an earpiece, such as a tablet or an
+//   emulator);
 // - publishing a camera moves it to the speaker;
 // - Room.selectAudioRoute picks a route, which sticks;
 // - Room.setSpeakerphone forces the speaker or the earpiece;
@@ -89,10 +91,20 @@ void main() {
       if (phone) {
         _log('routes: ${alice.currentAudioRoutes.join('; ')}');
         // A connected headset comes first; then the default for the call.
+        // Without an earpiece (a tablet, an emulator) the earpiece's calls
+        // play on the speaker.
         final headset = alice.currentAudioRoutes
             .where((r) => r.kind.isExternal)
             .firstOrNull;
-        AudioRouteKind expected(AudioRouteKind kind) => headset?.kind ?? kind;
+        final hasEarpiece = alice.currentAudioRoutes.any(
+          (r) => r.kind == AudioRouteKind.earpiece,
+        );
+        if (!hasEarpiece) _log('no earpiece: the speaker stands in for it');
+        AudioRouteKind expected(AudioRouteKind kind) =>
+            headset?.kind ??
+            (kind == AudioRouteKind.earpiece && !hasEarpiece
+                ? AudioRouteKind.speaker
+                : kind);
 
         await _expectRoute(alice, expected(AudioRouteKind.earpiece), 'voice');
 
