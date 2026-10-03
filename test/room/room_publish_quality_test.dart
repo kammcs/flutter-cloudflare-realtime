@@ -404,36 +404,93 @@ void main() {
       });
     });
 
-    group('without a size in the media-source (Windows)', () {
-      StatsReport layer(
-        String rid,
-        int width,
-        int height, {
-        bool active = true,
-        String reason = 'none',
-        String source = 'ms',
-      }) => StatsReport('out-$rid', 'outbound-rtp', 0, {
+    StatsReport layer(
+      String rid,
+      int width,
+      int height, {
+      bool active = true,
+      String reason = 'none',
+      String source = 'ms',
+    }) => StatsReport('out-$rid', 'outbound-rtp', 0, {
+      'kind': 'video',
+      'rid': rid,
+      'mediaSourceId': source,
+      'frameWidth': width,
+      'frameHeight': height,
+      'active': active,
+      'qualityLimitationReason': reason,
+    });
+
+    /// The media-source of [published] (without a size, as on Windows,
+    /// unless [width] and [height] are given), and [layers].
+    List<StatsReport> stats(
+      LocalMediaPublication published,
+      List<StatsReport> layers, {
+      int? width,
+      int? height,
+    }) => [
+      StatsReport('ms', 'media-source', 0, {
         'kind': 'video',
-        'rid': rid,
-        'mediaSourceId': source,
-        'frameWidth': width,
-        'frameHeight': height,
-        'active': active,
-        'qualityLimitationReason': reason,
+        'trackIdentifier': published.publication.track!.id,
+        'frames': 60,
+        'width': ?width,
+        'height': ?height,
+      }),
+      ...layers,
+    ];
+
+    test('follows the CPU adaptation, which the media-source misses', () {
+      _run((async, h, alice, bob, pump) {
+        final published = _publishCamera(alice, pump);
+        // A Pixel 10 encoding VP8 in software: the camera captures
+        // 720x1280, the CPU adaptation hands the encoder 540x960.
+        h.pcOf(alice).stats = stats(
+          published,
+          [
+            layer('a', 540, 960, reason: 'cpu'),
+            layer('b', 270, 480, reason: 'cpu'),
+            layer('c', 135, 240, reason: 'cpu'),
+          ],
+          width: 720,
+          height: 1280,
+        );
+        async.elapse(const Duration(seconds: 3));
+        pump();
+        expect(published.simulcast!.width, 540);
+        expect(published.simulcast!.height, 960);
+        expect(bob.participant('alice')!.camera!.simulcast!.height, 960);
+
+        // The load goes away: the encoder gets the full size again.
+        h.pcOf(alice).stats = stats(
+          published,
+          [layer('a', 720, 1280), layer('b', 360, 640), layer('c', 180, 320)],
+          width: 720,
+          height: 1280,
+        );
+        async.elapse(const Duration(seconds: 3));
+        pump();
+        expect(published.simulcast!.height, 1280);
+        expect(bob.participant('alice')!.camera!.simulcast!.height, 1280);
       });
+    });
 
-      List<StatsReport> stats(
-        LocalMediaPublication published,
-        List<StatsReport> layers,
-      ) => [
-        StatsReport('ms', 'media-source', 0, {
-          'kind': 'video',
-          'trackIdentifier': published.publication.track!.id,
-          'frames': 60,
-        }),
-        ...layers,
-      ];
+    test('is the media-source size while the layers are bandwidth-limited', () {
+      _run((async, h, alice, bob, pump) {
+        final published = _publishCamera(alice, pump);
+        h.pcOf(alice).stats = stats(
+          published,
+          [layer('c', 90, 160, reason: 'bandwidth')],
+          width: 720,
+          height: 1280,
+        );
+        async.elapse(const Duration(seconds: 3));
+        pump();
+        expect(published.simulcast!.width, 720);
+        expect(published.simulcast!.height, 1280);
+      });
+    });
 
+    group('without a size in the media-source (Windows)', () {
       test('is read from the largest sending layer, scaled back up', () {
         _run((async, h, alice, bob, pump) {
           // Asked for 960x540; the camera gives 1280x720.
@@ -475,12 +532,12 @@ void main() {
         });
       });
 
-      test('keeps the size while the CPU adaptation scales the input', () {
+      test('keeps the size while the layers are bandwidth-limited', () {
         _run((async, h, alice, bob, pump) {
           final published = _publishCamera(alice, pump);
           h.pcOf(alice).stats = stats(published, [
-            layer('a', 640, 360, reason: 'cpu'),
-            layer('b', 320, 180, reason: 'cpu'),
+            layer('a', 640, 360, reason: 'bandwidth'),
+            layer('b', 320, 180, reason: 'bandwidth'),
           ]);
           async.elapse(const Duration(seconds: 3));
           pump();

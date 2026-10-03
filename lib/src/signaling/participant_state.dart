@@ -41,8 +41,9 @@ enum TrackSource {
 /// [width] and [height] are the size of the highest layer, and
 /// [scaleDownBy] each layer's `scaleResolutionDownBy`, in the order of
 /// [rids]. A room announces the size it captures (portrait on a phone held
-/// upright), and announces it again when it changes (M12); older clients
-/// announced the size they asked for.
+/// upright) as its encoder gets it (smaller while libwebrtc's CPU
+/// adaptation scales it down), and announces it again when it changes
+/// (M12); older clients announced the size they asked for.
 ///
 /// ## Wire shape
 ///

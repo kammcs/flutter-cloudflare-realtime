@@ -9,9 +9,9 @@
 //     is logged. Then Bob pulls the paused high layer afresh: it resumes,
 //     and Bob decodes it within [_newPullTimeout]. Windows can't pause: the
 //     room reports a RoomErrorEvent and the rest runs as the baseline.
-// (b) Announcement: the announced simulcast size is the captured size (the
-//     sender's media-source, or on Windows, where it has no size, layer a's
-//     encoded size), portrait on a phone held upright.
+// (b) Announcement: the announced simulcast size is the size the encoder
+//     gets (what layer a sends, which follows libwebrtc's CPU adaptation;
+//     else the sender's media-source), portrait on a phone held upright.
 // (c) Codec: with RoomOptions.videoCodec H.264, Bob decodes H.264 (the
 //     codec in Bob's stats), and the encoder in use is logged (hardware or
 //     not). Windows never sends H.264: it sends VP8 and reports a
@@ -112,20 +112,18 @@ void main() {
       await published.publication.whenSending().timeout(_timeout);
       final cam = await _remoteCamera(bob, alice);
 
-      // (b) The announced size is what the camera captures.
-      final source = await _poll(
-        () async => _mediaSource(await alice.session.getStats()),
-        (s) => s.$1 > 0,
-        'the camera\'s media-source size',
-      );
+      // (b) The announced size is what the encoder gets.
+      var sent = (0, 0, 'none');
       final announced = await _poll(
-        () async => published.simulcast,
-        (s) => s!.width == source.$1 && s.height == source.$2,
-        'the announced size to match ${source.$1}x${source.$2} '
-        '(announced ${published.simulcast})',
+        () async {
+          sent = _sentSize(await alice.session.getStats());
+          return published.simulcast;
+        },
+        (s) => sent.$1 > 0 && s!.width == sent.$1 && s.height == sent.$2,
+        'the announced size to match what the encoder gets',
       );
       _log(
-        'captured ${source.$1}x${source.$2} (${source.$3}), announced '
+        'sent ${sent.$1}x${sent.$2} (${sent.$3}), announced '
         '${announced!.width}x${announced.height} '
         '(the camera reported ${published.mediaSource.track?.track.getSettings()['width']}x'
         '${published.mediaSource.track?.track.getSettings()['height']})',
@@ -409,19 +407,34 @@ Map<String, _Video> _outbound(List<StatsReport> reports) => {
       ),
 };
 
-/// The size of the (first) video media-source, or where its report has no
-/// size (Windows), what the full-size layer `a` encodes, and which of the
-/// two it is.
-(int, int, String) _mediaSource(List<StatsReport> reports) {
+/// The size the encoder gets, and where it comes from: what the full-size
+/// layer `a` encodes (after libwebrtc's CPU adaptation), unless it is paused
+/// or limited by `bandwidth`; else the (first) video media-source's size.
+(int, int, String) _sentSize(List<StatsReport> reports) {
   for (final r in reports) {
-    if (r.type == 'media-source' && r.values['kind'] == 'video') {
-      final width = _int(r.values['width']);
-      if (width > 0) return (width, _int(r.values['height']), 'media-source');
+    if (r.type != 'media-source' || r.values['kind'] != 'video') continue;
+    final width = _int(r.values['width']);
+    final height = _int(r.values['height']);
+    final source = width > 0
+        ? 'media-source ${width}x$height'
+        : 'no size in the media-source';
+    for (final o in reports) {
+      final v = o.values;
+      if (o.type != 'outbound-rtp' ||
+          v['rid'] != 'a' ||
+          v['mediaSourceId'] != r.id ||
+          v['active'] == false ||
+          v['qualityLimitationReason'] == 'bandwidth' ||
+          _int(v['frameWidth']) <= 0) {
+        continue;
+      }
+      return (
+        _int(v['frameWidth']),
+        _int(v['frameHeight']),
+        'layer a, limited by ${v['qualityLimitationReason']}; $source',
+      );
     }
-  }
-  final a = _outbound(reports)['a'];
-  if (a != null && a.active != false && a.width > 0) {
-    return (a.width, a.height, 'layer a (no size in the media-source)');
+    if (width > 0) return (width, height, source);
   }
   return (0, 0, 'none');
 }
