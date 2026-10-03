@@ -71,7 +71,7 @@ class _RoomSystemCall {
     }
     final microphone = _room.localParticipant.microphone;
     if (microphone == null || !microphone.isPublished) return;
-    if (microphone.muted == muted) return;
+    if (microphone.isMuted == muted) return;
     // Unmuting from the system only follows an earlier mute; at attach,
     // muting wins (see [_localChanged]).
     unawaited(_setMicrophone(microphone, muted));
@@ -81,7 +81,7 @@ class _RoomSystemCall {
   void _localChanged() {
     final call = _call;
     final microphone = _room.localParticipant.microphone;
-    final now = microphone?.muted;
+    final now = microphone?.isMuted;
     final before = _micMuted;
     _micMuted = now;
     if (call == null || call.isEnded || microphone == null || now == null) {
@@ -89,14 +89,14 @@ class _RoomSystemCall {
     }
     if (before == null) {
       // Newly published (or just attached): muting wins.
-      if (call.muted && !now) {
+      if (call.isMuted && !now) {
         unawaited(_setMicrophone(microphone, true));
-      } else if (now && !call.muted) {
+      } else if (now && !call.isMuted) {
         _request(call, true);
       }
       return;
     }
-    if (now != before && now != call.muted) _request(call, now);
+    if (now != before && now != call.isMuted) _request(call, now);
   }
 
   void _request(SystemCall call, bool muted) {

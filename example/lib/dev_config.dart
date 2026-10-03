@@ -12,8 +12,8 @@ import 'ws_signaling.dart';
 
 /// The dev server's URL, its dev token, and who you are.
 ///
-/// It produces the two things a call needs: a [BrokerConfig] for the SFU
-/// session ([brokerConfig]) and a [WsSignaling] for presence
+/// It produces the two things a call needs: a [BrokerOptions] for the SFU
+/// session ([brokerOptions]) and a [WsSignaling] for presence
 /// ([createSignaling]). Both point at the same server.
 ///
 /// ```dart
@@ -22,7 +22,7 @@ import 'ws_signaling.dart';
 ///   token: '<dev token printed by the server>',
 ///   userName: 'ada',
 /// );
-/// final broker = HttpBrokerClient(dev.brokerConfig());
+/// final realtime = CloudflareRealtime(broker: dev.brokerOptions());
 /// final signaling = dev.createSignaling();
 /// ```
 class DevServerConfig {
@@ -130,12 +130,13 @@ class DevServerConfig {
   };
 
   /// The broker settings: the server's root, with [brokerHeaders].
-  BrokerConfig brokerConfig({Duration timeout = const Duration(seconds: 15)}) =>
-      BrokerConfig(
-        baseUrl: serverUrl,
-        headers: () async => brokerHeaders,
-        timeout: timeout,
-      );
+  BrokerOptions brokerOptions({
+    Duration timeout = const Duration(seconds: 15),
+  }) => BrokerOptions(
+    baseUrl: serverUrl,
+    headers: () async => brokerHeaders,
+    timeout: timeout,
+  );
 
   /// The signaling WebSocket URL: `ws(s)://<server>/signaling?token=<token>`.
   Uri get signalingUrl => serverUrl.replace(

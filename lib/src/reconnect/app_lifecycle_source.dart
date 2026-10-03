@@ -9,7 +9,7 @@ import 'package:flutter/widgets.dart';
 ///
 /// Mobile OSes may kill a backgrounded app's sockets while its peer
 /// connection still reports `connected`. So coming back after at least
-/// [ReconnectTriggerConfig.backgroundThreshold] replaces the session, and
+/// [ReconnectTriggerOptions.backgroundThreshold] replaces the session, and
 /// coming back at all re-checks the reconnection timers, which may not have
 /// run while the app was suspended.
 ///

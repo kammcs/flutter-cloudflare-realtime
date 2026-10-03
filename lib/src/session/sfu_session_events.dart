@@ -98,8 +98,19 @@ final class SfuPeerConnectionFailed extends SfuSessionFailure {
 ///
 /// Broker errors pass through unchanged as [BrokerException]s (including
 /// [SessionGoneException]); these cover the session's own failure modes.
-class SfuSessionException implements Exception {
-  /// Creates the exception.
+/// The class is sealed, so a `switch` over them is exhaustive:
+///
+/// - [SfuSessionClosedException]: the session was closed.
+/// - [SfuSessionFailedException]: the session failed ([SfuSessionFailure]).
+/// - [SfuInterruptedException]: the publication, subscription or
+///   DataChannel was unpublished, closed, interrupted or moved to another
+///   session before the operation completed.
+/// - [SfuTrackException] and [SfuDataChannelException]: the SFU rejected
+///   one track or DataChannel of a request.
+/// - [SfuRequestException]: the SFU rejected a whole request.
+/// - [SfuProtocolException]: the SFU's answer was unusable.
+sealed class SfuSessionException implements Exception {
+  /// Creates the exception. For the subclasses' constructors.
   const SfuSessionException(this.message);
 
   /// A log-safe description. Never contains SDP or tokens.
@@ -110,13 +121,13 @@ class SfuSessionException implements Exception {
 }
 
 /// The session was closed before or during the operation.
-class SfuSessionClosedException extends SfuSessionException {
+final class SfuSessionClosedException extends SfuSessionException {
   /// Creates the exception.
   const SfuSessionClosedException() : super('the session is closed');
 }
 
 /// The session failed before the operation could run. See [failure].
-class SfuSessionFailedException extends SfuSessionException {
+final class SfuSessionFailedException extends SfuSessionException {
   /// Creates the exception.
   SfuSessionFailedException(this.failure) : super(failure.reason);
 
@@ -126,7 +137,7 @@ class SfuSessionFailedException extends SfuSessionException {
 
 /// The SFU rejected one track of a request (a per-track error), or its
 /// result was missing. Other tracks in the same batch are unaffected.
-class SfuTrackException extends SfuSessionException {
+final class SfuTrackException extends SfuSessionException {
   /// Creates the exception.
   const SfuTrackException({
     required this.operation,
@@ -157,7 +168,7 @@ class SfuTrackException extends SfuSessionException {
 
 /// A request-level error returned in a 2xx response body (`errorCode` on
 /// the whole response), which fails every track in the request.
-class SfuRequestException extends SfuSessionException {
+final class SfuRequestException extends SfuSessionException {
   /// Creates the exception.
   const SfuRequestException({
     required this.operation,
@@ -178,4 +189,51 @@ class SfuRequestException extends SfuSessionException {
   String toString() =>
       'SfuRequestException($operation, errorCode: $errorCode'
       '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
+}
+
+/// The SFU rejected one DataChannel of a request (a per-channel error), or
+/// its result was missing. Other channels in the same batch are unaffected.
+final class SfuDataChannelException extends SfuSessionException {
+  /// Creates the exception.
+  const SfuDataChannelException({
+    required this.operation,
+    required this.name,
+    this.errorCode,
+    this.errorDescription,
+  }) : super(operation);
+
+  /// The broker operation, such as `datachannels/new`.
+  final String operation;
+
+  /// The channel's name.
+  final String name;
+
+  /// The SFU's `errorCode` for this channel, if any. Null when the response
+  /// had no usable result for it.
+  final String? errorCode;
+
+  /// The SFU's `errorDescription` for this channel, if any.
+  final String? errorDescription;
+
+  @override
+  String toString() =>
+      'SfuDataChannelException($operation, name: $name'
+      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'}'
+      '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
+}
+
+/// The publication, subscription or DataChannel was unpublished, closed,
+/// interrupted or moved to another session before the operation completed,
+/// or the session it ran on was replaced. [message] says which.
+final class SfuInterruptedException extends SfuSessionException {
+  /// Creates the exception.
+  const SfuInterruptedException(super.message);
+}
+
+/// The SFU's answer was unusable: a request without a result, an answer
+/// without the expected session description, or a transceiver without a
+/// `mid`. [message] says which.
+final class SfuProtocolException extends SfuSessionException {
+  /// Creates the exception.
+  const SfuProtocolException(super.message);
 }

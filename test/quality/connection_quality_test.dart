@@ -2,7 +2,7 @@ import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/quality/connection_quality.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _config = ConnectionQualityConfig();
+const _config = ConnectionQualityOptions();
 const _poll = Duration(seconds: 2);
 
 ConnectionQuality? _rate(QualitySample sample) => rateQuality(sample, _config);

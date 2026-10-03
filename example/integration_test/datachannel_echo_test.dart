@@ -8,6 +8,7 @@
 
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,7 +45,10 @@ void main() {
   testWidgets(
     'publishes, subscribes and echoes over DataChannels',
     (tester) async {
-      final broker = HttpBrokerClient(roomId: room, config: settings.config());
+      final broker = HttpBrokerClient(
+        roomId: room,
+        options: settings.brokerOptions(),
+      );
       addTearDown(broker.dispose);
 
       final publisher = await SfuSession.connect(broker: broker);

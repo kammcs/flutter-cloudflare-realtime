@@ -7,7 +7,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
 /// Reads the current audio level of each participant.
 ///
 /// The active-speaker poller calls [getAudioLevels] every
-/// `ActiveSpeakerConfig.pollInterval`. Implementations return participant ID
+/// `ActiveSpeakerOptions.pollInterval`. Implementations return participant ID
 /// to level, `0..1`; a participant without a reading is simply absent.
 ///
 /// Internal: not exported from the package barrel.

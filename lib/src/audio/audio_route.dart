@@ -33,7 +33,7 @@ enum AudioRouteKind {
 /// `Room.selectAudioRoute`. The [id] is the platform's and is only
 /// meaningful while the route is listed.
 @immutable
-class AudioRoute {
+final class AudioRoute {
   /// Creates a route.
   const AudioRoute({required this.id, required this.kind, this.name = ''});
 

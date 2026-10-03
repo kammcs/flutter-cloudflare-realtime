@@ -7,5 +7,4 @@ export 'data_channel_manager.dart'
         LocalDataChannel,
         RemoteDataChannel,
         SfuDataChannel,
-        SfuDataChannelException,
         SfuDataChannelState;

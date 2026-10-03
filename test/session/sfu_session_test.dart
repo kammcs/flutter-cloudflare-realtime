@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/src/session/track_name.dart';
 import 'package:fake_async/fake_async.dart';
@@ -48,7 +49,7 @@ void main() {
         'bundlePolicy': 'max-bundle',
         'sdpSemantics': 'unified-plan',
       });
-      expect(session.currentConnectionState, SfuConnectionState.initial);
+      expect(session.connectionState, SfuConnectionState.initial);
       expect(h.pc.log, isEmpty, reason: 'nothing negotiated until a push');
     });
 
@@ -430,7 +431,10 @@ void main() {
     test('a failing request does not wedge the queue', () async {
       final session = await h.connect();
       h.broker.onNewTracks = (_, _) async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 500);
+          throw const BrokerResponseException(
+            operation: 'tracks/new',
+            statusCode: 500,
+          );
       final failed = session.publish(
         FakeMediaStreamTrack(kind: 'audio'),
         options: const PublishOptions(trackName: 'a'),
@@ -614,7 +618,7 @@ void main() {
       expect(sub.preferredRid, 'b');
       expect(sub.remoteSessionId, 'peer');
       expect(sub.track, same(h.pc.byMid('r1')!.receiverTrack));
-      expect(await sub.trackStream.first, same(sub.track));
+      expect(await sub.trackChanges.first, same(sub.track));
     });
 
     test('sends no simulcast block without a preferred rid', () async {
@@ -1407,7 +1411,7 @@ void main() {
     test('maps the PC state and replays the current value', () async {
       final session = await h.connect();
       final states = <SfuConnectionState>[];
-      final sub = session.connectionState.listen(states.add);
+      final sub = session.connectionStateChanges.listen(states.add);
       await pumpEventQueue();
 
       h.pc.emitConnectionState(
@@ -1430,7 +1434,10 @@ void main() {
         SfuConnectionState.disconnected,
         SfuConnectionState.connected,
       ]);
-      expect(await session.connectionState.first, SfuConnectionState.connected);
+      expect(
+        await session.connectionStateChanges.first,
+        SfuConnectionState.connected,
+      );
 
       await session.close();
       await pumpEventQueue();
@@ -1466,7 +1473,7 @@ void main() {
         isA<SfuSessionGone>().having((f) => f.exception, 'exception', gone),
       ]);
       expect(session.failure, isA<SfuSessionGone>());
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(session.isUsable, isFalse);
       expect(pub.state, SfuTrackState.interrupted);
       expect(pub.session, isNull);
@@ -1656,7 +1663,7 @@ void main() {
           PeerConnectionFailureKind.connectionFailed,
         ),
       );
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(sub.state, SfuTrackState.interrupted);
       expect(sub.track, isNotNull, reason: 'keeps the last track');
     });
@@ -1717,8 +1724,10 @@ void main() {
     const stable = RTCSignalingState.RTCSignalingStateStable;
 
     final pushFailures = <String, Future<TracksResponse> Function()>{
-      'a 5xx': () async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 503),
+      'a 5xx': () async => throw const BrokerResponseException(
+        operation: 'tracks/new',
+        statusCode: 503,
+      ),
       'a 403': () async =>
           throw const BrokerForbiddenException(operation: 'tracks/new'),
       'a network error': () async =>
@@ -1770,10 +1779,11 @@ void main() {
         'renegotiates', () async {
       final session = await h.connect();
       final pub = await session.publish(FakeMediaStreamTrack(kind: 'audio'));
-      h.broker.onCloseTracks = (_, _) async => throw const BrokerException(
-        operation: 'tracks/close',
-        statusCode: 500,
-      );
+      h.broker.onCloseTracks = (_, _) async =>
+          throw const BrokerResponseException(
+            operation: 'tracks/close',
+            statusCode: 500,
+          );
       h.pc.log.clear();
 
       await expectLater(pub.unpublish(), throwsA(isA<BrokerException>()));
@@ -1811,10 +1821,11 @@ void main() {
 
     test('a failed renegotiate call leaves a usable, stable session', () async {
       final session = await h.connect();
-      h.broker.onRenegotiate = (_, _) async => throw const BrokerException(
-        operation: 'renegotiate',
-        statusCode: 500,
-      );
+      h.broker.onRenegotiate = (_, _) async =>
+          throw const BrokerResponseException(
+            operation: 'renegotiate',
+            statusCode: 500,
+          );
       await expectLater(
         session.subscribe(remoteSessionId: 'p', trackName: 'a'),
         throwsA(isA<BrokerException>()),
@@ -1833,7 +1844,10 @@ void main() {
       final failures = <SfuSessionFailure>[];
       session.failures.listen(failures.add);
       h.broker.onNewTracks = (_, _) async =>
-          throw const BrokerException(operation: 'tracks/new', statusCode: 500);
+          throw const BrokerResponseException(
+            operation: 'tracks/new',
+            statusCode: 500,
+          );
       h.pc.failNext('rollback', 'rollback not supported');
 
       await expectLater(
@@ -1850,7 +1864,7 @@ void main() {
           PeerConnectionFailureKind.signalingStuck,
         ),
       );
-      expect(session.currentConnectionState, SfuConnectionState.failed);
+      expect(session.connectionState, SfuConnectionState.failed);
       expect(
         () => session.subscribe(remoteSessionId: 'p', trackName: 't'),
         throwsA(isA<SfuSessionFailedException>()),
@@ -1910,7 +1924,7 @@ void main() {
       );
       final oldTrack = sub.track;
       final tracks = <MediaStreamTrack>[];
-      sub.trackStream.listen(tracks.add);
+      sub.trackChanges.listen(tracks.add);
 
       firstPc.emitConnectionState(
         RTCPeerConnectionState.RTCPeerConnectionStateFailed,
@@ -2007,7 +2021,7 @@ void main() {
         expect(h.pc.closed, isTrue);
         expect(h.broker.forgotten, ['session-1']);
         expect(session.isClosed, isTrue);
-        expect(session.currentConnectionState, SfuConnectionState.closed);
+        expect(session.connectionState, SfuConnectionState.closed);
         expect(pub.state, SfuTrackState.interrupted);
         expect(session.failure, isNull);
         expect(await session.failures.toList(), isEmpty);

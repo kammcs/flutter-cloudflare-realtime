@@ -69,10 +69,10 @@ void main() {
 
   test('lists screens first, then windows', () async {
     expect(picker.isSupported, isTrue);
-    expect(picker.currentState.sources, isEmpty);
+    expect(picker.state.sources, isEmpty);
     await picker.start();
 
-    final state = picker.currentState;
+    final state = picker.state;
     expect(state.sources, [screen1, screen2, editor]);
     expect(state.screens, [screen1, screen2]);
     expect(state.windows, [editor]);
@@ -85,7 +85,7 @@ void main() {
 
   test('state replays and shows loading', () async {
     final states = <ScreenPickerState>[];
-    picker.state.listen(states.add);
+    picker.stateChanges.listen(states.add);
     await picker.start();
     await pumpEventQueue();
     expect(states.map((s) => (s.sources.length, s.isLoading)), [
@@ -93,7 +93,7 @@ void main() {
       (0, true),
       (3, false),
     ]);
-    expect((await picker.state.first).sources, hasLength(3));
+    expect((await picker.stateChanges.first).sources, hasLength(3));
   });
 
   test('start is idempotent', () async {
@@ -109,7 +109,7 @@ void main() {
       types: const {ScreenSourceType.window},
     );
     await picker.start();
-    expect(picker.currentState.sources, [editor]);
+    expect(picker.state.sources, [editor]);
     desktop.added.add(
       const ScreenSource(
         id: 'screen-3',
@@ -118,8 +118,8 @@ void main() {
       ),
     );
     await pumpEventQueue();
-    expect(picker.currentState.sources, [editor]);
-    expect(picker.currentState.error, isNull);
+    expect(picker.state.sources, [editor]);
+    expect(picker.state.error, isNull);
   });
 
   group('live updates', () {
@@ -136,7 +136,7 @@ void main() {
       );
       desktop.added.add(browser); // Duplicate: ignored.
       await pumpEventQueue();
-      expect(picker.currentState.sources.map((s) => s.id), [
+      expect(picker.state.sources.map((s) => s.id), [
         'screen-1',
         'screen-2',
         'screen-3',
@@ -149,28 +149,28 @@ void main() {
       desktop.removed.add(editor);
       desktop.removed.add(browser); // Unknown: ignored.
       await pumpEventQueue();
-      expect(picker.currentState.sources, [screen1, screen2]);
+      expect(picker.state.sources, [screen1, screen2]);
     });
 
     test('renames sources', () async {
       desktop.nameChanged.add(editor.copyWith(name: 'Editor - main.dart'));
       await pumpEventQueue();
-      expect(picker.currentState.windows.single.name, 'Editor - main.dart');
+      expect(picker.state.windows.single.name, 'Editor - main.dart');
     });
 
     test('updates thumbnails, keeping them across renames', () async {
       final thumbnail = Uint8List.fromList([1, 2, 3]);
       desktop.thumbnailChanged.add(screen2.copyWith(thumbnail: thumbnail));
       await pumpEventQueue();
-      final updated = picker.currentState.screens.last;
+      final updated = picker.state.screens.last;
       expect(updated.thumbnail, same(thumbnail));
       expect(updated.name, 'Screen 2');
 
       // A name event without a thumbnail doesn't clear it.
       desktop.nameChanged.add(screen2.copyWith(name: 'Display 2'));
       await pumpEventQueue();
-      expect(picker.currentState.screens.last.thumbnail, same(thumbnail));
-      expect(picker.currentState.screens.last.name, 'Display 2');
+      expect(picker.state.screens.last.thumbnail, same(thumbnail));
+      expect(picker.state.screens.last.name, 'Display 2');
     });
   });
 
@@ -199,8 +199,8 @@ void main() {
       );
       await picker.start();
       expect(desktop.getSourcesCalls, 2);
-      expect(picker.currentState.error, isNull);
-      expect(picker.currentState.sources, hasLength(3));
+      expect(picker.state.error, isNull);
+      expect(picker.state.sources, hasLength(3));
     });
 
     test(
@@ -209,16 +209,16 @@ void main() {
         desktop.getSourcesErrors.addAll(['Bad Arguments', 'Bad Arguments']);
         await picker.start();
 
-        final error = picker.currentState.error!;
+        final error = picker.state.error!;
         expect(error, isA<ScreenSourcesException>());
         expect(error.noScreens, isFalse);
         expect(error.cause, 'Bad Arguments');
-        expect(picker.currentState.isLoading, isFalse);
-        expect(picker.currentState.sources, isEmpty);
+        expect(picker.state.isLoading, isFalse);
+        expect(picker.state.sources, isEmpty);
 
         await picker.refresh();
-        expect(picker.currentState.error, isNull);
-        expect(picker.currentState.sources, hasLength(3));
+        expect(picker.state.error, isNull);
+        expect(picker.state.sources, hasLength(3));
       },
     );
 
@@ -226,16 +226,16 @@ void main() {
       await picker.start();
       desktop.getSourcesErrors.addAll(['boom', 'boom']);
       await picker.refresh();
-      expect(picker.currentState.error, isNotNull);
-      expect(picker.currentState.sources, hasLength(3));
+      expect(picker.state.error, isNotNull);
+      expect(picker.state.sources, hasLength(3));
     });
 
     test('a listing without screens is reported', () async {
       desktop.sources = [editor];
       await picker.start();
-      final error = picker.currentState.error!;
+      final error = picker.state.error!;
       expect(error.noScreens, isTrue);
-      expect(picker.currentState.sources, [editor]);
+      expect(picker.state.sources, [editor]);
     });
   });
 
@@ -254,14 +254,14 @@ void main() {
       final thumbnail = Uint8List.fromList([1, 2, 3]);
       desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: thumbnail));
       await picker.refresh();
-      expect(picker.currentState.screens.first.thumbnail, same(thumbnail));
+      expect(picker.state.screens.first.thumbnail, same(thumbnail));
 
       // A source that is no longer listed forgets its thumbnail.
       desktop.sources = [editor, screen2];
       await picker.refresh();
       desktop.sources = [editor, screen1, screen2];
       await picker.refresh();
-      expect(picker.currentState.screens.first.thumbnail, isNull);
+      expect(picker.state.screens.first.thumbnail, isNull);
     });
 
     test('announced while listing are kept (macOS)', () async {
@@ -277,7 +277,7 @@ void main() {
         ),
       );
       await mac.start();
-      expect(mac.currentState.screens.single.thumbnail, same(thumbnail));
+      expect(mac.state.screens.single.thumbnail, same(thumbnail));
       await mac.dispose();
     });
 
@@ -288,8 +288,8 @@ void main() {
       );
       desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: Uint8List(0)));
       await pumpEventQueue();
-      expect(picker.currentState.screens.first.thumbnail, isNull);
-      expect(picker.currentState.permissionProblem, isNull, reason: 'Windows');
+      expect(picker.state.screens.first.thumbnail, isNull);
+      expect(picker.state.permissionProblem, isNull, reason: 'Windows');
     });
   });
 
@@ -305,55 +305,55 @@ void main() {
 
     test('is suspected when every screen thumbnail is blank', () async {
       await mac.start();
-      expect(mac.currentState.permissionProblem, isNull, reason: 'unknown');
+      expect(mac.state.permissionProblem, isNull, reason: 'unknown');
 
       desktop.thumbnailChanged.add(screen1.copyWith(thumbnail: Uint8List(0)));
       await pumpEventQueue();
-      expect(mac.currentState.permissionProblem, isNull, reason: 'one left');
+      expect(mac.state.permissionProblem, isNull, reason: 'one left');
 
       final black = solidTiff(32, 18, rgb: (0, 0, 0));
       desktop.thumbnailChanged.add(screen2.copyWith(thumbnail: black));
       await pumpEventQueue();
-      final problem = mac.currentState.permissionProblem!;
+      final problem = mac.state.permissionProblem!;
       expect(problem, isA<MediaPermissionDeniedException>());
       expect(problem.suspected, isTrue);
       expect(problem.platform, MediaPlatform.macos);
       expect(problem.guidance, contains('Screen Recording'));
       expect(problem.guidance, contains('quit and reopen'));
       // The black TIFF still shows (as a thumbnail); the empty one doesn't.
-      expect(mac.currentState.screens.last.thumbnail, same(black));
+      expect(mac.state.screens.last.thumbnail, same(black));
 
       // A screen that shows something clears it.
       desktop.thumbnailChanged.add(
         screen1.copyWith(thumbnail: solidTiff(32, 18, rgb: (30, 90, 200))),
       );
       await pumpEventQueue();
-      expect(mac.currentState.permissionProblem, isNull);
+      expect(mac.state.permissionProblem, isNull);
     });
 
     test('is suspected when no screen is listed', () async {
       desktop.sources = [editor];
       await mac.start();
-      expect(mac.currentState.error!.noScreens, isTrue);
-      expect(mac.currentState.permissionProblem, isNotNull);
+      expect(mac.state.error!.noScreens, isTrue);
+      expect(mac.state.permissionProblem, isNotNull);
 
       desktop.sources = [editor, screen1];
       await mac.refresh();
-      expect(mac.currentState.permissionProblem, isNull);
+      expect(mac.state.permissionProblem, isNull);
     });
 
     test('is never reported on other platforms', () async {
       backend.platform = MediaPlatform.windows;
       desktop.sources = [editor];
       await picker.start();
-      expect(picker.currentState.error!.noScreens, isTrue);
-      expect(picker.currentState.permissionProblem, isNull);
+      expect(picker.state.error!.noScreens, isTrue);
+      expect(picker.state.permissionProblem, isNull);
     });
   });
 
   test('dispose stops listening and completes the state stream', () async {
     await picker.start();
-    final done = picker.state.drain<void>();
+    final done = picker.stateChanges.drain<void>();
     await picker.dispose();
     await done;
     desktop.added.add(browser);

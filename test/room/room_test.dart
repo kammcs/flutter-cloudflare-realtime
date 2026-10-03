@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
@@ -109,8 +111,8 @@ void main() {
           layerDemand: const {},
         ),
       );
-      expect(room.currentConnectionState, RoomConnectionState.connected);
-      expect(room.currentParticipants, isEmpty);
+      expect(room.connectionState, RoomConnectionState.connected);
+      expect(room.participants, isEmpty);
       expect(room.failure, isNull);
       await room.leave();
     });
@@ -169,7 +171,7 @@ void main() {
 
       // Everyone sees the others, never themselves.
       List<String> ids(Room r) => [
-        for (final p in r.currentParticipants) p.participantId,
+        for (final p in r.participants) p.participantId,
       ];
       expect(ids(alice), ['bob', 'carol', 'dave']);
       expect(ids(bob), ['alice', 'carol', 'dave']);
@@ -181,9 +183,9 @@ void main() {
       expect(h.pullsOf(bob), ['dave-1/dave-mic']);
       final bobDave = bob.participant('dave')!;
       expect(bobDave.microphone!.isSubscribed, isTrue);
-      expect(bobDave.microphone!.currentTrack, isNotNull);
+      expect(bobDave.microphone!.track, isNotNull);
       expect(bobDave.camera!.isSubscribed, isFalse);
-      expect(bobDave.camera!.currentTrack, isNull);
+      expect(bobDave.camera!.track, isNull);
 
       // Alice publishes a microphone and a camera.
       final mic = await alice.localParticipant.publishMicrophone();
@@ -213,7 +215,7 @@ void main() {
         'dave-1/dave-mic',
         'session-1/${mic.trackName}',
       ]);
-      expect(bobAlice.microphone!.currentTrack!.track.kind, 'audio');
+      expect(bobAlice.microphone!.track!.track.kind, 'audio');
       expect(
         bobEvents.whereType<TrackPublishedEvent>().map((e) => e.publication),
         containsAll([bobAlice.microphone, bobAlice.camera]),
@@ -222,7 +224,7 @@ void main() {
       // Bob opens Alice's camera: pulled at the gallery layer.
       await bobAlice.camera!.subscribe();
       expect(h.pullsOf(bob).last, 'session-1/${cam.trackName}@b');
-      final camTrack = bobAlice.camera!.currentTrack!;
+      final camTrack = bobAlice.camera!.track!;
       expect(camTrack.track.kind, 'video');
       expect(camTrack.stream.getVideoTracks().single, same(camTrack.track));
       expect(
@@ -235,12 +237,12 @@ void main() {
       await mic.mute();
       await _settle();
       expect(h.announced('alice')!.tracks[mic.trackName]!.muted, isTrue);
-      expect(bobAlice.microphone!.muted, isTrue);
+      expect(bobAlice.microphone!.isMuted, isTrue);
       expect(bobEvents.whereType<TrackMutedEvent>().single.muted, isTrue);
       expect(bobAlice.microphone!.subscriptionState, SfuTrackState.active);
       await mic.unmute();
       await _settle();
-      expect(bobAlice.microphone!.muted, isFalse);
+      expect(bobAlice.microphone!.isMuted, isFalse);
 
       // Alice unpublishes her camera: Bob's pull is closed.
       final camMid = bobAlice.camera!.subscription!.mid!;
@@ -250,7 +252,7 @@ void main() {
       expect(h.announced('alice')!.tracks.keys, [mic.trackName]);
       expect(bobAlice.camera, isNull);
       expect(camPublication.isClosed, isTrue);
-      expect(camPublication.currentTrack, isNull);
+      expect(camPublication.track, isNull);
       expect(h.closesOf(bob), [camMid]);
       expect((camTrack.stream as FakeWrappedStream).disposed, isTrue);
       expect(
@@ -261,14 +263,14 @@ void main() {
       // Dave reconnects: Bob pulls his microphone from the new session.
       final daveMic = bobDave.microphone!;
       final oldMid = daveMic.subscription!.mid!;
-      final oldTrack = daveMic.currentTrack!;
+      final oldTrack = daveMic.track!;
       await dave.update('dave-2', {'dave-mic': _mic, 'dave-cam': _cam});
       await _settle();
       expect(bobDave.sessionId, 'dave-2');
       expect(h.closesOf(bob), [camMid, oldMid]);
       expect(h.pullsOf(bob).last, 'dave-2/dave-mic');
       expect(daveMic.subscription!.remoteSessionId, 'dave-2');
-      expect(daveMic.currentTrack, isNot(oldTrack));
+      expect(daveMic.track, isNot(oldTrack));
       expect((oldTrack.stream as FakeWrappedStream).disposed, isTrue);
       expect(
         bobEvents.whereType<ParticipantUpdatedEvent>().last.sessionChanged,
@@ -397,17 +399,17 @@ void main() {
 
       await cam.subscribe();
       final mid = cam.subscription!.mid!;
-      final stream = cam.currentTrack!.stream as FakeWrappedStream;
+      final stream = cam.track!.stream as FakeWrappedStream;
       await cam.unsubscribe();
       expect(cam.isSubscribed, isFalse);
       expect(cam.subscription, isNull);
-      expect(cam.currentTrack, isNull);
+      expect(cam.track, isNull);
       expect(stream.disposed, isTrue);
       expect(h.closesOf(bob), [mid]);
 
       await cam.subscribe();
       expect(h.pullsOf(bob), ['ann-1/c', 'ann-1/c']);
-      expect(cam.currentTrack, isNotNull);
+      expect(cam.track, isNotNull);
       await _settle();
       expect(changes, containsAllInOrder([true, false, true]));
     });
@@ -422,7 +424,7 @@ void main() {
       await _settle();
       final cam = bob.participant('ann')!.camera!;
       await cam.subscribe();
-      final renderable = cam.currentTrack!;
+      final renderable = cam.track!;
       final stream = renderable.stream as FakeWrappedStream;
       final track = renderable.track as FakeMediaStreamTrack;
 
@@ -433,7 +435,7 @@ void main() {
 
       // Pulling again wraps the new track in a new stream.
       await cam.subscribe();
-      expect(cam.currentTrack!.stream, isNot(same(stream)));
+      expect(cam.track!.stream, isNot(same(stream)));
       expect(h.wrapped, hasLength(2));
     });
 
@@ -474,7 +476,7 @@ void main() {
     test('ignores participants until they have a session', () async {
       await ann.join(null, {'m': _mic});
       await _settle();
-      expect(bob.currentParticipants, isEmpty);
+      expect(bob.participants, isEmpty);
       expect(h.pullsOf(bob), isEmpty);
 
       await ann.update('ann-1', {'m': _mic});
@@ -485,13 +487,13 @@ void main() {
       // Losing the session counts as leaving.
       await ann.update(null, {'m': _mic});
       await _settle();
-      expect(bob.currentParticipants, isEmpty);
+      expect(bob.participants, isEmpty);
       expect(h.closesOf(bob), hasLength(1));
     });
 
     test('participants emits on every change', () async {
       final lists = <List<String>>[];
-      bob.participants.listen(
+      bob.participantsChanges.listen(
         (list) => lists.add([
           for (final p in list)
             '${p.participantId}:${p.trackPublications.length}',
@@ -525,7 +527,7 @@ void main() {
               'eve',
               options: const RoomOptions(
                 connectEarly: false,
-                pullRetry: BackoffConfig(
+                pullRetry: BackoffOptions(
                   initialDelay: Duration(seconds: 1),
                   maxDelay: Duration(seconds: 1),
                   maxAttempts: 2,
@@ -559,7 +561,7 @@ void main() {
         pump();
         final mic = eve.participant('ann')!.microphone!;
         expect(mic.error, isA<SfuTrackException>());
-        expect(mic.currentTrack, isNull);
+        expect(mic.track, isNull);
 
         async.elapse(const Duration(seconds: 1));
         pump();
@@ -567,13 +569,13 @@ void main() {
         pump();
         final failed = events.whereType<TrackSubscriptionFailedEvent>();
         expect([for (final e in failed) e.willRetry], [true, true, false]);
-        expect(mic.currentTrack, isNull, reason: 'retries exhausted');
+        expect(mic.track, isNull, reason: 'retries exhausted');
 
         // Unmuting is a change worth another try.
         ann.update('ann-1', {'m': _mic});
         pump();
         expect(mic.error, isNull);
-        expect(mic.currentTrack, isNotNull);
+        expect(mic.track, isNotNull);
         expect(mic.subscriptionState, SfuTrackState.active);
         expect(events.whereType<TrackSubscribedEvent>(), hasLength(1));
 
@@ -598,17 +600,14 @@ void main() {
         final transceiver = pc.transceivers.single;
         expect(transceiver.kind, 'video');
         expect(transceiver.sendEncodings, SimulcastPresets.h720);
-        expect(
-          transceiver.sentTrack,
-          same(cam.mediaSource.currentTrack!.track),
-        );
-        expect(cam.muted, isFalse);
+        expect(transceiver.sentTrack, same(cam.mediaSource.track!.track));
+        expect(cam.isMuted, isFalse);
         expect(cam.ownsMediaSource, isTrue);
         expect(alice.localParticipant.camera, cam);
 
         await cam.mute();
         await _settle();
-        expect(cam.muted, isTrue);
+        expect(cam.isMuted, isTrue);
         expect(transceiver.sentTrack, isNull);
         expect(cam.mediaSource.isEnabled, isFalse, reason: 'camera light off');
         expect(h.announced('alice')!.tracks[cam.trackName]!.muted, isTrue);
@@ -631,15 +630,12 @@ void main() {
         h.media.setDevices([cam1, cam2, mic1]);
         final cam = await alice.localParticipant.publishCamera();
         final transceiver = h.pcOf(alice).transceivers.single;
-        expect(cam.mediaSource.currentTrack!.device, cam1);
+        expect(cam.mediaSource.track!.device, cam1);
 
         expect(await alice.localParticipant.switchCamera(), cam2);
         await _settle();
-        expect(cam.mediaSource.currentTrack!.device, cam2);
-        expect(
-          transceiver.sentTrack,
-          same(cam.mediaSource.currentTrack!.track),
-        );
+        expect(cam.mediaSource.track!.device, cam2);
+        expect(transceiver.sentTrack, same(cam.mediaSource.track!.track));
         expect(alice.localParticipant.camera, cam);
         expect(
           h.callsOf(alice, 'tracks/new'),
@@ -736,7 +732,7 @@ void main() {
     test('an app-owned source is announced but never disposed', () async {
       final camera = CameraSource(backend: h.media);
       final pub = await alice.localParticipant.publishMediaSource(camera);
-      expect(pub.muted, isTrue, reason: 'not broadcasting yet');
+      expect(pub.isMuted, isTrue, reason: 'not broadcasting yet');
       expect(
         h.announced('alice')!.tracks[pub.trackName],
         _cam.copyWith(muted: true),
@@ -875,7 +871,7 @@ void main() {
       );
       final events = _record(room);
       final states = <RoomConnectionState>[];
-      room.connectionState.listen(states.add);
+      room.connectionStateChanges.listen(states.add);
       final pc = h.pcOf(room);
 
       for (final state in [
@@ -910,7 +906,7 @@ void main() {
         throwsA(anything),
       );
       await room.leave();
-      expect(room.currentConnectionState, RoomConnectionState.disconnected);
+      expect(room.connectionState, RoomConnectionState.disconnected);
     });
   });
 
@@ -924,12 +920,15 @@ void main() {
       await _settle();
       await bob.participant('alice')!.camera!.subscribe();
       final bobAliceMic = bob.participant('alice')!.microphone!;
-      final wrapped = bobAliceMic.currentTrack!.stream as FakeWrappedStream;
+      final wrapped = bobAliceMic.track!.stream as FakeWrappedStream;
       final mids = [mic.publication.mid, cam.publication.mid];
 
       var participantsDone = false;
       var eventsDone = false;
-      alice.participants.listen(null, onDone: () => participantsDone = true);
+      alice.participantsChanges.listen(
+        null,
+        onDone: () => participantsDone = true,
+      );
       alice.events.listen(null, onDone: () => eventsDone = true);
 
       final leaving = alice.leave();
@@ -946,8 +945,8 @@ void main() {
       expect(cam.mediaSource.isDisposed, isTrue);
       expect(h.media.streams.every((s) => s.track.stopped), isTrue);
       expect(h.broker.disposed, isTrue);
-      expect(alice.currentConnectionState, RoomConnectionState.disconnected);
-      expect(alice.currentParticipants, isEmpty);
+      expect(alice.connectionState, RoomConnectionState.disconnected);
+      expect(alice.participants, isEmpty);
       await _settle();
       expect(participantsDone && eventsDone, isTrue);
       expect(
@@ -957,7 +956,7 @@ void main() {
 
       // Bob closes his pulls of Alice.
       await _settle();
-      expect(bob.currentParticipants, isEmpty);
+      expect(bob.participants, isEmpty);
       expect(h.closesOf(bob), hasLength(2));
       expect(wrapped.disposed, isTrue);
       await bob.leave();

@@ -2,9 +2,16 @@ part of 'room.dart';
 
 /// Something that happened in a [Room], delivered on [Room.events].
 ///
-/// Streams such as [Room.participants] and [Room.connectionState] carry the
-/// same information as state; events are for reacting to changes (a toast
-/// when someone joins, a sound when a track is muted).
+/// State such as [Room.participants] and [Room.connectionState] (and their
+/// `…Changes` streams) carries the same information; events are for
+/// reacting to changes (a toast when someone joins, a sound when a track is
+/// muted).
+///
+/// The subtypes are named by what they are about: `Participant…` (a remote
+/// participant), `Track…` (a remote track), `LocalTrack…` (a local
+/// publication) and `Room…` (the room, its connection and the device's
+/// call audio and camera). The class is sealed, so a `switch` over them is
+/// exhaustive.
 sealed class RoomEvent {
   const RoomEvent();
 }
@@ -154,9 +161,12 @@ final class TrackSubscriptionFailedEvent extends RoomEvent {
 /// A participant's [Participant.connectionQuality] changed
 /// (`docs/design.md` §7.1): the local participant's own connection, or what
 /// arrives from a remote participant.
-final class ConnectionQualityChangedEvent extends RoomEvent {
+final class ParticipantConnectionQualityChangedEvent extends RoomEvent {
   /// Creates the event.
-  const ConnectionQualityChangedEvent(this.participant, this.quality);
+  const ParticipantConnectionQualityChangedEvent(
+    this.participant,
+    this.quality,
+  );
 
   /// Whose quality changed: the [LocalParticipant] or a
   /// [RemoteParticipant].
@@ -167,7 +177,7 @@ final class ConnectionQualityChangedEvent extends RoomEvent {
 
   @override
   String toString() =>
-      'ConnectionQualityChangedEvent(${participant.participantId}, '
+      'ParticipantConnectionQualityChangedEvent(${participant.participantId}, '
       '${quality.name})';
 }
 
@@ -216,9 +226,9 @@ final class LocalTrackUnpublishedEvent extends RoomEvent {
 /// The share stays published (others see an empty tile); the app decides
 /// whether to stop it. Reported at most once per capture: again only after
 /// unmuting or switching the source.
-final class LocalScreenShareStalledEvent extends RoomEvent {
+final class LocalTrackStalledEvent extends RoomEvent {
   /// Creates the event.
-  const LocalScreenShareStalledEvent(this.publication, this.error);
+  const LocalTrackStalledEvent(this.publication, this.error);
 
   /// The screen share.
   final LocalMediaPublication publication;
@@ -228,41 +238,41 @@ final class LocalScreenShareStalledEvent extends RoomEvent {
 
   @override
   String toString() =>
-      'LocalScreenShareStalledEvent(${publication.trackName}, $error)';
+      'LocalTrackStalledEvent(${publication.trackName}, $error)';
 }
 
 /// Something took the call's audio away on a phone: a phone call, Siri, an
 /// alarm, another app's audio (`docs/design.md` §4.7).
 ///
-/// Until [CallResumedEvent], [Room.audioInterruption] is set and the room
+/// Until [RoomAudioResumedEvent], [Room.audioInterruption] is set and the room
 /// keeps its audio silent: remote audio doesn't play and the microphone
 /// sends silence (its track stays published and isn't announced as muted).
 /// The call takes its audio back by itself when the platform ends the
 /// interruption, or when the app returns to the foreground; an app can also
 /// try with [Room.resumeAudio]. May come again with a more precise
 /// [reason] while interrupted.
-final class CallInterruptedEvent extends RoomEvent {
+final class RoomAudioInterruptedEvent extends RoomEvent {
   /// Creates the event.
-  const CallInterruptedEvent(this.reason);
+  const RoomAudioInterruptedEvent(this.reason);
 
   /// What took the audio, as far as the platform says.
   final CallInterruptionReason reason;
 
   @override
-  String toString() => 'CallInterruptedEvent(${reason.name})';
+  String toString() => 'RoomAudioInterruptedEvent(${reason.name})';
 }
 
-/// The call has its audio back after a [CallInterruptedEvent]: remote audio
-/// plays and the microphone sends again.
-final class CallResumedEvent extends RoomEvent {
+/// The call has its audio back after a [RoomAudioInterruptedEvent]: remote
+/// audio plays and the microphone sends again.
+final class RoomAudioResumedEvent extends RoomEvent {
   /// Creates the event.
-  const CallResumedEvent(this.reason);
+  const RoomAudioResumedEvent(this.reason);
 
   /// What had interrupted the call.
   final CallInterruptionReason reason;
 
   @override
-  String toString() => 'CallResumedEvent(after ${reason.name})';
+  String toString() => 'RoomAudioResumedEvent(after ${reason.name})';
 }
 
 /// The system paused the published camera (iOS; `docs/design.md` §4.7),
@@ -270,25 +280,25 @@ final class CallResumedEvent extends RoomEvent {
 ///
 /// The track stays published and sends no frames; others see its last
 /// frame or an empty tile. The camera runs again by itself
-/// ([LocalCameraResumedEvent]). See [Room.cameraPause].
-final class LocalCameraPausedEvent extends RoomEvent {
+/// ([RoomCameraResumedEvent]). See [Room.cameraPause].
+final class RoomCameraPausedEvent extends RoomEvent {
   /// Creates the event.
-  const LocalCameraPausedEvent(this.reason);
+  const RoomCameraPausedEvent(this.reason);
 
   /// Why the system paused it.
   final CameraPauseReason reason;
 
   @override
-  String toString() => 'LocalCameraPausedEvent(${reason.name})';
+  String toString() => 'RoomCameraPausedEvent(${reason.name})';
 }
 
-/// The camera runs again after a [LocalCameraPausedEvent].
-final class LocalCameraResumedEvent extends RoomEvent {
+/// The camera runs again after a [RoomCameraPausedEvent].
+final class RoomCameraResumedEvent extends RoomEvent {
   /// Creates the event.
-  const LocalCameraResumedEvent();
+  const RoomCameraResumedEvent();
 
   @override
-  String toString() => 'LocalCameraResumedEvent()';
+  String toString() => 'RoomCameraResumedEvent()';
 }
 
 /// [Room.connectionState] changed.

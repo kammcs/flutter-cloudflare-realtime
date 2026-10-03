@@ -32,6 +32,7 @@
 // the settings.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' show StatsReport;
@@ -82,7 +83,7 @@ void main() {
   testWidgets(
     'shares the screen, sends frames, and unpublishes when stopped',
     (tester) async {
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;
@@ -117,7 +118,7 @@ void main() {
           .timeout(_consentTimeout + const Duration(seconds: 10));
       final share = shared.mediaSource as ScreenShareSource;
       expect(share.usesSystemPicker, isTrue);
-      expect(share.currentAudioTrack, isNull, reason: 'no screen audio');
+      expect(share.audioTrack, isNull, reason: 'no screen audio');
       await shared.publication.whenSending().timeout(_timeout);
       _log('sharing ${_size(share)}');
 
@@ -184,14 +185,14 @@ Future<void> _webScreenAudio(Room alice, Room bob) async {
   );
   await shared.publication.whenSending().timeout(_timeout);
   final share = shared.mediaSource as ScreenShareSource;
-  final audio = share.currentAudioTrack;
+  final audio = share.audioTrack;
   _log('with captureAudio: audio track ${audio == null ? 'none' : 'live'}');
   if (audio != null) {
     final published = alice.localParticipant.screenAudio;
     expect(published, isNotNull, reason: 'the screen audio is published');
     await published!.publication.whenSending().timeout(_timeout);
     final deadline = DateTime.now().add(_timeout);
-    while (bob.currentParticipants.every(
+    while (bob.participants.every(
       (p) =>
           p.sessionId != alice.session.sessionId ||
           p.screenAudio?.subscriptionState != SfuTrackState.active,
@@ -215,7 +216,7 @@ void _askToShare(bool ios) => _log(
 );
 
 String _size(ScreenShareSource share) {
-  final s = share.currentTrack?.track.getSettings() ?? const {};
+  final s = share.track?.track.getSettings() ?? const {};
   return '${s['width'] ?? '?'}x${s['height'] ?? '?'}';
 }
 
@@ -299,7 +300,7 @@ Future<Iterable<T>> _eventually<T>(
 Future<RemoteTrackPublication> _remoteScreen(Room bob, Room alice) async {
   final deadline = DateTime.now().add(_timeout);
   while (DateTime.now().isBefore(deadline)) {
-    for (final p in bob.currentParticipants) {
+    for (final p in bob.participants) {
       final screen = p.screen;
       if (p.sessionId == alice.session.sessionId &&
           screen != null &&
@@ -316,7 +317,7 @@ Future<RemoteTrackPublication> _remoteScreen(Room bob, Room alice) async {
 Future<void> _gone(Room bob, Room alice, RemoteTrackPublication remote) async {
   final deadline = DateTime.now().add(_timeout);
   while (DateTime.now().isBefore(deadline)) {
-    final peer = bob.currentParticipants
+    final peer = bob.participants
         .where((p) => p.sessionId == alice.session.sessionId)
         .firstOrNull;
     if (peer == null || peer.screen == null) return;

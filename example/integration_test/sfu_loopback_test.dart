@@ -5,6 +5,7 @@
 // for the settings (including the dev server's X-Dev-User) and a
 // command line. The test never prints them.
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -22,7 +23,10 @@ void main() {
   testWidgets(
     'pushes and pulls a loopback track between two sessions',
     (tester) async {
-      final broker = HttpBrokerClient(roomId: room, config: settings.config());
+      final broker = HttpBrokerClient(
+        roomId: room,
+        options: settings.brokerOptions(),
+      );
       addTearDown(broker.dispose);
 
       final publisher = await SfuSession.connect(broker: broker);
@@ -51,7 +55,7 @@ void main() {
       expect(publication.state, SfuTrackState.active);
       expect(publication.mid, isNotNull);
       await publication.whenSending().timeout(timeout);
-      await publisher.connectionState
+      await publisher.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 
@@ -63,7 +67,7 @@ void main() {
       );
       expect(subscription.state, SfuTrackState.active);
       expect(subscription.track?.kind, track.kind);
-      await subscriber.connectionState
+      await subscriber.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 

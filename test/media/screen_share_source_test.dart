@@ -29,8 +29,7 @@ void main() {
 
   tearDown(() => backend.close());
 
-  FakeTrack videoOf(ScreenShareSource share) =>
-      share.currentTrack!.track as FakeTrack;
+  FakeTrack videoOf(ScreenShareSource share) => share.track!.track as FakeTrack;
 
   group('desktop', () {
     test(
@@ -56,9 +55,9 @@ void main() {
           },
         });
         expect(share.selectedSource, window1);
-        expect(share.currentTrack!.track.kind, 'video');
-        expect(share.currentTrack!.device, isNull);
-        expect(share.currentAudioTrack, isNull);
+        expect(share.track!.track.kind, 'video');
+        expect(share.track!.device, isNull);
+        expect(share.audioTrack, isNull);
         await share.dispose();
       },
     );
@@ -77,18 +76,18 @@ void main() {
       );
       await share.start(source: screen1);
       expect(backend.displayMediaCalls.single['audio'], isTrue);
-      expect(share.currentAudioTrack!.track.kind, 'audio');
-      expect(share.currentBroadcastAudioTrack, isNull);
+      expect(share.audioTrack!.track.kind, 'audio');
+      expect(share.broadcastAudioTrack, isNull);
 
       await share.startBroadcasting();
-      expect(share.currentBroadcastTrack, share.currentTrack);
-      expect(share.currentBroadcastAudioTrack, share.currentAudioTrack);
+      expect(share.broadcastTrack, share.track);
+      expect(share.broadcastAudioTrack, share.audioTrack);
 
-      final audio = share.currentAudioTrack!.track as FakeTrack;
+      final audio = share.audioTrack!.track as FakeTrack;
       await share.stop();
       expect(audio.stopped, isTrue);
-      expect(share.currentAudioTrack, isNull);
-      expect(share.currentBroadcastAudioTrack, isNull);
+      expect(share.audioTrack, isNull);
+      expect(share.broadcastAudioTrack, isNull);
       await share.dispose();
     });
 
@@ -109,7 +108,7 @@ void main() {
       expect(reasons, [ScreenShareEndReason.sourceClosed]);
       expect(share.isEnabled, isFalse);
       expect(share.isBroadcasting, isFalse);
-      expect(share.currentTrack, isNull);
+      expect(share.track, isNull);
       expect(video.stopped, isTrue);
       await share.dispose();
       expect(reasons, hasLength(1));
@@ -160,10 +159,10 @@ void main() {
       final share = ScreenShareSource(backend: backend);
       await share.select(screen1);
       await share.startBroadcasting();
-      expect(share.currentBroadcastTrack, isNotNull);
+      expect(share.broadcastTrack, isNotNull);
       await share.stopBroadcasting();
       expect(share.isEnabled, isFalse);
-      expect(share.currentTrack, isNull);
+      expect(share.track, isNull);
       await share.dispose();
     });
 
@@ -182,7 +181,7 @@ void main() {
       await share.start(source: window1);
 
       expect(firstStoppedBeforeSecondCapture, isTrue);
-      expect(share.currentTrack!.track, isNot(first));
+      expect(share.track!.track, isNot(first));
       expect((backend.displayMediaCalls.last['video'] as Map)['deviceId'], {
         'exact': 'window-1',
       });
@@ -306,7 +305,7 @@ void main() {
       await pumpEventQueue();
       expect(reasons, [ScreenShareEndReason.userStopped]);
       expect(share.isEnabled, isFalse);
-      expect(share.currentBroadcastTrack, isNull);
+      expect(share.broadcastTrack, isNull);
       expect(video.stopped, isTrue);
       await share.dispose();
     });
@@ -443,7 +442,7 @@ void main() {
         await pumpEventQueue();
         expect(reasons, [ScreenShareEndReason.userStopped]);
         expect(share.isEnabled, isFalse);
-        expect(share.currentBroadcastTrack, isNull);
+        expect(share.broadcastTrack, isNull);
         expect(video.stopped, isTrue);
         expect(service.calls.last, 'stop');
         await share.dispose();
@@ -459,7 +458,7 @@ void main() {
       service.stopFromSystem('some-other-track');
       await pumpEventQueue();
       expect(reasons, isEmpty);
-      expect(share.currentTrack, isNotNull);
+      expect(share.track, isNotNull);
       await share.dispose();
       expect(reasons, [ScreenShareEndReason.stopped]);
     });
@@ -478,7 +477,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(share.currentAudioTrack, isNull);
+      expect(share.audioTrack, isNull);
       expect(errors, isEmpty);
       await share.dispose();
     });
@@ -487,7 +486,7 @@ void main() {
       final share = ScreenShareSource(backend: backend);
       service.canWatch = false;
       expect(await share.start(), isTrue);
-      expect(share.currentTrack, isNotNull);
+      expect(share.track, isNotNull);
       await share.dispose();
     });
 
@@ -497,11 +496,11 @@ void main() {
         final share = ScreenShareSource(backend: backend);
         await share.startBroadcasting();
         await share.stopBroadcasting();
-        expect(share.currentTrack, isNull);
+        expect(share.track, isNull);
         expect(service.calls.last, 'stop');
 
         await share.startBroadcasting();
-        expect(share.currentTrack, isNotNull);
+        expect(share.track, isNotNull);
         expect(service.calls.where((c) => c == 'consent'), hasLength(2));
         await share.dispose();
       },
@@ -564,11 +563,11 @@ void main() {
           'video': {'deviceId': 'broadcast'},
         });
         expect(done, isFalse, reason: 'waits for the user');
-        expect(share.currentTrack, isNull);
+        expect(share.track, isNull);
 
         broadcast.start();
         expect(await started, isTrue);
-        expect(share.currentTrack, isNotNull);
+        expect(share.track, isNotNull);
         expect(share.selectedSource, isNull);
         await share.dispose();
       },
@@ -657,7 +656,7 @@ void main() {
       // A broadcast that starts late is ignored.
       broadcast.start();
       await pumpEventQueue();
-      expect(share.currentTrack, isNull);
+      expect(share.track, isNull);
       await share.dispose();
     });
 
@@ -698,7 +697,7 @@ void main() {
         await pumpEventQueue();
         expect(reasons, [ScreenShareEndReason.userStopped]);
         expect(share.isEnabled, isFalse);
-        expect(share.currentBroadcastTrack, isNull);
+        expect(share.broadcastTrack, isNull);
         expect(video.stopped, isTrue);
         await share.dispose();
       },
@@ -738,7 +737,7 @@ void main() {
         async.flushMicrotasks();
         broadcast.start();
         async.flushMicrotasks();
-        expect(share.currentTrack, isNotNull);
+        expect(share.track, isNotNull);
 
         var stopped = false;
         share.stop().then((_) => stopped = true);
@@ -762,7 +761,7 @@ void main() {
       broadcast.start();
       expect(await started, isTrue);
       expect(backend.displayMediaCalls.single['audio'], isFalse);
-      expect(share.currentAudioTrack, isNull);
+      expect(share.audioTrack, isNull);
       expect(errors, isEmpty);
       await share.dispose();
     });

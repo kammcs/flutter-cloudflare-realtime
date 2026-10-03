@@ -229,19 +229,19 @@ void main() {
       expect(alice.cameraPause, CameraPauseReason.background);
       backend.pause(null);
       await _settle();
-      expect(events.whereType<LocalCameraPausedEvent>(), isEmpty);
-      expect(events.whereType<LocalCameraResumedEvent>(), isEmpty);
+      expect(events.whereType<RoomCameraPausedEvent>(), isEmpty);
+      expect(events.whereType<RoomCameraResumedEvent>(), isEmpty);
 
       await alice.localParticipant.publishCamera();
       backend.pause(CameraPauseReason.background);
       await _settle();
       expect(
-        events.whereType<LocalCameraPausedEvent>().single.reason,
+        events.whereType<RoomCameraPausedEvent>().single.reason,
         CameraPauseReason.background,
       );
       backend.pause(null);
       await _settle();
-      expect(events.whereType<LocalCameraResumedEvent>(), hasLength(1));
+      expect(events.whereType<RoomCameraResumedEvent>(), hasLength(1));
       expect(alice.cameraPause, isNull);
       expect(backend.calls, isEmpty, reason: 'no service on iOS');
       await alice.leave();

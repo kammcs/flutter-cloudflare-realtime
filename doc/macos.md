@@ -43,7 +43,7 @@ Capturing the screen needs the user's permission: System Settings → Privacy & 
 `flutter_webrtc` neither asks for this permission nor reports it: without it, a share returns a live track that sends no frames. So the package watches for the symptoms and reports a `ScreenCapturePermissionException` (a `MediaPermissionDeniedException` with `suspected: true` and `guidance` you can show):
 
 - **In the picker:** `ScreenPickerState.permissionProblem` is set when a listing has no screens, or every screen's thumbnail is empty or black. It clears once a listing looks normal.
-- **After sharing:** `LocalScreenShareStalledEvent` when the share sends no frames.
+- **After sharing:** `LocalTrackStalledEvent` when the share sends no frames.
 
 The example app shows how to point the user to the setting (`example/lib/screen_share_dialog.dart`).
 

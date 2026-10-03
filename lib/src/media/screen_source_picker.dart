@@ -18,7 +18,7 @@ import 'thumbnail_check.dart';
 /// listing is in progress, the last listing error, and whether the OS
 /// seems to block screen capture.
 @immutable
-class ScreenPickerState {
+final class ScreenPickerState {
   /// Creates a snapshot.
   ScreenPickerState({
     List<ScreenSource> sources = const [],
@@ -173,11 +173,12 @@ class ScreenSourcePicker {
   /// the web (the browser has its own picker) and on mobile.
   bool get isSupported => _media.desktopCapturer != null;
 
-  /// The picker's state. Replays the current value.
-  Stream<ScreenPickerState> get state => _state.stream;
+  /// The picker's state: the sources, the loading flag and any problem.
+  ScreenPickerState get state => _state.value;
 
-  /// The picker's current state.
-  ScreenPickerState get currentState => _state.value;
+  /// [state], replaying the current value to each new listener, then each
+  /// change. Completes after [dispose].
+  Stream<ScreenPickerState> get stateChanges => _state.stream;
 
   /// Starts listing and watching sources. Completes when the first listing
   /// has finished (successfully or not). Calling it again does nothing.
@@ -214,9 +215,7 @@ class ScreenSourcePicker {
     final capturer = _media.desktopCapturer!;
     _timer?.cancel();
     _timer = null;
-    _setState(
-      currentState.copyWith(isLoading: true, error: currentState.error),
-    );
+    _setState(state.copyWith(isLoading: true, error: state.error));
     Object? lastError;
     for (var attempt = 0; attempt <= retries; attempt++) {
       if (_disposed) return;
@@ -254,7 +253,7 @@ class ScreenSourcePicker {
       }
     }
     _setState(
-      currentState.copyWith(
+      state.copyWith(
         isLoading: false,
         error: ScreenSourcesException(
           'Listing screens and windows failed.',
@@ -309,16 +308,16 @@ class ScreenSourcePicker {
 
   void _onAdded(ScreenSource source) {
     if (!types.contains(source.type)) return;
-    final sources = currentState.sources;
+    final sources = state.sources;
     if (sources.any((s) => s.id == source.id)) {
       // Announced again (the plugin re-lists): keep its new thumbnail.
       _onChanged(source);
       return;
     }
     _setState(
-      currentState.copyWith(
+      state.copyWith(
         sources: _ordered([...sources, _remember(source)]),
-        error: currentState.error,
+        error: state.error,
       ),
     );
   }
@@ -326,25 +325,25 @@ class ScreenSourcePicker {
   void _onRemoved(ScreenSource source) {
     _thumbnails.remove(source.id);
     _blank.remove(source.id);
-    final sources = currentState.sources;
+    final sources = state.sources;
     if (!sources.any((s) => s.id == source.id)) return;
     _setState(
-      currentState.copyWith(
+      state.copyWith(
         sources: [
           for (final s in sources)
             if (s.id != source.id) s,
         ],
-        error: currentState.error,
+        error: state.error,
       ),
     );
   }
 
   void _onChanged(ScreenSource source) {
-    final sources = currentState.sources;
+    final sources = state.sources;
     if (!sources.any((s) => s.id == source.id)) return;
     final changed = _remember(source);
     _setState(
-      currentState.copyWith(
+      state.copyWith(
         sources: [
           for (final s in sources)
             if (s.id == source.id)
@@ -357,7 +356,7 @@ class ScreenSourcePicker {
             else
               s,
         ],
-        error: currentState.error,
+        error: state.error,
       ),
     );
   }
@@ -398,7 +397,7 @@ class ScreenSourcePicker {
     return null;
   }
 
-  /// Stops watching sources and completes [state].
+  /// Stops watching sources and completes [stateChanges].
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

@@ -28,6 +28,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,7 +62,7 @@ void main() {
     'two devices exchange media through the SFU and switch layers',
     (tester) async {
       final dev = settings.devServer();
-      final realtime = CloudflareRealtime(broker: dev.brokerConfig());
+      final realtime = CloudflareRealtime(broker: dev.brokerOptions());
       final signaling = dev.createSignaling();
       final random = Random.secure();
       // Not 1 << 32: shifts are 32-bit on the web, which makes that 0.
@@ -130,7 +131,7 @@ void main() {
       _log('sending ${published.source.name}, layers $heights');
 
       // The other device, with a camera or microphone.
-      final peer = await room.participants
+      final peer = await room.participantsChanges
           .map((list) => list.where((p) => _mediaOf(p) != null))
           .firstWhere((peers) => peers.isNotEmpty)
           .timeout(_peerTimeout)
@@ -149,8 +150,8 @@ void main() {
         'simulcast ${remote.simulcast != null}, layer heights $peerHeights',
       );
 
-      final track = await remote.track
-          .startWith(remote.currentTrack)
+      final track = await remote.trackChanges
+          .startWith(remote.track)
           .firstWhere(
             (t) =>
                 t != null && remote.subscriptionState == SfuTrackState.active,

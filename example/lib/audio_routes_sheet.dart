@@ -42,11 +42,11 @@ Future<void> showAudioRoutesSheet(BuildContext context, Room room) =>
       context: context,
       builder: (context) => SafeArea(
         child: StreamBuilder<List<AudioRoute>>(
-          stream: room.audioRoutes,
-          initialData: room.currentAudioRoutes,
+          stream: room.audioRoutesChanges,
+          initialData: room.audioRoutes,
           builder: (context, routes) => StreamBuilder<AudioRoute?>(
             stream: room.audioRouteChanges,
-            initialData: room.currentAudioRoute,
+            initialData: room.audioRoute,
             builder: (context, current) => ListView(
               // Sized to its routes; scrolls when they don't fit.
               shrinkWrap: true,

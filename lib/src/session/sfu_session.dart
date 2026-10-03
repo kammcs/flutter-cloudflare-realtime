@@ -32,7 +32,7 @@ import 'track_name.dart';
 part 'track_publication.dart';
 
 /// Options for [SfuSession.connect].
-class SfuSessionOptions {
+final class SfuSessionOptions {
   /// Creates session options.
   const SfuSessionOptions({
     this.iceServers,
@@ -175,12 +175,13 @@ class SfuSession {
   DataChannelManager get _data =>
       _dataChannels ??= DataChannelManager(SfuSessionPort._(this));
 
-  /// The connection state, replaying the current value to each new
-  /// listener. Completes after [close].
-  Stream<SfuConnectionState> get connectionState => _connectionState.stream;
+  /// The connection state.
+  SfuConnectionState get connectionState => _connectionState.value;
 
-  /// The current connection state.
-  SfuConnectionState get currentConnectionState => _connectionState.value;
+  /// [connectionState], replaying the current value to each new listener,
+  /// then each change. Completes after [close].
+  Stream<SfuConnectionState> get connectionStateChanges =>
+      _connectionState.stream;
 
   /// Why the session failed, or null if it hasn't.
   SfuSessionFailure? get failure => _failure;
@@ -372,7 +373,7 @@ class SfuSession {
       trackName: trackName,
       simulcast: preferredRid == null
           ? null
-          : SimulcastConfig(
+          : SimulcastOptions(
               preferredRid: preferredRid,
               priorityOrdering: priorityOrdering,
               ridNotAvailable: ridNotAvailable,
@@ -384,7 +385,7 @@ class SfuSession {
   /// Pulls an existing [subscription] on this session, from
   /// [remoteSessionId] if given (the publisher moved to a new session) or
   /// from its current [RemoteTrackSubscription.remoteSessionId]. Its
-  /// [RemoteTrackSubscription.trackStream] then emits the new track.
+  /// [RemoteTrackSubscription.trackChanges] then emits the new track.
   ///
   /// Throws a [StateError] if the subscription is closed or still on a
   /// session.
@@ -450,7 +451,7 @@ class SfuSession {
   /// the same batch does.
   Future<void> _updateLayer(
     RemoteTrackSubscription subscription,
-    SimulcastConfig config,
+    SimulcastOptions config,
   ) async {
     final request = ++subscription._layerRequests;
     var waited = Duration.zero;
@@ -611,7 +612,7 @@ class SfuSession {
   /// Runs on the operation queue. Does nothing if something was negotiated
   /// already ([hasNegotiated]) or the transport is set up. Completes once
   /// the SFU's offer is answered, not when the peer connection connects
-  /// (watch [connectionState]). Throws the broker's exception or an
+  /// (watch [connectionStateChanges]). Throws the broker's exception or an
   /// [SfuRequestException] if that fails; a `SessionGoneException` also
   /// fails the session, like any call.
   Future<void> establishConnection() {
@@ -712,7 +713,7 @@ class SfuSession {
           for (final item in batch) {
             item.fail(
               this,
-              const SfuSessionException('the operation had no result'),
+              const SfuProtocolException('the operation had no result'),
             );
           }
         }
@@ -829,7 +830,10 @@ class SfuSession {
     for (final item in batch) {
       final publication = item.publication;
       if (!identical(publication._session, this)) {
-        item.fail(this, const SfuSessionException('unpublished before push'));
+        item.fail(
+          this,
+          const SfuInterruptedException('unpublished before push'),
+        );
         continue;
       }
       try {
@@ -873,7 +877,7 @@ class SfuSession {
       if (mid == null) {
         item.fail(
           this,
-          const SfuSessionException('the transceiver has no mid'),
+          const SfuProtocolException('the transceiver has no mid'),
         );
       } else {
         item.mid = mid;
@@ -901,7 +905,7 @@ class SfuSession {
     _throwIfRequestError('tracks/new', response);
     final answer = response.sessionDescription;
     if (answer == null) {
-      throw const SfuSessionException('tracks/new returned no answer');
+      throw const SfuProtocolException('tracks/new returned no answer');
     }
     await _setRemoteDescription(answer);
     _throwIfUnusable();
@@ -939,7 +943,10 @@ class SfuSession {
       if (identical(item.subscription._session, this)) {
         requested.add(item);
       } else {
-        item.fail(this, const SfuSessionException('unsubscribed before pull'));
+        item.fail(
+          this,
+          const SfuInterruptedException('unsubscribed before pull'),
+        );
       }
     }
     if (requested.isEmpty) return;
@@ -1075,7 +1082,7 @@ class SfuSession {
   /// `renegotiate`.
   Future<void> _renegotiate(String operation, SessionDescription? offer) async {
     if (offer == null || offer.type != SdpType.offer) {
-      throw SfuSessionException(
+      throw SfuProtocolException(
         '$operation asked for renegotiation without an offer',
       );
     }
@@ -1403,7 +1410,7 @@ class SfuSession {
 
   @override
   String toString() =>
-      'SfuSession($sessionId, ${currentConnectionState.name}'
+      'SfuSession($sessionId, ${connectionState.name}'
       '${_failure == null ? '' : ', $_failure'})';
 }
 
@@ -1665,7 +1672,7 @@ class _UpdateItem extends _OpItem {
   _UpdateItem(this.subscription, this.config);
 
   final RemoteTrackSubscription subscription;
-  final SimulcastConfig config;
+  final SimulcastOptions config;
 }
 
 class _CloseItem extends _OpItem {

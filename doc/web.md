@@ -12,12 +12,12 @@ A browser calls the broker cross-origin. List your web app's origins in the brok
 
 ## Autoplay
 
-Browsers block audio that starts without a user gesture. The package plays pulled audio in its own `<audio>` elements; when the browser blocks them, `Room.audioPlaybackBlocked` is `true` (and `audioPlaybackBlockedChanges` emits). Show a "Tap to enable audio" button while it is, and call `Room.startAudio()` from its `onPressed`:
+Browsers block audio that starts without a user gesture. The package plays pulled audio in its own `<audio>` elements; when the browser blocks them, `Room.isAudioPlaybackBlocked` is `true` (and `audioPlaybackBlockedChanges` emits). Show a "Tap to enable audio" button while it is, and call `Room.startAudio()` from its `onPressed`:
 
 ```dart
 StreamBuilder<bool>(
   stream: room.audioPlaybackBlockedChanges,
-  initialData: room.audioPlaybackBlocked,
+  initialData: room.isAudioPlaybackBlocked,
   builder: (context, snapshot) => snapshot.data == true
       ? FilledButton(
           onPressed: room.startAudio,
@@ -27,7 +27,7 @@ StreamBuilder<bool>(
 )
 ```
 
-Joining from a button press usually avoids the block. On native platforms `audioPlaybackBlocked` is always `false`.
+Joining from a button press usually avoids the block. On native platforms `isAudioPlaybackBlocked` is always `false`.
 
 ## Devices and permissions
 

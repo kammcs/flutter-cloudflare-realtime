@@ -421,8 +421,8 @@ class _Reconnection {
         state == SfuConnectionState.connecting ||
         state == SfuConnectionState.disconnected ||
         (state == SfuConnectionState.initial && negotiated());
-    if (!waiting(next.currentConnectionState)) return;
-    if (next.currentConnectionState == SfuConnectionState.initial) {
+    if (!waiting(next.connectionState)) return;
+    if (next.connectionState == SfuConnectionState.initial) {
       // The room leaves `initial` out of the trigger (an idle session must
       // not time out), so arm the connect timeout for this wait here.
       _fire(
@@ -434,7 +434,7 @@ class _Reconnection {
     }
     final done = Completer<void>();
     _wake = done;
-    final listener = next.connectionState.listen((state) {
+    final listener = next.connectionStateChanges.listen((state) {
       if (!waiting(state) && !done.isCompleted) done.complete();
     }, onDone: () => done.isCompleted ? null : done.complete());
     try {
@@ -444,11 +444,11 @@ class _Reconnection {
       if (identical(_wake, done)) _wake = null;
     }
     _checkUsable(next);
-    if (next.currentConnectionState != SfuConnectionState.connected &&
-        next.currentConnectionState != SfuConnectionState.initial) {
-      throw SfuSessionException(
+    if (next.connectionState != SfuConnectionState.connected &&
+        next.connectionState != SfuConnectionState.initial) {
+      throw SfuInterruptedException(
         'the new session did not connect '
-        '(${next.currentConnectionState.name})',
+        '(${next.connectionState.name})',
       );
     }
   }
@@ -459,14 +459,14 @@ class _Reconnection {
     final room = _room;
     if (room._left) throw const _Aborted();
     if (!identical(room._session, next)) {
-      throw const SfuSessionException('the session was replaced');
+      throw const SfuInterruptedException('the session was replaced');
     }
     if (next.isClosed) throw const SfuSessionClosedException();
     final failure = next.failure;
     if (failure != null) throw SfuSessionFailedException(failure);
     final pending = _pending;
     if (pending != null) {
-      throw SfuSessionException('the new session broke (${pending.name})');
+      throw SfuInterruptedException('the new session broke (${pending.name})');
     }
   }
 

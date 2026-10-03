@@ -6,11 +6,11 @@ part of 'room.dart';
 ///
 /// It polls for as long as the room is joined (unless
 /// [RoomOptions.activeSpeaker] is `null`), not only while someone listens:
-/// the synchronous getters ([Room.currentActiveSpeakers],
+/// the synchronous getters ([Room.activeSpeakers],
 /// [RemoteParticipant.isSpeaking]) must be right without a listener, and
 /// the detector's smoothing and hold times need a continuous series of
 /// samples. A poll costs one `getStats()` call every
-/// [ActiveSpeakerConfig.pollInterval], and none at all while there is no
+/// [ActiveSpeakerOptions.pollInterval], and none at all while there is no
 /// audio to measure (see [RoomAudioLevelSource]).
 class _RoomSpeakers {
   _RoomSpeakers(this._room) {
@@ -25,7 +25,7 @@ class _RoomSpeakers {
     final stopwatch = clock.stopwatch()..start();
     monitor = ActiveSpeakerMonitor(
       source: levels,
-      config: _room.options.activeSpeaker ?? const ActiveSpeakerConfig(),
+      config: _room.options.activeSpeaker ?? const ActiveSpeakerOptions(),
       localParticipantId: localId,
       clock: () => stopwatch.elapsed,
     );
@@ -65,7 +65,7 @@ class _RoomSpeakers {
   }
 
   void _syncLocalMuted() {
-    monitor.localMuted = _room.localParticipant.microphone?.muted ?? true;
+    monitor.localMuted = _room.localParticipant.microphone?.isMuted ?? true;
   }
 
   String? _microphoneTrackId() =>

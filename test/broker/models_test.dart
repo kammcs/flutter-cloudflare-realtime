@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/broker.dart';
+import 'package:cloudflare_realtime/cloudflare_realtime.dart'
+    show SimulcastOrdering;
 import 'package:flutter_test/flutter_test.dart';
 
 /// Encodes and decodes [json] so tests compare plain JSON values.
@@ -53,7 +55,7 @@ void main() {
       const track = TrackObject.remote(
         sessionId: 'pub-1',
         trackName: 'cam',
-        simulcast: SimulcastConfig(
+        simulcast: SimulcastOptions(
           preferredRid: 'b',
           priorityOrdering: SimulcastOrdering.asciibetical,
           ridNotAvailable: SimulcastOrdering.asciibetical,
@@ -74,7 +76,7 @@ void main() {
     });
 
     test('simulcast omits unset orderings', () {
-      expect(const SimulcastConfig(preferredRid: 'a').toJson(), {
+      expect(const SimulcastOptions(preferredRid: 'a').toJson(), {
         'preferredRid': 'a',
       });
     });
@@ -229,7 +231,7 @@ void main() {
             sessionId: 'p',
             trackName: 'cam',
             mid: '8',
-            simulcast: SimulcastConfig(preferredRid: 'c'),
+            simulcast: SimulcastOptions(preferredRid: 'c'),
           ),
         ],
       );

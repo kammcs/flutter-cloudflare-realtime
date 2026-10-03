@@ -179,7 +179,7 @@ void main() {
 
     test('maxUpscale 1 never upscales', () {
       const strict = SimulcastLayerPolicy(
-        LayerSelectionConfig(maxUpscale: 1.0),
+        LayerSelectionOptions(maxUpscale: 1.0),
       );
       expect(
         strict.choose(const TileDemand(width: 640, height: 361), ladder).rid,
@@ -202,7 +202,7 @@ void main() {
       });
 
       const bandwidthAware = SimulcastLayerPolicy(
-        LayerSelectionConfig(priorityOrdering: SimulcastOrdering.asciibetical),
+        LayerSelectionOptions(priorityOrdering: SimulcastOrdering.asciibetical),
       );
       expect(bandwidthAware.simulcastConfig('a').toJson(), {
         'preferredRid': 'a',
@@ -212,14 +212,14 @@ void main() {
     });
   });
 
-  test('LayerSelectionConfig defaults', () {
-    const config = LayerSelectionConfig();
+  test('LayerSelectionOptions defaults', () {
+    const config = LayerSelectionOptions();
     expect(config.maxUpscale, 1.5);
     expect(config.downgradeHysteresis, 0.15);
     expect(config.debounce, const Duration(milliseconds: 300));
     expect(config.ridNotAvailable, SimulcastOrdering.asciibetical);
     expect(config.priorityOrdering, isNull);
-    expect(config, const LayerSelectionConfig());
+    expect(config, const LayerSelectionOptions());
   });
 
   test('LayerPreference', () {

@@ -12,7 +12,7 @@ import 'call_interruption.dart';
 
 /// Thrown by `Room.selectAudioRoute` when the platform refuses the route,
 /// for example one that has just disconnected.
-class AudioRouteUnavailableException implements Exception {
+final class AudioRouteUnavailableException implements Exception {
   /// Creates the exception.
   const AudioRouteUnavailableException(this.route);
 

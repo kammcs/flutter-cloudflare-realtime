@@ -27,7 +27,7 @@ import 'system_call_types.dart';
 ///
 /// ```dart
 /// final calls = SystemCalls.instance;
-/// await calls.configure(const SystemCallsConfig());
+/// await calls.configure(const SystemCallsOptions());
 /// final call = await calls.reportIncomingCall(
 ///   handle: const CallHandle('ada'),
 ///   displayName: 'Ada',
@@ -39,7 +39,7 @@ import 'system_call_types.dart';
 /// ```
 ///
 /// Everywhere else (desktops, the web, and phones where the system refuses)
-/// [supported] is `false` and the calls are kept in Dart only: every
+/// [isSupported] is `false` and the calls are kept in Dart only: every
 /// request is answered with its event, so the app's call flow is the same,
 /// without a system UI.
 ///
@@ -83,7 +83,7 @@ class SystemCalls {
 
   /// Whether the phone's own call UI shows the app's calls: `true` after
   /// [configure] on iOS and Android 8+ (with the native side present).
-  bool get supported => _supported;
+  bool get isSupported => _supported;
 
   /// Whether [configure] has completed.
   bool get isConfigured => _backend != null;
@@ -102,22 +102,22 @@ class SystemCalls {
   Stream<SystemCallEvent> get events => _events.stream;
 
   /// Sets the system's call UI up for this app, and completes with
-  /// [supported]. Call it once at startup, before reporting calls; calling
-  /// it again updates [config].
+  /// [isSupported]. Call it once at startup, before reporting calls; calling
+  /// it again updates [options].
   ///
   /// Calls the system already has are in [calls] when it completes (and
   /// emitted as [SystemCallAddedEvent]): on iOS, a VoIP push that launched
   /// the app reports its call before Dart runs.
   Future<bool> configure([
-    SystemCallsConfig config = const SystemCallsConfig(),
+    SystemCallsOptions options = const SystemCallsOptions(),
   ]) async {
     if (_backend != null) {
-      if (_supported) await _platform.configure(config);
+      if (_supported) await _platform.configure(options);
       return _supported;
     }
     var ok = false;
     try {
-      ok = await _platform.configure(config);
+      ok = await _platform.configure(options);
     } catch (error) {
       debugPrint('cloudflare_realtime: system calls unavailable: $error');
     }
@@ -290,7 +290,7 @@ class SystemCalls {
         }
       case CallMutedSignal(:final id, :final muted):
         final call = _calls[id];
-        if (call == null || call.muted == muted) return;
+        if (call == null || call.isMuted == muted) return;
         call._muted.set(muted);
         _emit(SystemCallMutedEvent(call, muted: muted));
       case CallDtmfSignal(:final id, :final digits):
@@ -393,7 +393,7 @@ final RegExp _uuid = RegExp(
 /// VoIP push.
 ///
 /// Its methods are **requests**: they complete once the system accepted
-/// them, and [state], [muted] and [SystemCalls.events] change when the
+/// them, and [state], [isMuted] and [SystemCalls.events] change when the
 /// system confirms, the same way as when the user acts in the system's UI.
 /// [Room.attachSystemCall] keeps a room's microphone and this call's mute
 /// in step.
@@ -401,7 +401,7 @@ class SystemCall {
   SystemCall._(this._calls, SystemCallInfo info)
     : id = info.id,
       handle = info.handle,
-      outgoing = info.outgoing,
+      isOutgoing = info.outgoing,
       payload = Map.unmodifiable(info.payload),
       _displayName = info.displayName,
       _video = info.video,
@@ -417,7 +417,7 @@ class SystemCall {
   final CallHandle handle;
 
   /// Whether the app started the call.
-  final bool outgoing;
+  final bool isOutgoing;
 
   /// What the VoIP push carried beyond the call's own fields (iOS), for the
   /// app to find the room; empty otherwise.
@@ -434,7 +434,7 @@ class SystemCall {
   String? get displayName => _displayName;
 
   /// Whether the system shows it as a video call.
-  bool get video => _video;
+  bool get isVideo => _video;
 
   /// Where the call is now.
   SystemCallState get state => _state.value;
@@ -444,9 +444,9 @@ class SystemCall {
   Stream<SystemCallState> get stateChanges => _state.stream;
 
   /// Whether the system's mute is on for the call.
-  bool get muted => _muted.value;
+  bool get isMuted => _muted.value;
 
-  /// [muted], replaying the current value, then each change.
+  /// [isMuted], replaying the current value, then each change.
   Stream<bool> get mutedChanges => _muted.stream;
 
   /// Whether the call is over.
@@ -464,7 +464,7 @@ class SystemCall {
   /// system's UI. Throws a [StateError] unless it is ringing, and a
   /// [SystemCallException] if the system refuses.
   Future<void> answer() async {
-    if (outgoing || state != SystemCallState.ringing) {
+    if (isOutgoing || state != SystemCallState.ringing) {
       throw StateError('Only a ringing incoming call can be answered.');
     }
     if (!await _backend.answer(id)) {
@@ -481,7 +481,7 @@ class SystemCall {
     if (isEnded) return;
     final why =
         reason ??
-        (!outgoing && state == SystemCallState.ringing
+        (!isOutgoing && state == SystemCallState.ringing
             ? SystemCallEndReason.declined
             : SystemCallEndReason.local);
     var accepted = false;
@@ -517,7 +517,7 @@ class SystemCall {
   /// This outgoing call started connecting (the app is reaching the other
   /// side). iOS shows "connecting" and starts the call's timer later.
   Future<void> reportConnecting() async {
-    if (!outgoing || state != SystemCallState.dialing) {
+    if (!isOutgoing || state != SystemCallState.dialing) {
       throw StateError('Only a dialing outgoing call can connect.');
     }
     await _backend.reportConnecting(id);
@@ -526,7 +526,7 @@ class SystemCall {
 
   /// This outgoing call connected: the other side answered.
   Future<void> reportConnected() async {
-    if (!outgoing ||
+    if (!isOutgoing ||
         (state != SystemCallState.dialing &&
             state != SystemCallState.connecting)) {
       throw StateError('Only a dialing outgoing call can connect.');
@@ -565,8 +565,8 @@ class SystemCall {
   @override
   String toString() =>
       'SystemCall($id, ${handle.value}, ${state.name}'
-      '${outgoing ? ', outgoing' : ''}${video ? ', video' : ''}'
-      '${muted ? ', muted' : ''})';
+      '${isOutgoing ? ', outgoing' : ''}${isVideo ? ', video' : ''}'
+      '${isMuted ? ', muted' : ''})';
 }
 
 /// VoIP pushes (iOS PushKit, `docs/design.md` §4.8): pushes that wake the
@@ -588,8 +588,8 @@ class VoipPush {
   final SystemCalls _calls;
 
   /// Whether VoIP pushes work here: iOS with system calls supported
-  /// ([SystemCalls.supported]).
-  bool get supported =>
+  /// ([SystemCalls.isSupported]).
+  bool get isSupported =>
       _calls._supported && (_calls._backend?.supportsVoipPush ?? false);
 
   /// The device's VoIP push token (hex), for the app's server, or `null`
@@ -603,9 +603,9 @@ class VoipPush {
   /// already known (else it arrives on [tokenChanges]). Remembered across
   /// launches: from then on the package listens for pushes as soon as the
   /// app starts, before Dart. Does nothing (and completes with `null`)
-  /// where VoIP pushes aren't [supported].
+  /// where VoIP pushes aren't [isSupported].
   Future<String?> register() async {
-    if (!supported) return null;
+    if (!isSupported) return null;
     final token = await _calls._backend!.registerVoipPush();
     if (token != null && !_calls._voipToken.isClosed) {
       _calls._voipToken.set(token);
@@ -615,7 +615,7 @@ class VoipPush {
 
   /// Stops listening for VoIP pushes, now and at later launches.
   Future<void> unregister() async {
-    if (!supported) return;
+    if (!isSupported) return;
     await _calls._backend!.unregisterVoipPush();
     if (!_calls._voipToken.isClosed) _calls._voipToken.set(null);
   }
@@ -688,7 +688,7 @@ final class SystemCallMutedEvent extends SystemCallEvent {
 }
 
 /// The system's keypad sent [digits] (iOS, with
-/// [SystemCallsConfig.supportsDtmf]).
+/// [SystemCallsOptions.supportsDtmf]).
 final class SystemCallDtmfEvent extends SystemCallEvent {
   /// Creates the event.
   const SystemCallDtmfEvent(super.call, this.digits);

@@ -12,6 +12,18 @@ sealed class Participant {
   /// Whether the participant is speaking now ([Room.activeSpeakers]).
   bool get isSpeaking;
 
+  /// [isSpeaking], replaying the current value to each new listener, then
+  /// each change.
+  Stream<bool> get speakingChanges;
+
+  /// The participant's smoothed microphone level, `0..1`, for a level
+  /// meter. Updated every [ActiveSpeakerOptions.pollInterval].
+  double get audioLevel;
+
+  /// [audioLevel], replaying the current value to each new listener, then
+  /// each change.
+  Stream<double> get audioLevelChanges;
+
   /// How well the participant's media gets through (`docs/design.md`
   /// §7.1): for this client, its own connection to the SFU; for others,
   /// what arrives from them. [ConnectionQuality.unknown] until measured,
@@ -19,7 +31,7 @@ sealed class Participant {
   ConnectionQuality get connectionQuality;
 
   /// [connectionQuality], replaying the current value to each new
-  /// listener, then its changes ([ConnectionQualityChangedEvent]).
+  /// listener, then its changes ([ParticipantConnectionQualityChangedEvent]).
   /// Completes when the participant leaves (or after [Room.leave]).
   Stream<ConnectionQuality> get connectionQualityChanges;
 }

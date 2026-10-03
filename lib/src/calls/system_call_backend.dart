@@ -27,7 +27,7 @@ import 'system_call_types.dart';
 //
 // Methods (arguments → result). Errors are PlatformExceptions whose code is
 // one of "filtered", "alreadyExists", "notFound", "unavailable", "failed".
-//   configure          SystemCallsConfig.toMap()      → bool (supported)
+//   configure          SystemCallsOptions.toMap()      → bool (supported)
 //   reportIncomingCall call map                       → null
 //   startOutgoingCall  call map                       → null
 //   reportConnecting   {id}                           → null
@@ -361,7 +361,7 @@ abstract interface class SystemCallBackend {
 
   /// Sets the system's presentation of calls up. Completes with whether
   /// system calls work here.
-  Future<bool> configure(SystemCallsConfig config);
+  Future<bool> configure(SystemCallsOptions config);
 
   /// Shows [call] as an incoming call.
   Future<void> reportIncomingCall(SystemCallInfo call);
@@ -451,7 +451,7 @@ class LocalSystemCallBackend implements SystemCallBackend {
   bool get supportsVoipPush => false;
 
   @override
-  Future<bool> configure(SystemCallsConfig config) async => false;
+  Future<bool> configure(SystemCallsOptions config) async => false;
 
   @override
   Future<void> reportIncomingCall(SystemCallInfo call) async => _add(call);
@@ -559,7 +559,7 @@ class MethodChannelSystemCallBackend implements SystemCallBackend {
   bool get supportsVoipPush => isIOS;
 
   @override
-  Future<bool> configure(SystemCallsConfig config) async {
+  Future<bool> configure(SystemCallsOptions config) async {
     try {
       return await _methods.invokeMethod<bool>('configure', config.toMap()) ??
           false;

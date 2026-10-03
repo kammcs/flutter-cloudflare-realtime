@@ -18,7 +18,7 @@ const _permissions = MethodChannel('example/permissions');
 /// host app: the notification permission (13+), for the call's notification,
 /// and the full-screen intent (14+), for an incoming call over the lock
 /// screen; when the latter isn't granted, the user is sent to its settings
-/// page once. Completes with [SystemCalls.supported].
+/// page once. Completes with [SystemCalls.isSupported].
 Future<bool> prepareSystemCalls() async {
   if (defaultTargetPlatform == TargetPlatform.android) {
     try {
@@ -93,7 +93,7 @@ class _IncomingCallDialogState extends State<_IncomingCallDialog> {
   Widget build(BuildContext context) {
     final call = widget.call;
     return AlertDialog(
-      icon: Icon(call.video ? Icons.videocam : Icons.ring_volume),
+      icon: Icon(call.isVideo ? Icons.videocam : Icons.ring_volume),
       title: Text(call.displayName ?? call.handle.value),
       content: const Text(
         'Incoming call. Answer here, or in the notification or on the lock '

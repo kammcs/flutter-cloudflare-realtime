@@ -276,24 +276,24 @@ void main() {
       expect(alice.canKeepScreenAwake, isTrue);
       await alice.localParticipant.publishMicrophone();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse, reason: 'audio only');
+      expect(alice.isKeepingScreenAwake, isFalse, reason: 'audio only');
       expect(screen.calls, isEmpty);
 
       final camera = await alice.localParticipant.publishCamera();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
       expect(screen.on, isTrue);
 
       await camera.mute();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse, reason: 'nothing is sent');
+      expect(alice.isKeepingScreenAwake, isFalse, reason: 'nothing is sent');
       await camera.unmute();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
 
       await camera.unpublish();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.isKeepingScreenAwake, isFalse);
       expect(screen.calls, ['on', 'off', 'on', 'off']);
       await alice.leave();
     });
@@ -304,7 +304,7 @@ void main() {
         final alice = await join('alice');
         await alice.localParticipant.publishCamera(muted: true);
         await _settle();
-        expect(alice.keepingScreenAwake, isFalse);
+        expect(alice.isKeepingScreenAwake, isFalse);
         await alice.leave();
       },
     );
@@ -319,40 +319,40 @@ void main() {
       await _settle();
       final aliceBobCamera = alice.participant('bob')!.camera!;
       expect(aliceBobCamera.isSubscribed, isFalse, reason: 'video waits');
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.isKeepingScreenAwake, isFalse);
 
       await aliceBobCamera.subscribe();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
 
       await bobCamera.mute();
       await _settle();
-      expect(aliceBobCamera.muted, isTrue);
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(aliceBobCamera.isMuted, isTrue);
+      expect(alice.isKeepingScreenAwake, isFalse);
       await bobCamera.unmute();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
 
       await aliceBobCamera.unsubscribe();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.isKeepingScreenAwake, isFalse);
 
       // A view's lease counts too.
       final lease = aliceBobCamera.retain();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
       lease.release();
       await pumpEventQueue();
       await Future<void>.delayed(const Duration(milliseconds: 600));
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse, reason: 'after the grace');
+      expect(alice.isKeepingScreenAwake, isFalse, reason: 'after the grace');
 
       await aliceBobCamera.subscribe();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
       await bobCamera.unpublish();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse, reason: 'unpublished');
+      expect(alice.isKeepingScreenAwake, isFalse, reason: 'unpublished');
       await alice.leave();
       await bob.leave();
     });
@@ -366,23 +366,23 @@ void main() {
       await _settle();
       h.pcOf(alice).emitConnectionState(_connected);
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
 
       h.pcOf(alice).emitConnectionState(_disconnected);
       await _settle();
-      expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.connectionState, RoomConnectionState.reconnecting);
+      expect(alice.isKeepingScreenAwake, isTrue);
 
       h.pcOf(alice).emitConnectionState(_connected);
       await _settle();
-      expect(alice.currentConnectionState, RoomConnectionState.connected);
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.connectionState, RoomConnectionState.connected);
+      expect(alice.isKeepingScreenAwake, isTrue);
       expect(screen.calls, ['on'], reason: 'held throughout');
 
       h.pcOf(alice).emitConnectionState(_failed);
       await _settle();
-      expect(alice.currentConnectionState, RoomConnectionState.disconnected);
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.connectionState, RoomConnectionState.disconnected);
+      expect(alice.isKeepingScreenAwake, isFalse);
       expect(screen.calls, ['on', 'off']);
       await alice.leave();
     });
@@ -394,7 +394,7 @@ void main() {
       expect(screen.on, isTrue);
       await alice.leave();
       expect(screen.on, isFalse);
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.isKeepingScreenAwake, isFalse);
     });
 
     test('two rooms: held while either has video', () async {
@@ -403,7 +403,7 @@ void main() {
       await voice.localParticipant.publishMicrophone();
       final camera = await video.localParticipant.publishCamera();
       await _settle();
-      expect(voice.keepingScreenAwake, isTrue, reason: 'app-wide');
+      expect(voice.isKeepingScreenAwake, isTrue, reason: 'app-wide');
 
       await camera.mute();
       await _settle();
@@ -420,10 +420,10 @@ void main() {
 
     test('always: on from the join, video or not; off on leave', () async {
       final alice = await join('alice', policy: KeepScreenAwake.always);
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
       await alice.localParticipant.publishMicrophone();
       await _settle();
-      expect(alice.keepingScreenAwake, isTrue);
+      expect(alice.isKeepingScreenAwake, isTrue);
       await alice.leave();
       expect(screen.on, isFalse);
     });
@@ -432,7 +432,7 @@ void main() {
       final alice = await join('alice', policy: KeepScreenAwake.never);
       await alice.localParticipant.publishCamera();
       await _settle();
-      expect(alice.keepingScreenAwake, isFalse);
+      expect(alice.isKeepingScreenAwake, isFalse);
       expect(screen.calls, isEmpty);
       await alice.leave();
     });
@@ -466,19 +466,19 @@ void main() {
         await alice.localParticipant.publishMicrophone();
         await _settle();
         expect(phone.currentNow, _FakePhone.earpiece);
-        expect(alice.proximitySensorActive, isTrue);
-        expect(alice.keepingScreenAwake, isFalse, reason: 'at the ear');
+        expect(alice.isProximitySensorActive, isTrue);
+        expect(alice.isKeepingScreenAwake, isFalse, reason: 'at the ear');
         expect(screen.calls, isEmpty);
 
         await alice.setSpeakerphone(true);
         await _settle();
-        expect(alice.proximitySensorActive, isFalse);
-        expect(alice.keepingScreenAwake, isTrue);
+        expect(alice.isProximitySensorActive, isFalse);
+        expect(alice.isKeepingScreenAwake, isTrue);
 
         await alice.setSpeakerphone(false);
         await _settle();
-        expect(alice.proximitySensorActive, isTrue);
-        expect(alice.keepingScreenAwake, isFalse);
+        expect(alice.isProximitySensorActive, isTrue);
+        expect(alice.isKeepingScreenAwake, isFalse);
         await alice.leave();
         expect(screen.calls, ['on', 'off']);
       });
@@ -494,14 +494,14 @@ void main() {
           await alice.localParticipant.publishMicrophone();
           await _settle();
           expect(phone.currentNow, _FakePhone.earpiece);
-          expect(alice.proximitySensorActive, isTrue);
-          expect(alice.keepingScreenAwake, isFalse);
+          expect(alice.isProximitySensorActive, isTrue);
+          expect(alice.isKeepingScreenAwake, isFalse);
 
           await alice.localParticipant.publishCamera();
           await _settle();
           expect(phone.currentNow, _FakePhone.speaker);
-          expect(alice.proximitySensorActive, isFalse);
-          expect(alice.keepingScreenAwake, isTrue);
+          expect(alice.isProximitySensorActive, isFalse);
+          expect(alice.isKeepingScreenAwake, isTrue);
           await alice.leave();
           expect(screen.on, isFalse);
         },

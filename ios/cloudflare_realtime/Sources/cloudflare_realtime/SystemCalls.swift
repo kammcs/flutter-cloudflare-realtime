@@ -184,7 +184,7 @@ final class SystemCalls: NSObject {
   }
 
   /// Creates (or reconfigures) the provider from Dart's
-  /// `SystemCallsConfig.toMap()`, persists it, and turns manual audio on.
+  /// `SystemCallsOptions.toMap()`, persists it, and turns manual audio on.
   @discardableResult
   func configure(_ config: [String: Any]) -> Bool {
     let configuration = CXProviderConfiguration()

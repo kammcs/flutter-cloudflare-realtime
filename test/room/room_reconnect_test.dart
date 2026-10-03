@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:cloudflare_realtime/src/reconnect/backoff.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
@@ -28,7 +30,7 @@ class _MaxRandom implements math.Random {
 const _options = RoomOptions(
   connectEarly: false,
   reconnect: ReconnectOptions(
-    backoff: BackoffConfig(
+    backoff: BackoffOptions(
       initialDelay: Duration(seconds: 1),
       maxDelay: Duration(seconds: 4),
       maxAttempts: 3,
@@ -134,22 +136,22 @@ void main() {
         final bobAliceCam = bob.participant('alice')!.camera!;
         wait(pump, bobAliceCam.subscribe());
         final aliceBobMic = alice.participant('bob')!.microphone!;
-        expect(aliceBobMic.currentTrack, isNotNull);
+        expect(aliceBobMic.track, isNotNull);
 
         final events = _record(alice);
         final states = <RoomConnectionState>[];
-        alice.connectionState.listen(states.add);
+        alice.connectionStateChanges.listen(states.add);
         pump();
         final oldSession = alice.session;
         final oldPc = h.pcOf(alice);
         final micTrack = mic.publication.track;
         final camTrack = cam.publication.track;
         final captures = h.media.userMediaCalls.length;
-        final oldBobPull = aliceBobMic.currentTrack!;
+        final oldBobPull = aliceBobMic.track!;
 
         oldPc.emitConnectionState(_failed);
         pump();
-        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(alice.connectionState, RoomConnectionState.reconnecting);
         expect(alice.isReconnecting, isTrue);
         expect(
           events.whereType<RoomSessionFailedEvent>().single.failure,
@@ -177,15 +179,15 @@ void main() {
         // `new`: the room stays reconnecting until it connects, rather than
         // showing connected, connecting, connected.
         expect(alice.isReconnecting, isTrue);
-        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(alice.connectionState, RoomConnectionState.reconnecting);
         expect(events.whereType<RoomReconnectedEvent>(), isEmpty);
         h.pcOf(alice).emitConnectionState(_connecting);
         pump();
-        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(alice.connectionState, RoomConnectionState.reconnecting);
         h.pcOf(alice).emitConnectionState(_connected);
         pump();
         expect(alice.isReconnecting, isFalse);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         final reconnected = events.whereType<RoomReconnectedEvent>().single;
         expect(reconnected.reason, ReconnectReason.peerConnectionFailed);
         expect(reconnected.attempts, 1);
@@ -230,7 +232,7 @@ void main() {
         );
         expect(aliceBobMic.subscription!.session, same(session));
         expect(aliceBobMic.subscriptionState, SfuTrackState.active);
-        expect(aliceBobMic.currentTrack, isNot(same(oldBobPull)));
+        expect(aliceBobMic.track, isNot(same(oldBobPull)));
 
         // Bob follows Alice to her new session.
         expect(bob.participant('alice')!.sessionId, session.sessionId);
@@ -261,16 +263,13 @@ void main() {
             ..emitConnectionState(_connected)
             ..emitConnectionState(_disconnected);
           pump();
-          expect(
-            alice.currentConnectionState,
-            RoomConnectionState.reconnecting,
-          );
+          expect(alice.connectionState, RoomConnectionState.reconnecting);
           async.elapse(const Duration(seconds: 4));
           pc.emitConnectionState(_connected);
           pump();
           async.elapse(const Duration(seconds: 30));
           pump();
-          expect(alice.currentConnectionState, RoomConnectionState.connected);
+          expect(alice.connectionState, RoomConnectionState.connected);
           expect(events.whereType<RoomReconnectingEvent>(), isEmpty);
           expect(h.connectAttempts, attempts);
 
@@ -287,7 +286,7 @@ void main() {
           expect(h.connectAttempts, attempts + 1);
           expect(pc.closed, isTrue, reason: 'the old session was closed');
           expect(events.whereType<RoomReconnectedEvent>(), hasLength(1));
-          expect(alice.currentConnectionState, RoomConnectionState.connected);
+          expect(alice.connectionState, RoomConnectionState.connected);
           alice.leave();
           pump();
         });
@@ -339,7 +338,7 @@ void main() {
         expect(h.pullsOf(alice), ['dave-1/dave-mic']);
         final daveMic = alice.participant('dave')!.microphone!;
         expect(daveMic.subscriptionState, SfuTrackState.active);
-        expect(daveMic.currentTrack, isNotNull);
+        expect(daveMic.track, isNotNull);
         alice.leave();
         dave.dispose();
         pump();
@@ -392,7 +391,7 @@ void main() {
         expect(alice.session, same(session));
         expect(events.whereType<RoomSessionFailedEvent>(), isEmpty);
         expect(events.whereType<RoomReconnectingEvent>(), isEmpty);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         final daveMic = alice.participant('dave')!.microphone!;
         expect(daveMic.error, isA<SfuTrackException>());
         final failure = events.whereType<TrackSubscriptionFailedEvent>().single;
@@ -427,7 +426,7 @@ void main() {
         );
         pump();
         expect(daveMic.subscriptionState, SfuTrackState.active);
-        expect(daveMic.currentTrack, isNotNull);
+        expect(daveMic.track, isNotNull);
         expect(h.pullsOf(alice).last, 'dave-new/dave-mic');
         expect(alice.session, same(session));
         alice.leave();
@@ -605,7 +604,7 @@ void main() {
               ),
           ],
         );
-        expect(alice.currentConnectionState, RoomConnectionState.disconnected);
+        expect(alice.connectionState, RoomConnectionState.disconnected);
         expect(alice.isReconnecting, isFalse);
         async.elapse(const Duration(minutes: 5));
         pump();
@@ -616,7 +615,7 @@ void main() {
         final result = wait(pump, alice.reconnect());
         expect(result, isTrue);
         expect(h.connectAttempts - base, 4, reason: 'no delay when asked');
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         final reconnected = events.whereType<RoomReconnectedEvent>().single;
         expect(reconnected.reason, ReconnectReason.manual);
         expect(reconnected.attempts, 1);
@@ -659,7 +658,7 @@ void main() {
         expect(second.waited, const Duration(milliseconds: 500));
         h.pcOf(alice).emitConnectionState(_connected);
         pump();
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         expect(events.whereType<RoomReconnectedEvent>().single.attempts, 2);
         alice.leave();
         pump();
@@ -711,7 +710,7 @@ void main() {
         pump();
         async.elapse(const Duration(minutes: 1));
         pump();
-        expect(alice.currentConnectionState, RoomConnectionState.disconnected);
+        expect(alice.connectionState, RoomConnectionState.disconnected);
         expect(events.whereType<RoomReconnectingEvent>(), isEmpty);
 
         expect(wait(pump, alice.reconnect()), isTrue);
@@ -786,14 +785,14 @@ void main() {
         pump();
         final stuck = h.pcOf(alice);
         expect(mic.publication.session, same(alice.session));
-        expect(alice.currentConnectionState, RoomConnectionState.reconnecting);
+        expect(alice.connectionState, RoomConnectionState.reconnecting);
 
         async.elapse(const Duration(seconds: 14));
         pump();
         expect(alice.isReconnecting, isTrue);
         expect(events.whereType<RoomErrorEvent>(), isEmpty);
 
-        // 15 s: ReconnectTriggerConfig.connectTimeout.
+        // 15 s: ReconnectTriggerOptions.connectTimeout.
         h.autoConnect = true;
         async.elapse(const Duration(seconds: 1));
         pump();
@@ -807,7 +806,7 @@ void main() {
         pump();
         final reconnected = events.whereType<RoomReconnectedEvent>().single;
         expect(reconnected.attempts, 2);
-        expect(alice.currentConnectionState, RoomConnectionState.connected);
+        expect(alice.connectionState, RoomConnectionState.connected);
         expect(mic.publication.state, SfuTrackState.active);
         alice.leave();
         pump();
@@ -819,7 +818,7 @@ void main() {
         final alice = join(pump, 'alice');
         final events = _record(alice);
         final states = <RoomConnectionState>[];
-        alice.connectionState.listen(states.add);
+        alice.connectionStateChanges.listen(states.add);
         pump();
 
         h.pcOf(alice).emitConnectionState(_failed);
@@ -933,7 +932,7 @@ void main() {
         async.elapse(const Duration(minutes: 1));
         pump();
         expect(h.connectAttempts, base);
-        expect(alice.currentConnectionState, RoomConnectionState.disconnected);
+        expect(alice.connectionState, RoomConnectionState.disconnected);
         expect(h.announced('alice'), isNull);
       });
     });

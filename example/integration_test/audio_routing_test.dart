@@ -28,6 +28,7 @@
 import 'dart:io' show Platform;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
@@ -57,7 +58,7 @@ void main() {
         await camera.dispose();
       }
 
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;
@@ -80,7 +81,7 @@ void main() {
       expect(alice.canSelectAudioRoute, phone);
       if (!phone) {
         await expectLater(alice.setSpeakerphone(false), throwsUnsupportedError);
-        expect(alice.currentAudioRoutes, isEmpty);
+        expect(alice.audioRoutes, isEmpty);
       }
 
       final published = await alice.localParticipant.publishMicrophone();
@@ -89,14 +90,14 @@ void main() {
       if (kIsWeb) await _webAudioPlays(bob, 'in a voice call');
 
       if (phone) {
-        _log('routes: ${alice.currentAudioRoutes.join('; ')}');
+        _log('routes: ${alice.audioRoutes.join('; ')}');
         // A connected headset comes first; then the default for the call.
         // Without an earpiece (a tablet, an emulator) the earpiece's calls
         // play on the speaker.
-        final headset = alice.currentAudioRoutes
+        final headset = alice.audioRoutes
             .where((r) => r.kind.isExternal)
             .firstOrNull;
-        final hasEarpiece = alice.currentAudioRoutes.any(
+        final hasEarpiece = alice.audioRoutes.any(
           (r) => r.kind == AudioRouteKind.earpiece,
         );
         if (!hasEarpiece) _log('no earpiece: the speaker stands in for it');
@@ -114,7 +115,7 @@ void main() {
         await camera.publication.whenSending().timeout(_timeout);
         await _expectRoute(alice, expected(AudioRouteKind.speaker), 'video');
 
-        final earpiece = alice.currentAudioRoutes
+        final earpiece = alice.audioRoutes
             .where((r) => r.kind == AudioRouteKind.earpiece)
             .firstOrNull;
         if (earpiece != null) {
@@ -139,12 +140,12 @@ void main() {
 
       // Each microphone in turn, then back to the first.
       final mic = published.mediaSource as MicrophoneSource;
-      final mics = mic.currentDevices;
+      final mics = mic.devices;
       _log('microphones: ${mics.map((m) => '"${m.label}"').join('; ')}');
       if (mics.length < 2) _log('only one microphone: nothing to switch to');
       for (final device in [...mics.skip(1), if (mics.length > 1) mics.first]) {
         await mic.setPreferredDevice(device);
-        expect(mic.currentTrack?.device?.sameDeviceAs(device), isTrue);
+        expect(mic.track?.device?.sameDeviceAs(device), isTrue);
         _log('microphone "${device.label}" (${device.deviceId})');
         await _audioArriving(bob, 'from "${device.label}"');
       }
@@ -174,10 +175,10 @@ Future<void> _webAudioPlays(Room bob, String when, {String? sinkId}) async {
   final before = playing();
   _log(
     '$when: audio elements ${remoteAudioElements()}, '
-    'blocked: ${bob.audioPlaybackBlocked}',
+    'blocked: ${bob.isAudioPlaybackBlocked}',
   );
   expect(
-    bob.audioPlaybackBlocked,
+    bob.isAudioPlaybackBlocked,
     isFalse,
     reason: 'the autoplay policy blocked the call audio',
   );
@@ -238,7 +239,7 @@ Future<void> _expectRoute(Room room, AudioRouteKind kind, String when) async {
       if (d.kind == 'audiooutput') '${d.deviceId}="${d.label}"',
   ];
   _log(
-    'route $when: want ${kind.name}, got ${room.currentAudioRoute}'
+    'route $when: want ${kind.name}, got ${room.audioRoute}'
     '${outputs.isEmpty ? '' : '; flutter_webrtc outputs: ${outputs.join(', ')}'}',
   );
   expect(route?.kind, kind, reason: 'route $when');

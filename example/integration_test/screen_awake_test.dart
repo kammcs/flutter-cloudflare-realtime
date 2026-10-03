@@ -21,6 +21,7 @@
 // The test never prints the settings.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -92,7 +93,7 @@ void main() {
         await cam.dispose();
       }
 
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final room = await realtime.join(
         settings.room,
         signaling: InMemorySignaling(InMemorySignalingHub()),
@@ -105,7 +106,7 @@ void main() {
       final microphone = await room.localParticipant.publishMicrophone();
       await microphone.publication.whenSending().timeout(_timeout);
       await Future<void>.delayed(const Duration(seconds: 1));
-      expect(room.keepingScreenAwake, isFalse, reason: 'a voice call');
+      expect(room.isKeepingScreenAwake, isFalse, reason: 'a voice call');
       final voice = _windowsState('voice call');
       if (voice != null) expect(voice & _esDisplayRequired, 0);
       await _check('voice call: expect no KEEP_SCREEN_ON');
@@ -123,7 +124,7 @@ void main() {
         }
         await _check('video call: expect KEEP_SCREEN_ON');
         await Future<void>.delayed(_holdFor);
-        expect(room.keepingScreenAwake, isTrue);
+        expect(room.isKeepingScreenAwake, isTrue);
         _windowsState('video call, ${_holdFor.inSeconds} s later');
         await _check(
           'video call ${_holdFor.inSeconds} s later: expect '
@@ -148,7 +149,7 @@ void main() {
       }
 
       await room.leave();
-      expect(room.keepingScreenAwake, isFalse);
+      expect(room.isKeepingScreenAwake, isFalse);
       final left = _windowsState('left');
       if (left != null) expect(left & _esDisplayRequired, 0);
       await _check('left: expect no KEEP_SCREEN_ON');

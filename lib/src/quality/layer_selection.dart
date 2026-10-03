@@ -19,9 +19,9 @@ import 'simulcast_ladder.dart';
 /// gets `c`, up to 540 gets `b`, anything bigger gets `a`. A 2×2 gallery on
 /// a 1080p screen (540-pixel tiles) therefore pulls `b`.
 @immutable
-class LayerSelectionConfig {
+final class LayerSelectionOptions {
   /// Creates a layer-selection configuration.
-  const LayerSelectionConfig({
+  const LayerSelectionOptions({
     this.maxUpscale = 1.5,
     this.downgradeHysteresis = 0.15,
     this.debounce = const Duration(milliseconds: 300),
@@ -67,7 +67,7 @@ class LayerSelectionConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is LayerSelectionConfig &&
+      other is LayerSelectionOptions &&
       other.maxUpscale == maxUpscale &&
       other.downgradeHysteresis == downgradeHysteresis &&
       other.debounce == debounce &&
@@ -89,7 +89,7 @@ class LayerSelectionConfig {
 /// [width] and [height] are **physical** pixels: logical size ×
 /// device-pixel ratio. [SimulcastLayerReporter] measures them.
 @immutable
-class TileDemand {
+final class TileDemand {
   /// Creates a demand from physical pixel sizes.
   const TileDemand({
     required this.width,
@@ -195,10 +195,10 @@ class LayerPreference {
 /// Internal: not exported from the package barrel.
 class SimulcastLayerPolicy {
   /// Creates a policy.
-  const SimulcastLayerPolicy([this.config = const LayerSelectionConfig()]);
+  const SimulcastLayerPolicy([this.config = const LayerSelectionOptions()]);
 
   /// The tuning.
-  final LayerSelectionConfig config;
+  final LayerSelectionOptions config;
 
   /// Chooses a layer for [demand] from [ladder]. [currentRid] is the layer
   /// already requested, for hysteresis.
@@ -224,7 +224,7 @@ class SimulcastLayerPolicy {
 
   /// The `simulcast` object to send with a pull or `tracks/update` for
   /// [rid], with this policy's fallback settings.
-  SimulcastConfig simulcastConfig(String rid) => SimulcastConfig(
+  SimulcastOptions simulcastConfig(String rid) => SimulcastOptions(
     preferredRid: rid,
     ridNotAvailable: config.ridNotAvailable,
     priorityOrdering: config.priorityOrdering,

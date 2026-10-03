@@ -24,7 +24,7 @@ void main() {
   const ms = Duration(milliseconds: 1);
 
   test('defaults', () {
-    const config = BackoffConfig();
+    const config = BackoffOptions();
     expect(config.initialDelay, ms * 500);
     expect(config.maxDelay, const Duration(seconds: 10));
     expect(config.multiplier, 2.0);
@@ -34,7 +34,7 @@ void main() {
 
   test('the ceiling grows exponentially up to the cap', () {
     final backoff = Backoff(
-      const BackoffConfig(initialDelay: Duration(milliseconds: 100)),
+      const BackoffOptions(initialDelay: Duration(milliseconds: 100)),
     );
     expect(
       [for (var i = 0; i < 9; i++) backoff.ceilingFor(i).inMilliseconds],
@@ -43,13 +43,13 @@ void main() {
   });
 
   test('a huge attempt number is capped, not overflowed', () {
-    final backoff = Backoff(const BackoffConfig());
+    final backoff = Backoff(const BackoffOptions());
     expect(backoff.ceilingFor(100000), const Duration(seconds: 10));
   });
 
   test('full jitter scales the ceiling by the random draw', () {
     final backoff = Backoff(
-      const BackoffConfig(initialDelay: Duration(milliseconds: 100)),
+      const BackoffOptions(initialDelay: Duration(milliseconds: 100)),
       random: _ScriptedRandom([0.0, 0.5, 1.0, 0.25]),
       clock: () => Duration.zero,
     );
@@ -62,7 +62,7 @@ void main() {
 
   test('real random delays stay within [0, ceiling]', () {
     final backoff = Backoff(
-      const BackoffConfig(maxElapsed: null),
+      const BackoffOptions(maxElapsed: null),
       random: math.Random(42),
       clock: () => Duration.zero,
     );
@@ -76,7 +76,7 @@ void main() {
 
   test('gives up after maxAttempts', () {
     final backoff = Backoff(
-      const BackoffConfig(maxAttempts: 3, maxElapsed: null),
+      const BackoffOptions(maxAttempts: 3, maxElapsed: null),
       random: _ScriptedRandom([0.5]),
       clock: () => Duration.zero,
     );
@@ -90,7 +90,7 @@ void main() {
   test('gives up after maxElapsed, measured from the first attempt', () {
     var now = const Duration(seconds: 100);
     final backoff = Backoff(
-      const BackoffConfig(maxElapsed: Duration(seconds: 30)),
+      const BackoffOptions(maxElapsed: Duration(seconds: 30)),
       random: _ScriptedRandom([0.5]),
       clock: () => now,
     );
@@ -105,7 +105,7 @@ void main() {
 
   test('no limits retries forever', () {
     final backoff = Backoff(
-      const BackoffConfig(maxElapsed: null),
+      const BackoffOptions(maxElapsed: null),
       random: _ScriptedRandom([1.0]),
       clock: () => const Duration(days: 365),
     );
@@ -118,7 +118,7 @@ void main() {
   test('reset starts a fresh episode', () {
     var now = Duration.zero;
     final backoff = Backoff(
-      const BackoffConfig(
+      const BackoffOptions(
         initialDelay: Duration(milliseconds: 100),
         maxAttempts: 2,
         maxElapsed: Duration(seconds: 10),
@@ -139,9 +139,9 @@ void main() {
   });
 
   test('config equality and copyWith', () {
-    const a = BackoffConfig();
-    expect(a, const BackoffConfig());
-    expect(a.hashCode, const BackoffConfig().hashCode);
+    const a = BackoffOptions();
+    expect(a, const BackoffOptions());
+    expect(a.hashCode, const BackoffOptions().hashCode);
     final b = a.copyWith(maxAttempts: 5, multiplier: 3);
     expect(b.maxAttempts, 5);
     expect(b.multiplier, 3);

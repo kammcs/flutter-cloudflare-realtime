@@ -1,11 +1,21 @@
-/// Unofficial Flutter client for the Cloudflare Realtime SFU.
+/// Unofficial Flutter client for the Cloudflare Realtime SFU: rooms,
+/// participants, publishing, rendering, signaling, call audio and quality.
+///
+/// This is the library apps import. Two more libraries hold what most apps
+/// never touch:
+///
+/// - `package:cloudflare_realtime/broker.dart`: the plumbing under `Room`,
+///   for a custom `BrokerClient` or direct use of the SFU session (the
+///   broker client, the SFU API's wire models and `SfuSession`).
+/// - `package:cloudflare_realtime/testing.dart`: seams for testing an app
+///   without native WebRTC (media and renderer backends, factories, and
+///   in-memory signaling).
 ///
 /// See `docs/design.md` for the architecture.
 library;
 
 // Entry point and rooms (design.md §4.3, §11).
-export 'src/room/cloudflare_realtime.dart'
-    show BrokerClientFactory, CloudflareRealtime, SfuSessionConnector;
+export 'src/room/cloudflare_realtime.dart' show CloudflareRealtime;
 export 'src/room/room.dart' hide joinRoom;
 export 'src/room/room_options.dart';
 export 'src/room/screen_share_presets.dart';
@@ -28,7 +38,7 @@ export 'src/calls/system_call_types.dart'
         SystemCallErrorCode,
         SystemCallException,
         SystemCallState,
-        SystemCallsConfig;
+        SystemCallsOptions;
 export 'src/calls/system_calls.dart'
     show
         SystemCall,
@@ -46,20 +56,24 @@ export 'src/calls/system_calls.dart'
 
 // Rendering (design.md §4.3).
 export 'src/rendering/participant_video_view.dart' show ParticipantVideoView;
-export 'src/rendering/renderable_track.dart'
-    show MediaStreamWrapper, RenderableTrack, wrapTrackInMediaStream;
-export 'src/rendering/video_renderer.dart'
-    show
-        FlutterWebrtcVideoRenderer,
-        VideoRenderer,
-        VideoRendererFactory,
-        VideoViewFit;
+export 'src/rendering/renderable_track.dart' show RenderableTrack;
+export 'src/rendering/video_renderer.dart' show VideoViewFit;
 
-// Broker client (design.md §4.1, §5).
-export 'src/broker/broker.dart';
+// Broker options and errors (design.md §4.1, §5). The client and the wire
+// models are in broker.dart.
+export 'src/broker/broker_config.dart'
+    show BrokerHeadersProvider, BrokerOptions;
+export 'src/broker/broker_exception.dart';
+// The SFU's simulcast fallback order, which LayerSelectionOptions sets.
+export 'src/broker/models/tracks.dart' show SimulcastOrdering;
 
-// SFU session (design.md §4.2).
-export 'src/session/session.dart';
+// What the room API shares with the SFU session (design.md §4.2): session
+// options, send encodings and codecs, track states, session failures and
+// errors. `SfuSession` itself and its publications are in broker.dart.
+export 'src/session/publish_options.dart'
+    show SendEncoding, SfuSessionDefaults, SimulcastPresets, VideoCodec;
+export 'src/session/sfu_session.dart' show SfuSessionOptions, SfuTrackState;
+export 'src/session/sfu_session_events.dart' hide SfuConnectionState;
 
 // DataChannels (design.md §9).
 export 'src/data/data.dart';
@@ -69,18 +83,8 @@ export 'src/media/constraints.dart'
     show CameraOptions, MicrophoneOptions, ScreenShareOptions, VideoPreset;
 export 'src/media/device_media_source.dart'
     show CameraSource, DeviceMediaSource, MicrophoneSource;
-export 'src/media/flutter_webrtc_media_backend.dart'
-    show FlutterWebrtcMediaBackend;
 export 'src/media/local_media_source.dart' show LocalMediaSource, MutePolicy;
-export 'src/media/media_backend.dart'
-    show
-        BroadcastExtensionBackend,
-        BroadcastExtensionEvent,
-        BroadcastExtensionStatus,
-        BroadcastSetupProblem,
-        DesktopCapturerBackend,
-        MediaBackend,
-        ScreenCaptureServiceBackend;
+export 'src/media/media_backend.dart' show BroadcastSetupProblem;
 export 'src/media/media_device_list.dart' show MediaDeviceList;
 export 'src/media/media_errors.dart'
     show
@@ -106,9 +110,7 @@ export 'src/media/screen_share_source.dart'
 export 'src/media/screen_source_picker.dart'
     show ScreenPickerState, ScreenSourcePicker;
 
-// Signaling (design.md §4.4).
-export 'src/signaling/in_memory_signaling.dart'
-    show InMemorySignaling, InMemorySignalingHub;
+// Signaling (design.md §4.4). InMemorySignaling is in testing.dart.
 export 'src/signaling/participant_state.dart'
     show ParticipantState, SimulcastInfo, TrackInfo, TrackKind, TrackSource;
 export 'src/signaling/signaling.dart' show Signaling;
@@ -117,16 +119,17 @@ export 'src/signaling/signaling.dart' show Signaling;
 // connection quality (design.md §6, §7, §7.1).
 // The detectors, the stats poller and the layer controller stay internal:
 // the Room owns them and exposes their results.
-export 'src/quality/active_speaker_config.dart' show ActiveSpeakerConfig;
+export 'src/quality/active_speaker_config.dart' show ActiveSpeakerOptions;
 export 'src/quality/call_stats.dart';
 export 'src/quality/connection_quality.dart'
     show
         ConnectionQuality,
-        ConnectionQualityConfig,
+        ConnectionQualityOptions,
         QualityThresholds,
         RoomStatsOptions;
 export 'src/quality/layer_pausing.dart' show LayerPausingOptions;
-export 'src/quality/layer_selection.dart' show LayerSelectionConfig, TileDemand;
+export 'src/quality/layer_selection.dart'
+    show LayerSelectionOptions, TileDemand;
 export 'src/quality/layer_selection_controller.dart' show LayerDemandReporter;
 export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
 
@@ -134,7 +137,7 @@ export 'src/quality/simulcast_layer_reporter.dart' show SimulcastLayerReporter;
 // stays internal.
 export 'src/reconnect/app_lifecycle_source.dart'
     show AppLifecycleSource, FlutterAppLifecycleSource;
-export 'src/reconnect/backoff.dart' show BackoffConfig;
+export 'src/reconnect/backoff.dart' show BackoffOptions;
 export 'src/reconnect/network_change_source.dart' show NetworkChangeSource;
 export 'src/reconnect/reconnect_trigger.dart'
-    show ReconnectReason, ReconnectTriggerConfig;
+    show ReconnectReason, ReconnectTriggerOptions;

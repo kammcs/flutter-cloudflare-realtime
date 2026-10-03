@@ -8,7 +8,9 @@
 // for the settings (including the dev server's X-Dev-User) and a
 // command line. The test never prints them.
 
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -24,7 +26,7 @@ void main() {
   testWidgets(
     'a call recovers from a network drop on either side',
     (tester) async {
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;
@@ -58,7 +60,7 @@ void main() {
       /// Waits until Bob receives Alice's track from her current session,
       /// as a different track than [before] (a new pull), and returns it.
       Future<RenderableTrack> received({RenderableTrack? before}) async {
-        final remote = await bob.participants
+        final remote = await bob.participantsChanges
             .map((list) => list.where((p) => p.participantId.contains('alice')))
             .firstWhere((matches) => matches.isNotEmpty)
             .timeout(timeout);
@@ -72,7 +74,7 @@ void main() {
             )
             .timeout(timeout);
         final publication = participant.trackPublication(trackName)!;
-        return publication.track
+        return publication.trackChanges
             .where(
               (t) =>
                   t != null &&
@@ -86,7 +88,7 @@ void main() {
             .timeout(timeout);
       }
 
-      Future<void> connected(Room room) => room.session.connectionState
+      Future<void> connected(Room room) => room.session.connectionStateChanges
           .firstWhere((s) => s == SfuConnectionState.connected)
           .timeout(timeout);
 
@@ -121,8 +123,8 @@ void main() {
       await received(before: second);
       await connected(bob);
 
-      expect(alice.currentConnectionState, RoomConnectionState.connected);
-      expect(bob.currentConnectionState, RoomConnectionState.connected);
+      expect(alice.connectionState, RoomConnectionState.connected);
+      expect(bob.connectionState, RoomConnectionState.connected);
     },
     skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),

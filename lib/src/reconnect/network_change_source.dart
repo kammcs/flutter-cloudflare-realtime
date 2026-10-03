@@ -18,7 +18,7 @@ library;
 /// ```
 ///
 /// What a change does depends on the connection (see
-/// [ReconnectTriggerConfig.networkChangeWindow]): while the peer connection
+/// [ReconnectTriggerOptions.networkChangeWindow]): while the peer connection
 /// is `disconnected`, the session is replaced at once; while it is
 /// connected, a change only shortens the wait if the connection drops soon
 /// after, because platforms report changes that don't break anything (a

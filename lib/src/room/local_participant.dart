@@ -60,6 +60,7 @@ class LocalParticipant implements Participant {
 
   /// [isSpeaking], replaying the current value to each new listener and
   /// then emitting its changes.
+  @override
   Stream<bool> get speakingChanges => _room._speakers.monitor.speakers
       .map((speakers) => speakers.contains(participantId))
       .distinct();
@@ -68,13 +69,15 @@ class LocalParticipant implements Participant {
   /// for a level meter. 0 while the microphone is muted or not published
   /// (a muted sender has no level to read; see
   /// [canDetectSpeakingWhileMuted]). Updated every
-  /// [ActiveSpeakerConfig.pollInterval].
+  /// [ActiveSpeakerOptions.pollInterval].
+  @override
   double get audioLevel =>
       _room._speakers.monitor.snapshot.levels[participantId] ?? 0;
 
   /// [audioLevel], replaying the current value to each new listener and
   /// then emitting its changes.
-  Stream<double> get audioLevels => _room._speakers.monitor.snapshots
+  @override
+  Stream<double> get audioLevelChanges => _room._speakers.monitor.snapshots
       .map((snapshot) => snapshot.levels[participantId] ?? 0.0)
       .distinct();
 
@@ -183,7 +186,7 @@ class LocalParticipant implements Participant {
     if (!muted) await _startCapture(camera, camera.startBroadcasting);
     final effective =
         encodings ?? _room._session.options.defaults.videoEncodings;
-    final captured = _settingsSize(camera.currentTrack?.track);
+    final captured = _settingsSize(camera.track?.track);
     return _publish(
       camera,
       source: TrackSource.camera,
@@ -282,7 +285,7 @@ class LocalParticipant implements Participant {
   /// web and phones, the browser or the system asks again).
   ///
   /// If the capture delivers no frames (on macOS: no Screen Recording
-  /// permission), the room reports a [LocalScreenShareStalledEvent]; see
+  /// permission), the room reports a [LocalTrackStalledEvent]; see
   /// [RoomOptions.screenShareStallTimeout].
   ///
   /// Throws an [ArgumentError] on desktop without a [source], and a
@@ -322,14 +325,14 @@ class LocalParticipant implements Participant {
     } finally {
       unawaited(earlyEnd.cancel());
     }
-    if (share.currentAudioTrack != null) {
+    if (share.audioTrack != null) {
       try {
         video._companion = await _publish(
           share,
           source: TrackSource.screenAudio,
           kind: TrackKind.audio,
           ownsSource: false,
-          tracks: share.broadcastAudioTrack,
+          tracks: share.broadcastAudioTrackChanges,
         );
       } catch (error) {
         _room._emit(RoomErrorEvent('publish screen audio', error));
@@ -467,7 +470,7 @@ class LocalParticipant implements Participant {
       // connected: 410) is pushed again once the room has a new session.
       publication = await _room._onSessionWithRetry(
         (session) => session.publishTrackStream(
-          (tracks ?? mediaSource.broadcastTrack).map((t) => t?.track),
+          (tracks ?? mediaSource.broadcastTrackChanges).map((t) => t?.track),
           kind: kind.name,
           options: PublishOptions(
             trackName: trackName,
@@ -498,13 +501,13 @@ class LocalParticipant implements Participant {
     _publications.add(local);
     // Mute changes are announced; the stream replays the current value,
     // which is already part of this announcement.
-    local._broadcastingListener = mediaSource.broadcasting.listen(
+    local._broadcastingListener = mediaSource.broadcastingChanges.listen(
       (_) => _changed(),
     );
     _room._pausing.add(local);
     if (local._simulcast != null) {
       local._captureSize = _CaptureSizeWatcher(_room, local)
-        ..start(tracks ?? mediaSource.broadcastTrack);
+        ..start(tracks ?? mediaSource.broadcastTrackChanges);
     }
     _changed();
     await _room._announcer.run();
@@ -561,7 +564,7 @@ class LocalParticipant implements Participant {
 /// Mute with [mute] and [unmute]: they drive the source's broadcasting
 /// switch, so nothing is sent while muted and, for the camera and screen,
 /// the capture is released (`MutePolicy`). The track stays published and
-/// other participants see [muted] in its [TrackInfo].
+/// other participants see [isMuted] in its [TrackInfo].
 class LocalMediaPublication {
   LocalMediaPublication._({
     required this.participant,
@@ -631,28 +634,33 @@ class LocalMediaPublication {
   String get trackName => publication.trackName;
 
   /// Whether nothing is being sent: the source isn't broadcasting.
-  bool get muted => !mediaSource.isBroadcasting;
+  bool get isMuted => !mediaSource.isBroadcasting;
 
-  /// [muted], replaying the current value to each new listener.
+  /// [isMuted], replaying the current value to each new listener.
   Stream<bool> get mutedChanges =>
-      mediaSource.broadcasting.map((broadcasting) => !broadcasting);
+      mediaSource.broadcastingChanges.map((broadcasting) => !broadcasting);
 
   /// Whether the track is still published.
   bool get isPublished => !_unpublished;
 
-  /// This track's typed stats from [Room.stats] (`docs/design.md` §7.1):
-  /// its sent layers, replaying the latest; `null` until it has reports.
-  /// Listening makes the room poll.
-  Stream<LocalTrackStats?> get stats =>
-      participant._room._stats.stream.map((stats) => stats.local[trackName]);
-
-  /// This track's stats in the latest [Room.stats] snapshot, if any.
-  LocalTrackStats? get currentStats =>
+  /// This track's typed stats (`docs/design.md` §7.1), its sent layers, in
+  /// the latest [Room.stats] snapshot; `null` until it has reports. See
+  /// [statsChanges].
+  LocalTrackStats? get stats =>
       participant._room._stats.latest?.local[trackName];
 
+  /// [stats] for each snapshot, replaying the latest. Listening makes the
+  /// room poll.
+  Stream<LocalTrackStats?> get statsChanges =>
+      participant._room._stats.stream.map((stats) => stats.local[trackName]);
+
   /// What is announced for this track.
-  TrackInfo get info =>
-      TrackInfo(kind: kind, source: source, muted: muted, simulcast: simulcast);
+  TrackInfo get info => TrackInfo(
+    kind: kind,
+    source: source,
+    muted: isMuted,
+    simulcast: simulcast,
+  );
 
   /// Stops sending. The track stays published and is announced as muted.
   Future<void> mute() {
@@ -701,5 +709,5 @@ class LocalMediaPublication {
   @override
   String toString() =>
       'LocalMediaPublication($trackName, ${kind.name}, ${source.name}'
-      '${muted ? ', muted' : ''}${_unpublished ? ', unpublished' : ''})';
+      '${isMuted ? ', muted' : ''}${_unpublished ? ', unpublished' : ''})';
 }

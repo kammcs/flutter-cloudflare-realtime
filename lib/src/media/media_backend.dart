@@ -173,7 +173,7 @@ enum BroadcastSetupProblem {
 
 /// The iOS screen share setup as the app finds it: what's missing, and
 /// whether a broadcast is running.
-class BroadcastExtensionStatus {
+final class BroadcastExtensionStatus {
   /// Creates a status.
   const BroadcastExtensionStatus({
     this.problems = const [],

@@ -1,4 +1,6 @@
+import 'package:cloudflare_realtime/broker.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -46,11 +48,11 @@ void main() {
   });
 
   test('the barrel exports the quality and reconnection tuning', () {
-    expect(const ActiveSpeakerConfig().pollInterval.inMilliseconds, 250);
-    expect(const LayerSelectionConfig().debounce.inMilliseconds, 300);
+    expect(const ActiveSpeakerOptions().pollInterval.inMilliseconds, 250);
+    expect(const LayerSelectionOptions().debounce.inMilliseconds, 300);
     expect(const TileDemand(width: 1, height: 1).needsVideo, isTrue);
-    expect(const BackoffConfig().multiplier, 2.0);
-    expect(const ReconnectTriggerConfig().disconnectedTimeout.inSeconds, 5);
+    expect(const BackoffOptions().multiplier, 2.0);
+    expect(const ReconnectTriggerOptions().disconnectedTimeout.inSeconds, 5);
     expect(ReconnectReason.values, contains(ReconnectReason.sessionGone));
     LayerDemandReporter? reporter;
     expect(reporter, isNull);

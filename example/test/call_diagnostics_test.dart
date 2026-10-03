@@ -52,8 +52,8 @@ void main() {
       describeReconnectEvent(const RoomErrorEvent('videoCodec', 'x')),
       isNull,
     );
-    expect(describeReconnectEvent(const LocalCameraResumedEvent()), isNull);
-    expect(logReconnectEvent(const LocalCameraResumedEvent()), isFalse);
+    expect(describeReconnectEvent(const RoomCameraResumedEvent()), isNull);
+    expect(logReconnectEvent(const RoomCameraResumedEvent()), isFalse);
   });
 
   test('prints with a UTC timestamp and a tag', () {

@@ -25,12 +25,12 @@ void main() {
   }
 
   test('defaults', () {
-    const config = ReconnectTriggerConfig();
+    const config = ReconnectTriggerOptions();
     expect(config.disconnectedTimeout, s(5));
     expect(config.connectTimeout, s(15));
     expect(config.networkChangeWindow, s(10));
     expect(config.backgroundThreshold, s(30));
-    expect(config, const ReconnectTriggerConfig());
+    expect(config, const ReconnectTriggerOptions());
   });
 
   test('failed triggers at once', () {
@@ -120,7 +120,7 @@ void main() {
 
     test('can be turned off', () {
       trigger = ReconnectTrigger(
-        const ReconnectTriggerConfig(connectTimeout: null),
+        const ReconnectTriggerOptions(connectTimeout: null),
       );
       trigger.peerConnectionStateChanged(_connecting, s(0));
       expect(trigger.nextCheckAt, isNull);
@@ -153,7 +153,7 @@ void main() {
 
     test('a null threshold disables the resume trigger', () {
       trigger = ReconnectTrigger(
-        const ReconnectTriggerConfig(backgroundThreshold: null),
+        const ReconnectTriggerOptions(backgroundThreshold: null),
       );
       connect();
       trigger.appPaused(s(10));

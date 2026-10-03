@@ -8,7 +8,7 @@ import 'json.dart';
 /// and at most one of [maxRetransmits] / [maxPacketLifeTime]). Every
 /// subscriber must mirror it, in its request and in its own
 /// `createDataChannel` call.
-class DataChannelObject {
+final class DataChannelObject {
   /// Creates a DataChannel object with any combination of fields.
   ///
   /// Throws an [ArgumentError] if both [maxRetransmits] and
@@ -144,7 +144,7 @@ class DataChannelObject {
 /// `createDataChannel(name, negotiated: true, id: id)`, using this [id]:
 /// the publisher's and the subscriber's IDs can differ. Check [hasError]
 /// first.
-class DataChannelResult with SfuErrorFields {
+final class DataChannelResult with SfuErrorFields {
   /// Creates a DataChannel result.
   const DataChannelResult({
     this.location,
@@ -234,7 +234,7 @@ class DataChannelResult with SfuErrorFields {
 
 /// The body of `POST sessions/{id}/datachannels/establish`, which sets up
 /// the SCTP transport by pulling the SFU's `server-events` channel.
-class EstablishDataChannelsRequest {
+final class EstablishDataChannelsRequest {
   /// Creates an establish request.
   ///
   /// [dataChannel] defaults to a remote pull of `server-events`, the only
@@ -279,7 +279,7 @@ class EstablishDataChannelsRequest {
 }
 
 /// The response of `POST sessions/{id}/datachannels/establish`.
-class EstablishDataChannelsResponse with SfuErrorFields {
+final class EstablishDataChannelsResponse with SfuErrorFields {
   /// Creates an establish response.
   const EstablishDataChannelsResponse({
     this.requiresImmediateRenegotiation = false,
@@ -334,7 +334,7 @@ class EstablishDataChannelsResponse with SfuErrorFields {
 
 /// The body of `datachannels/new`, `datachannels/update` and
 /// `datachannels/close`: `{"dataChannels": [...]}`.
-class DataChannelsRequest {
+final class DataChannelsRequest {
   /// Creates a DataChannels request.
   const DataChannelsRequest({required this.dataChannels});
 
@@ -355,7 +355,7 @@ class DataChannelsRequest {
 
 /// The response of `datachannels/new`, `datachannels/update` and
 /// `datachannels/close`.
-class DataChannelsResponse with SfuErrorFields {
+final class DataChannelsResponse with SfuErrorFields {
   /// Creates a DataChannels response.
   const DataChannelsResponse({
     this.dataChannels = const [],

@@ -4,9 +4,9 @@ part of 'room.dart';
 /// and tests (`docs/design.md` §6.1).
 ///
 /// Read it with [RemoteTrackPublication.layerState], or follow it with
-/// [RemoteTrackPublication.layerChanges].
+/// [RemoteTrackPublication.layerStateChanges].
 @immutable
-class RemoteTrackLayerState {
+final class RemoteTrackLayerState {
   /// Creates a layer state.
   const RemoteTrackLayerState({
     this.currentRid,

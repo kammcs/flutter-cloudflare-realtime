@@ -6,11 +6,11 @@ part of 'room.dart';
 /// - tells [CallBackground] what the room publishes, so Android's
 ///   foreground service runs while a microphone or a capturing camera is
 ///   published ([RoomOptions.foregroundService]);
-/// - turns [CallAudio]'s interruptions into [CallInterruptedEvent] and
-///   [CallResumedEvent], and keeps the call silent meanwhile (remote audio
+/// - turns [CallAudio]'s interruptions into [RoomAudioInterruptedEvent] and
+///   [RoomAudioResumedEvent], and keeps the call silent meanwhile (remote audio
 ///   and the microphone; nothing is announced);
-/// - turns [CallBackground]'s camera pauses into [LocalCameraPausedEvent]
-///   and [LocalCameraResumedEvent] while the room publishes a camera.
+/// - turns [CallBackground]'s camera pauses into [RoomCameraPausedEvent]
+///   and [RoomCameraResumedEvent] while the room publishes a camera.
 class _RoomBackground {
   _RoomBackground(this._room);
 
@@ -43,7 +43,7 @@ class _RoomBackground {
     CallBackground.instance.publishing(
       _room,
       microphone: local.microphone != null,
-      camera: camera != null && !camera.muted,
+      camera: camera != null && !camera.isMuted,
     );
   }
 
@@ -53,16 +53,16 @@ class _RoomBackground {
     _interruption = reason;
     _setSilenced(reason != null);
     if (reason != null) {
-      _room._emit(CallInterruptedEvent(reason));
+      _room._emit(RoomAudioInterruptedEvent(reason));
     } else if (previous != null) {
-      _room._emit(CallResumedEvent(previous));
+      _room._emit(RoomAudioResumedEvent(previous));
     }
   }
 
   void _setSilenced(bool silenced) {
     _room._audio.setSilenced(silenced);
     final microphone =
-        _room.localParticipant.microphone?.mediaSource.currentBroadcastTrack;
+        _room.localParticipant.microphone?.mediaSource.broadcastTrack;
     if (microphone == null) return;
     try {
       microphone.track.enabled = !silenced;
@@ -75,10 +75,10 @@ class _RoomBackground {
     if (_room._left) return;
     if (reason != null && _room.localParticipant.camera != null) {
       _cameraPauseReported = true;
-      _room._emit(LocalCameraPausedEvent(reason));
+      _room._emit(RoomCameraPausedEvent(reason));
     } else if (reason == null && _cameraPauseReported) {
       _cameraPauseReported = false;
-      _room._emit(const LocalCameraResumedEvent());
+      _room._emit(const RoomCameraResumedEvent());
     }
   }
 

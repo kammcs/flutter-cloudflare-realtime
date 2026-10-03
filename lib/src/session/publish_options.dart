@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 /// `sendEncodings`. Subscribers pick a layer by its [rid] (see
 /// `docs/design.md` §6).
 @immutable
-class SendEncoding {
+final class SendEncoding {
   /// Creates an encoding.
   const SendEncoding({
     this.rid,
@@ -153,7 +153,7 @@ enum VideoCodec {
 ///
 /// Null fields fall back to the session's [SfuSessionDefaults].
 @immutable
-class PublishOptions {
+final class PublishOptions {
   /// Creates publish options.
   const PublishOptions({
     this.trackName,
@@ -182,7 +182,7 @@ class PublishOptions {
 
 /// Session-wide defaults for [PublishOptions].
 @immutable
-class SfuSessionDefaults {
+final class SfuSessionDefaults {
   /// Creates defaults.
   const SfuSessionDefaults({
     this.videoEncodings = SimulcastPresets.h720,

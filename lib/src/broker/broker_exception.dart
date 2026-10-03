@@ -12,12 +12,15 @@
 /// - [BrokerProtocolException]: a successful response the client couldn't
 ///   parse.
 ///
-/// Any other non-2xx status gives a plain [BrokerException] with the SFU's
-/// [errorCode] and [errorDescription] when the body has them.
+/// - [BrokerResponseException]: any other error response, with the SFU's
+///   [errorCode] and [errorDescription] when the body has them.
+///
+/// The class is sealed, so a `switch` over these cases is exhaustive. A
+/// custom `BrokerClient` throws them through their public constructors.
 ///
 /// Messages never include SDP, header values or tokens.
-class BrokerException implements Exception {
-  /// Creates a broker exception.
+sealed class BrokerException implements Exception {
+  /// Creates a broker exception. For the subclasses' constructors.
   const BrokerException({
     required this.operation,
     this.statusCode,
@@ -55,8 +58,25 @@ class BrokerException implements Exception {
       s.length <= 200 ? s : '${s.substring(0, 200)}…';
 }
 
+/// An error response that the other [BrokerException]s don't name: a
+/// non-2xx status other than 401, 403 and 410 (the SFU's status and body
+/// pass through the broker unchanged), or an SFU error in a 2xx body that
+/// leaves nothing to return (`sessions/new` without a session).
+final class BrokerResponseException extends BrokerException {
+  /// Creates the exception.
+  const BrokerResponseException({
+    required super.operation,
+    super.statusCode,
+    super.errorCode,
+    super.errorDescription,
+  });
+
+  @override
+  String get _kind => 'BrokerResponseException';
+}
+
 /// HTTP 401: the broker didn't accept the app's credential.
-class BrokerUnauthorizedException extends BrokerException {
+final class BrokerUnauthorizedException extends BrokerException {
   /// Creates the exception.
   const BrokerUnauthorizedException({
     required super.operation,
@@ -74,7 +94,7 @@ class BrokerUnauthorizedException extends BrokerException {
 ///
 /// The reference brokers answer with
 /// `{"errorCode": "forbidden", "errorDescription": "..."}`.
-class BrokerForbiddenException extends BrokerException {
+final class BrokerForbiddenException extends BrokerException {
   /// Creates the exception.
   const BrokerForbiddenException({
     required super.operation,
@@ -92,7 +112,7 @@ class BrokerForbiddenException extends BrokerException {
 /// or DataChannel operation.
 ///
 /// Recover by creating a new session and re-pushing and re-pulling tracks.
-class SessionGoneException extends BrokerException {
+final class SessionGoneException extends BrokerException {
   /// Creates the exception.
   const SessionGoneException({
     required super.operation,
@@ -111,7 +131,7 @@ class SessionGoneException extends BrokerException {
 
 /// The request didn't complete: a connection, DNS or TLS failure, or an
 /// aborted request.
-class BrokerNetworkException extends BrokerException {
+final class BrokerNetworkException extends BrokerException {
   /// Creates the exception.
   const BrokerNetworkException({required super.operation, this.cause});
 
@@ -122,8 +142,8 @@ class BrokerNetworkException extends BrokerException {
   String get _kind => 'BrokerNetworkException';
 }
 
-/// The request took longer than [BrokerConfig.timeout]. It was aborted.
-class BrokerTimeoutException extends BrokerNetworkException {
+/// The request took longer than [BrokerOptions.timeout]. It was aborted.
+final class BrokerTimeoutException extends BrokerNetworkException {
   /// Creates the exception.
   const BrokerTimeoutException({required super.operation, this.timeout});
 
@@ -141,7 +161,7 @@ class BrokerTimeoutException extends BrokerNetworkException {
 
 /// A successful (2xx) response that the client couldn't parse: invalid
 /// JSON, or a required field missing or of the wrong type.
-class BrokerProtocolException extends BrokerException {
+final class BrokerProtocolException extends BrokerException {
   /// Creates the exception.
   const BrokerProtocolException({
     required super.operation,

@@ -36,7 +36,7 @@ enum ConnectionQuality {
 /// The limits of one [ConnectionQuality] level: a measurement at or below
 /// every limit is at least that level.
 @immutable
-class QualityThresholds {
+final class QualityThresholds {
   /// Creates the limits.
   const QualityThresholds({
     required this.roundTripTime,
@@ -79,9 +79,9 @@ class QualityThresholds {
 
 /// How connection quality is rated (`docs/design.md` §7.1).
 @immutable
-class ConnectionQualityConfig {
+final class ConnectionQualityOptions {
   /// Creates a configuration; the defaults are explained in design.md.
-  const ConnectionQualityConfig({
+  const ConnectionQualityOptions({
     this.excellent = const QualityThresholds(
       roundTripTime: Duration(milliseconds: 150),
       packetLoss: 0.01,
@@ -127,7 +127,7 @@ class ConnectionQualityConfig {
 
   @override
   bool operator ==(Object other) =>
-      other is ConnectionQualityConfig &&
+      other is ConnectionQualityOptions &&
       other.excellent == excellent &&
       other.good == good &&
       other.minOutgoingVideoBitrate == minOutgoingVideoBitrate &&
@@ -148,11 +148,11 @@ class ConnectionQualityConfig {
 
 /// Typed stats and connection quality in a room (`RoomOptions.stats`).
 @immutable
-class RoomStatsOptions {
+final class RoomStatsOptions {
   /// Creates the options.
   const RoomStatsOptions({
     this.interval = const Duration(seconds: 2),
-    this.connectionQuality = const ConnectionQualityConfig(),
+    this.connectionQuality = const ConnectionQualityOptions(),
   });
 
   /// How often the room reads `getStats()` while someone listens to
@@ -163,7 +163,7 @@ class RoomStatsOptions {
   /// How connection quality is rated, or `null` to turn it off: then the
   /// room reads stats only while someone listens to them, and every
   /// participant's quality stays [ConnectionQuality.unknown].
-  final ConnectionQualityConfig? connectionQuality;
+  final ConnectionQualityOptions? connectionQuality;
 
   @override
   bool operator ==(Object other) =>
@@ -236,7 +236,7 @@ class QualitySample {
 /// Internal: not exported from the package barrel.
 ConnectionQuality? rateQuality(
   QualitySample sample,
-  ConnectionQualityConfig config,
+  ConnectionQualityOptions config,
 ) {
   if (sample.isEmpty) return null;
   if (sample.starved) return ConnectionQuality.poor;
@@ -259,11 +259,11 @@ ConnectionQuality? rateQuality(
 /// - The first rating (from [ConnectionQuality.unknown]) and any rating
 ///   after [ConnectionQuality.lost] apply at once.
 /// - [ConnectionQuality.lost] applies at once (its own timeout,
-///   [ConnectionQualityConfig.lostAfter], is the caller's).
+///   [ConnectionQualityOptions.lostAfter], is the caller's).
 /// - Otherwise a lower level applies once ratings have stayed below the
-///   current level for [ConnectionQualityConfig.degradeAfter], and a higher
+///   current level for [ConnectionQualityOptions.degradeAfter], and a higher
 ///   one once they have stayed above it for
-///   [ConnectionQualityConfig.improveAfter]. The new level is the
+///   [ConnectionQualityOptions.improveAfter]. The new level is the
 ///   **closest** to the current one among those ratings, so a link that
 ///   alternates between good and poor while excellent drops to good. A
 ///   rating back at the current level, or on the other side, restarts the
@@ -276,7 +276,7 @@ class QualityTracker {
   QualityTracker(this.config);
 
   /// The timings.
-  final ConnectionQualityConfig config;
+  final ConnectionQualityOptions config;
 
   ConnectionQuality _current = ConnectionQuality.unknown;
   Duration _below = Duration.zero;
@@ -340,12 +340,12 @@ class QualityTracker {
 /// selected pair's round-trip time (else the SFU's receiver reports), the
 /// loss and audio jitter the SFU reports for what is sent, a video layer
 /// limited by bandwidth, and an outgoing estimate below
-/// [ConnectionQualityConfig.minOutgoingVideoBitrate] while sending video.
+/// [ConnectionQualityOptions.minOutgoingVideoBitrate] while sending video.
 ///
 /// Internal: not exported from the package barrel.
 QualitySample localQualitySample(
   RoomStats stats,
-  ConnectionQualityConfig config,
+  ConnectionQualityOptions config,
 ) {
   Duration? rtt = stats.connection?.roundTripTime;
   Duration? jitter;

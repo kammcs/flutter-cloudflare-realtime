@@ -27,44 +27,13 @@ enum SfuDataChannelState {
   closed,
 }
 
-/// The SFU rejected one DataChannel of a request (a per-channel error), or
-/// its result was missing. Other channels in the same batch are unaffected.
-class SfuDataChannelException extends SfuSessionException {
-  /// Creates the exception.
-  const SfuDataChannelException({
-    required this.operation,
-    required this.name,
-    this.errorCode,
-    this.errorDescription,
-  }) : super(operation);
-
-  /// The broker operation, such as `datachannels/new`.
-  final String operation;
-
-  /// The channel's name.
-  final String name;
-
-  /// The SFU's `errorCode` for this channel, if any. Null when the response
-  /// had no usable result for it.
-  final String? errorCode;
-
-  /// The SFU's `errorDescription` for this channel, if any.
-  final String? errorDescription;
-
-  @override
-  String toString() =>
-      'SfuDataChannelException($operation, name: $name'
-      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'}'
-      '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
-}
-
 /// A DataChannel forwarded by the SFU: a [LocalDataChannel] this session
 /// publishes, or a [RemoteDataChannel] it subscribes to.
 ///
 /// Like track publications, a channel outlives its session. When the
 /// session fails or closes, the channel becomes
 /// [SfuDataChannelState.interrupted]; moving it to a new session keeps its
-/// [messages] and [states] streams, so listeners carry on.
+/// [messages] and [stateChanges] streams, so listeners carry on.
 sealed class SfuDataChannel {
   SfuDataChannel._(this.name, this.profile);
 
@@ -96,11 +65,12 @@ sealed class SfuDataChannel {
   /// to this session: the other end's ID can differ.
   int? get id => _id;
 
-  /// The current state.
+  /// The channel's state.
   SfuDataChannelState get state => _state.value;
 
-  /// The state, replaying the current value to each new listener.
-  Stream<SfuDataChannelState> get states => _state.stream;
+  /// [state], replaying the current value to each new listener, then each
+  /// change.
+  Stream<SfuDataChannelState> get stateChanges => _state.stream;
 
   /// Why the channel failed or was interrupted, if it did.
   Object? get error => _error;
@@ -120,19 +90,19 @@ sealed class SfuDataChannel {
   /// [SfuSessionException] if it becomes interrupted, failed or closed
   /// first.
   Future<void> whenOpen() async {
-    await for (final state in states) {
+    await for (final state in stateChanges) {
       switch (state) {
         case SfuDataChannelState.open:
           return;
         case SfuDataChannelState.interrupted ||
             SfuDataChannelState.failed ||
             SfuDataChannelState.closed:
-          throw SfuSessionException('the data channel is ${state.name}');
+          throw SfuInterruptedException('the data channel is ${state.name}');
         case SfuDataChannelState.pending || SfuDataChannelState.connecting:
           break;
       }
     }
-    throw const SfuSessionException('the data channel is closed');
+    throw const SfuInterruptedException('the data channel is closed');
   }
 
   /// Sends [data] as a binary message.

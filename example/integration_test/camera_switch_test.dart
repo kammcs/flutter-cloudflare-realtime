@@ -15,6 +15,7 @@
 // call carries on and says that it couldn't switch.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -38,7 +39,7 @@ void main() {
       await permission.enable();
       await permission.dispose();
 
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;
@@ -61,8 +62,8 @@ void main() {
         options: const CameraOptions(preset: VideoPreset.h360),
       );
       final camera = published.mediaSource as CameraSource;
-      final first = camera.currentTrack!;
-      final cameras = camera.currentDevices;
+      final first = camera.track!;
+      final cameras = camera.devices;
       _log('cameras: ${cameras.map(_describe).join('; ')}');
       _log('opened ${_describe(first.device)}, ${_size(first)}');
 
@@ -96,7 +97,7 @@ void main() {
       for (var i = 1; i <= switches; i++) {
         final watch = Stopwatch()..start();
         final now = await alice.localParticipant.switchCamera();
-        final current = camera.currentTrack!;
+        final current = camera.track!;
         _log(
           'switch $i: ${_describe(now)} in ${watch.elapsedMilliseconds} ms, '
           '${_size(current)}',
@@ -141,7 +142,7 @@ String _size(CapturedTrack captured) {
 Future<RemoteTrackPublication> _remoteCamera(Room bob, Room alice) async {
   final deadline = DateTime.now().add(_timeout);
   while (DateTime.now().isBefore(deadline)) {
-    for (final p in bob.currentParticipants) {
+    for (final p in bob.participants) {
       final cam = p.camera;
       if (p.sessionId == alice.session.sessionId &&
           cam != null &&

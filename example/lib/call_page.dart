@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/testing.dart';
 import 'package:flutter/material.dart';
 
 import 'audio_routes_sheet.dart';
@@ -34,7 +35,7 @@ class CallSetup {
   final String displayName;
 
   /// Where the SFU calls go.
-  final BrokerConfig broker;
+  final BrokerOptions broker;
 
   /// Releases [signaling] after the room is left.
   final Future<void> Function() disposeSignaling;
@@ -132,7 +133,7 @@ class _CallPageState extends State<CallPage> {
   void initState() {
     super.initState();
     _events = _room.events.listen(_onEvent);
-    _shares = _room.participants.listen(_onParticipants);
+    _shares = _room.participantsChanges.listen(_onParticipants);
     if (widget.systemCall case final call?) {
       // Mute in step with the system's; the room leaves when the call ends
       // (for example from the lock screen), and ends it when it leaves.
@@ -179,7 +180,7 @@ class _CallPageState extends State<CallPage> {
             'Screen share ended: the shared window or display went away.',
           ScreenShareEndReason.stopped => 'Screen share ended.',
         });
-      case LocalScreenShareStalledEvent(:final error, :final publication):
+      case LocalTrackStalledEvent(:final error, :final publication):
         _showStalledShare(publication, error);
       case _:
         break;
@@ -275,7 +276,7 @@ class _CallPageState extends State<CallPage> {
     if (mic == null) {
       await _local.publishMicrophone();
     } else {
-      await mic.setMuted(!mic.muted);
+      await mic.setMuted(!mic.isMuted);
     }
   });
 
@@ -284,7 +285,7 @@ class _CallPageState extends State<CallPage> {
     if (camera == null) {
       await _local.publishCamera();
     } else {
-      await camera.setMuted(!camera.muted);
+      await camera.setMuted(!camera.isMuted);
     }
   });
 
@@ -398,8 +399,8 @@ class _CallPageState extends State<CallPage> {
                   stream: _local.changes,
                   builder: (context, _) =>
                       StreamBuilder<List<RemoteParticipant>>(
-                        stream: _room.participants,
-                        initialData: _room.currentParticipants,
+                        stream: _room.participantsChanges,
+                        initialData: _room.participants,
                         builder: (context, snapshot) =>
                             _buildLayout(snapshot.data ?? const []),
                       ),
@@ -559,7 +560,7 @@ class _CallPageState extends State<CallPage> {
         participantId: _local.participantId,
         participant: _local,
         localPublication: camera,
-        micMuted: _local.microphone?.muted ?? true,
+        micMuted: _local.microphone?.isMuted ?? true,
         speaking: _local.speakingChanges,
         video: camera == null
             ? null
@@ -581,7 +582,7 @@ class _CallPageState extends State<CallPage> {
           label: _nameOf(remote),
           participantId: remote.participantId,
           participant: remote,
-          micMuted: remote.microphone?.muted ?? true,
+          micMuted: remote.microphone?.isMuted ?? true,
           speaking: remote.speakingChanges,
           publication: remote.camera,
           video: remote.camera == null
@@ -606,8 +607,8 @@ class _CallPageState extends State<CallPage> {
     // Rebuilt when the dominant speaker changes: it gets the highlight, and
     // the stage in the stage layout.
     return StreamBuilder<String?>(
-      stream: _room.dominantSpeaker,
-      initialData: _room.currentDominantSpeaker,
+      stream: _room.dominantSpeakerChanges,
+      initialData: _room.dominantSpeaker,
       builder: (context, snapshot) {
         final dominant = snapshot.data;
         final tiles = _tiles(remotes);
@@ -724,8 +725,8 @@ class _CallPageState extends State<CallPage> {
   }
 
   Widget _buildControls() {
-    final micOn = !(_local.microphone?.muted ?? true);
-    final cameraOn = !(_local.camera?.muted ?? true);
+    final micOn = !(_local.microphone?.isMuted ?? true);
+    final cameraOn = !(_local.camera?.isMuted ?? true);
     final sharing = _local.screen != null;
     return SafeArea(
       child: Padding(
@@ -777,7 +778,7 @@ class _CallPageState extends State<CallPage> {
         if (_room.canSelectAudioRoute)
           StreamBuilder<AudioRoute?>(
             stream: _room.audioRouteChanges,
-            initialData: _room.currentAudioRoute,
+            initialData: _room.audioRoute,
             builder: (context, route) => IconButton.filledTonal(
               tooltip: 'Audio output',
               icon: Icon(audioRouteIcon(route.data?.kind)),
@@ -819,8 +820,8 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<RoomConnectionState>(
-      stream: room.connectionState,
-      initialData: room.currentConnectionState,
+      stream: room.connectionStateChanges,
+      initialData: room.connectionState,
       builder: (context, state) => StreamBuilder<String>(
         stream: signalingStatus,
         builder: (context, signaling) {
@@ -871,8 +872,8 @@ class _ConnectionBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<RoomConnectionState>(
-      stream: room.connectionState,
-      initialData: room.currentConnectionState,
+      stream: room.connectionStateChanges,
+      initialData: room.connectionState,
       builder: (context, snapshot) {
         final theme = Theme.of(context);
         switch (snapshot.data) {
@@ -929,7 +930,7 @@ class _AudioBlockedBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<bool>(
       stream: room.audioPlaybackBlockedChanges,
-      initialData: room.audioPlaybackBlocked,
+      initialData: room.isAudioPlaybackBlocked,
       builder: (context, snapshot) {
         if (snapshot.data != true) return const SizedBox.shrink();
         return Material(

@@ -189,10 +189,10 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     final publication = widget.publication;
     final local = widget.localSource;
     if (publication != null) {
-      _muted = publication.muted;
+      _muted = publication.isMuted;
       _updateLease();
       _subscriptions
-        ..add(publication.track.listen((t) => _show(t?.stream)))
+        ..add(publication.trackChanges.listen((t) => _show(t?.stream)))
         ..add(
           publication.mutedChanges.listen((muted) {
             if (mounted && muted != _muted) setState(() => _muted = muted);
@@ -200,7 +200,7 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
         );
     } else if (local != null) {
       _muted = false;
-      _subscriptions.add(local.track.listen((t) => _show(t?.stream)));
+      _subscriptions.add(local.trackChanges.listen((t) => _show(t?.stream)));
     }
   }
 
@@ -296,7 +296,7 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     if (explicit != null) return explicit;
     final local = widget.localSource;
     if (local == null || local.source != TrackSource.camera) return false;
-    final device = local.currentTrack?.device;
+    final device = local.track?.device;
     return device?.facing != CameraFacing.environment;
   }
 

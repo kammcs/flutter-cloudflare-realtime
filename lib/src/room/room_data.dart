@@ -201,7 +201,7 @@ class RemoteDataSubscription {
     _channelListener = channel.messages.listen((message) {
       if (_messages.isClosed) return;
       _messages.add(
-        RoomDataMessage._(
+        RoomDataMessage(
           message,
           _room._participantIdForSession(message.fromSessionId),
         ),
@@ -271,8 +271,11 @@ class RemoteDataSubscription {
 }
 
 /// A message received on a [RemoteDataSubscription].
-class RoomDataMessage {
-  RoomDataMessage._(this.message, this.participantId);
+final class RoomDataMessage {
+  /// Wraps [message] with its sender's [participantId]. The room creates
+  /// these; the constructor is public so apps can build them in their own
+  /// tests.
+  const RoomDataMessage(this.message, this.participantId);
 
   /// The session-level message, with [DataChannelMessage.fromSessionId].
   final DataChannelMessage message;

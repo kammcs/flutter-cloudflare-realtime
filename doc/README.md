@@ -10,4 +10,6 @@ What your app needs, per platform, to use `cloudflare_realtime`. Start with the 
 | Windows | [windows.md](windows.md): build tools, what differs on Windows |
 | Web | [web.md](web.md): HTTPS, the broker's CORS origins, autoplay, browsers |
 
+Coming from the pre-release API? [migrating-to-0.1.md](migrating-to-0.1.md) lists every rename of the 0.1.0 cleanup.
+
 Your broker needs setting up on every platform: see [broker/README.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/broker/README.md).

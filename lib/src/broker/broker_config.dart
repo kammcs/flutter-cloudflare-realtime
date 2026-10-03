@@ -11,9 +11,9 @@ typedef BrokerHeadersProvider = Future<Map<String, String>> Function();
 /// The broker is a server the app operates. It holds the Cloudflare App
 /// Secret and forwards calls to the SFU; see `docs/design.md` §5. The App
 /// Secret never goes in the client.
-class BrokerConfig {
+final class BrokerOptions {
   /// Creates a broker configuration.
-  const BrokerConfig({
+  const BrokerOptions({
     required this.baseUrl,
     required this.headers,
     this.httpClient,

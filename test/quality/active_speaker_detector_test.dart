@@ -22,11 +22,11 @@ class _Driver {
 }
 
 /// No smoothing, so raw levels drive the thresholds directly.
-const _raw = ActiveSpeakerConfig(smoothingTimeConstant: Duration.zero);
+const _raw = ActiveSpeakerOptions(smoothingTimeConstant: Duration.zero);
 
 void main() {
   test('defaults', () {
-    const config = ActiveSpeakerConfig();
+    const config = ActiveSpeakerOptions();
     expect(config.pollInterval, const Duration(milliseconds: 250));
     expect(config.speakingThreshold, 0.04);
     expect(config.silenceThreshold, 0.02);
@@ -34,7 +34,7 @@ void main() {
     expect(config.releaseTime, const Duration(milliseconds: 800));
     expect(config.dominantSwitchTime, const Duration(milliseconds: 1500));
     expect(config.localCanBeDominant, isFalse);
-    expect(config, const ActiveSpeakerConfig());
+    expect(config, const ActiveSpeakerOptions());
     expect(config.copyWith(speakingThreshold: 0.1).speakingThreshold, 0.1);
   });
 

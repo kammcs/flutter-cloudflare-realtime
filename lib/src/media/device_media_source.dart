@@ -20,13 +20,14 @@ import 'release.dart';
 ///
 /// Ported from partytracks' `getDevice`/`resilientTrack$`/`deviceManager`:
 ///
-/// - [devices] lists the devices of this kind, kept current.
+/// - [devices] lists the devices of this kind, kept current
+///   ([devicesChanges]).
 /// - [setPreferredDevice] picks one. Capture tries the preferred device
 ///   first, then the rest in [devicePriority] order, until one produces a
 ///   track.
 /// - **Fallback:** when the active device is unplugged (or its track ends),
-///   the source captures from the next device and [track] emits the new
-///   track.
+///   the source captures from the next device and [trackChanges] emits the
+///   new track.
 /// - **Return:** when the preferred device comes back, the source switches
 ///   back to it.
 /// - A device that fails is tried last until it is unplugged or chosen
@@ -39,7 +40,7 @@ import 'release.dart';
 /// device became available, the options changed, or the track ended.
 ///
 /// Remembering the preference across app runs is up to the app: persist
-/// [currentPreferredDevice] and pass it back as `preferredDevice`.
+/// [preferredDevice] and pass it back as `preferredDevice`.
 abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// Initializes device handling. For subclasses.
   DeviceMediaSource({
@@ -58,7 +59,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
        _preferred = StateStream(preferredDevice, distinct: true) {
     _activeDevice = StateStream(_computeActiveDevice(), distinct: true);
     _deviceSubscription = _deviceList
-        .devicesOfKind(deviceKind)
+        .devicesOfKindChanges(deviceKind)
         .listen(_onDevicesChanged);
   }
 
@@ -79,18 +80,18 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// The shared device list this source reads from.
   MediaDeviceList get deviceList => _deviceList;
 
-  /// Devices of [deviceKind]. Replays the current list.
-  Stream<List<MediaDevice>> get devices =>
-      _deviceList.devicesOfKind(deviceKind);
+  /// The devices of [deviceKind], now.
+  List<MediaDevice> get devices => _deviceList.devicesOfKind(deviceKind);
 
-  /// The current devices of [deviceKind].
-  List<MediaDevice> get currentDevices =>
-      _deviceList.currentDevicesOfKind(deviceKind);
+  /// [devices], replaying the current list to each new listener, then each
+  /// change.
+  Stream<List<MediaDevice>> get devicesChanges =>
+      _deviceList.devicesOfKindChanges(deviceKind);
 
-  /// [currentDevices] in the order capture tries them. See
+  /// [devices] in the order capture tries them. See
   /// [prioritizeDevices].
   List<MediaDevice> get devicePriority => prioritizeDevices(
-    currentDevices,
+    devices,
     preferred: _preferred.value,
     deprioritized: _deprioritized,
     facing: preferredFacing,
@@ -101,20 +102,20 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   @protected
   CameraFacing? get preferredFacing => null;
 
-  /// The user's preferred device, or `null` for "no preference". Replays the
-  /// current value.
-  Stream<MediaDevice?> get preferredDevice => _preferred.stream;
+  /// The user's preferred device, or `null` for "no preference".
+  MediaDevice? get preferredDevice => _preferred.value;
 
-  /// The user's preferred device, or `null`.
-  MediaDevice? get currentPreferredDevice => _preferred.value;
+  /// [preferredDevice], replaying the current value to each new listener,
+  /// then each change.
+  Stream<MediaDevice?> get preferredDeviceChanges => _preferred.stream;
 
   /// The device in use while capturing; otherwise the device capture would
-  /// try first. Use it to show the selection in a device picker. Replays the
-  /// current value.
-  Stream<MediaDevice?> get activeDevice => _activeDevice.stream;
+  /// try first. Use it to show the selection in a device picker.
+  MediaDevice? get activeDevice => _activeDevice.value;
 
-  /// The device in use, or the one capture would try first.
-  MediaDevice? get currentActiveDevice => _activeDevice.value;
+  /// [activeDevice], replaying the current value to each new listener, then
+  /// each change.
+  Stream<MediaDevice?> get activeDeviceChanges => _activeDevice.stream;
 
   /// The capture options.
   O get options => _wantedOptions;
@@ -132,7 +133,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   }
 
   /// Changes the capture options. If the source is capturing, it captures
-  /// again with the new options and [track] emits the new track.
+  /// again with the new options and [trackChanges] emits the new track.
   ///
   /// Completes when the new capture has started (or failed).
   Future<void> setOptions(O options) async {
@@ -162,7 +163,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   }
 
   MediaDevice? _computeActiveDevice() {
-    final captured = currentTrack?.device;
+    final captured = track?.device;
     if (captured != null) return captured;
     final priority = devicePriority;
     return priority.isEmpty ? null : priority.first;
@@ -184,7 +185,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     }
     await _deviceList.ready;
     if (!isEnabled) return; // The next run releases.
-    final current = currentTrack;
+    final current = track;
     if (current != null && _canKeep(current)) {
       _updateActiveDevice();
       return;
@@ -197,7 +198,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     if (_trackEnded || _capturedOptions != _wantedOptions) return false;
     final device = current.device;
     if (device == null) return true; // Unknown device: nothing to compare.
-    final available = _usable(currentDevices);
+    final available = _usable(devices);
     // No usable list (web before permission): keep what works.
     if (available.isEmpty) return true;
     if (!available.any(device.sameDeviceAs)) return false; // Unplugged.
@@ -323,7 +324,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     } catch (_) {
       // Not implemented on this platform.
     }
-    final known = currentDevices;
+    final known = devices;
     if (settingsId != null) {
       for (final device in known) {
         if (device.deviceId == settingsId) return device;
@@ -346,7 +347,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
 
   void _watchEnded(CapturedTrack captured) {
     captured.track.onEnded = () {
-      if (!identical(currentTrack?.track, captured.track)) return;
+      if (!identical(track?.track, captured.track)) return;
       // The device went away (web reports this; native platforms rely on
       // the device list instead). Capture again, from the next device if
       // this one is gone.
@@ -356,7 +357,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   }
 
   Future<void> _release() async {
-    final current = currentTrack;
+    final current = track;
     _trackEnded = false;
     if (current == null) return;
     setTrack(null);
@@ -417,20 +418,20 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
   @override
   CameraFacing? get preferredFacing => options.facing;
 
-  /// Which way the camera in use faces ([currentActiveDevice]), when known.
+  /// Which way the camera in use faces ([activeDevice]), when known.
   /// `null` on desktops, whose cameras don't say.
-  CameraFacing? get currentFacing => currentActiveDevice?.facing;
+  CameraFacing? get facing => activeDevice?.facing;
 
   /// Switches to another camera, with one call on every platform.
   ///
   /// - On phones and tablets, it flips between the front and back cameras.
   /// - Elsewhere (desktops, or a camera that doesn't say which way it
-  ///   faces), it moves to the next camera in [currentDevices], in priority
+  ///   faces), it moves to the next camera in [devices], in priority
   ///   order (virtual cameras last; see [devicePriority]), wrapping around.
   ///
-  /// The choice becomes the [currentPreferredDevice]. If the source is
+  /// The choice becomes the [preferredDevice]. If the source is
   /// capturing, it captures from the new camera before releasing the old
-  /// one, so [track] emits the new track with no gap, and a publication
+  /// one, so [trackChanges] emits the new track with no gap, and a publication
   /// keeps sending. With a single camera it does nothing.
   ///
   /// In browsers before the user grants camera access, devices have no IDs
@@ -442,14 +443,14 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
     _checkNotDisposed();
     await deviceList.ready;
     final next = nextCamera(
-      currentDevices,
-      current: currentActiveDevice,
+      devices,
+      current: activeDevice,
       deprioritized: _deprioritized,
     );
     if (next != null) {
       await setPreferredDevice(next);
-    } else if (currentDevices.isNotEmpty &&
-        DeviceMediaSource._usable(currentDevices).isEmpty) {
+    } else if (devices.isNotEmpty &&
+        DeviceMediaSource._usable(devices).isEmpty) {
       await setOptions(
         options.copyWith(
           facing: options.facing == CameraFacing.environment
@@ -458,7 +459,7 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
         ),
       );
     }
-    return currentActiveDevice;
+    return activeDevice;
   }
 }
 

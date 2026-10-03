@@ -11,7 +11,7 @@ Everything runs from one process and one port.
 
 | Path | What |
 |---|---|
-| `/sessions/…`, `/generate-ice-servers` | The broker. `BrokerConfig.baseUrl` is the server's root URL. |
+| `/sessions/…`, `/generate-ice-servers` | The broker. `BrokerOptions.baseUrl` is the server's root URL. |
 | `/signaling` | Presence WebSocket (`ws://`, `?token=<dev token>`). |
 | `/healthz` | Unauthenticated `{"ok":true}`. Open it in a phone's browser to check it can reach your laptop. |
 
