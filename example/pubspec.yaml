@@ -21,6 +21,8 @@ dev_dependencies:
     sdk: flutter
   integration_test:
     sdk: flutter
+  # microphone_capture_test.dart reads flutter_webrtc's native log.
+  logger: ^2.8.0
   stream_channel: ^2.1.4
   web: ^1.1.0
 

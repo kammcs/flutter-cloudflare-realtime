@@ -5,6 +5,8 @@ import 'package:cloudflare_realtime/src/media/constraints.dart';
 import 'package:cloudflare_realtime/src/media/device_priority.dart';
 import 'package:cloudflare_realtime/src/media/flutter_webrtc_media_backend.dart';
 import 'package:cloudflare_realtime/src/media/windows_audio_defaults.dart';
+import 'package:flutter/foundation.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -342,23 +344,38 @@ void main() {
     expect(orderBuiltInCameras([a, b]), [a, b]);
   });
 
-  test('audioInputToSelect: only Android, only a named microphone', () {
-    final mic = microphoneConstraints(
-      const MicrophoneOptions(),
-      platform: MediaPlatform.android,
-      device: const MediaDevice(
-        deviceId: 'microphone-back',
-        kind: MediaDeviceKind.audioInput,
-        label: 'Built-in Microphone (back)',
-      ),
+  test('audioInputToSelect: Android and macOS, only a named microphone', () {
+    const device = MediaDevice(
+      deviceId: 'microphone-back',
+      kind: MediaDeviceKind.audioInput,
+      label: 'Built-in Microphone (back)',
     );
-    expect(audioInputToSelect(mic, MediaPlatform.android), 'microphone-back');
+    // The plugins of both read the named microphone only to report it
+    // back; without selectAudioInput they capture from the last selected
+    // input (macOS: the system default, such as a silent loopback device).
+    for (final platform in [MediaPlatform.android, MediaPlatform.macos]) {
+      final mic = microphoneConstraints(
+        const MicrophoneOptions(),
+        platform: platform,
+        device: device,
+      );
+      expect(
+        audioInputToSelect(mic, platform),
+        'microphone-back',
+        reason: platform.name,
+      );
+    }
     for (final other in [
       MediaPlatform.ios,
-      MediaPlatform.macos,
       MediaPlatform.windows,
+      MediaPlatform.linux,
       MediaPlatform.web,
     ]) {
+      final mic = microphoneConstraints(
+        const MicrophoneOptions(),
+        platform: other,
+        device: device,
+      );
       expect(audioInputToSelect(mic, other), isNull, reason: other.name);
     }
     final anyMic = microphoneConstraints(
@@ -375,5 +392,126 @@ void main() {
       ),
     );
     expect(audioInputToSelect(camera, MediaPlatform.android), isNull);
+  });
+
+  group('getUserMedia selects the microphone first', () {
+    // flutter_webrtc's native method channel.
+    const channel = MethodChannel('FlutterWebRTC.Method');
+    final calls = <MethodCall>[];
+
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'initialize') return null;
+            calls.add(call);
+            if (call.method == 'getUserMedia') {
+              throw PlatformException(code: 'test', message: 'no capture');
+            }
+            return null;
+          });
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    Future<List<String>> capture(TargetPlatform target) async {
+      debugDefaultTargetPlatformOverride = target;
+      const backend = FlutterWebrtcMediaBackend();
+      final constraints = microphoneConstraints(
+        const MicrophoneOptions(),
+        platform: backend.platform,
+        device: const MediaDevice(
+          deviceId: 'mic-2',
+          kind: MediaDeviceKind.audioInput,
+          label: 'MacBook Pro Microphone',
+        ),
+      );
+      await expectLater(backend.getUserMedia(constraints), throwsA(anything));
+      return [
+        for (final call in calls)
+          call.method == 'selectAudioInput'
+              ? 'selectAudioInput ${(call.arguments as Map)['deviceId']}'
+              : call.method,
+      ];
+    }
+
+    test('on macOS, whose plugin ignores the constraint', () async {
+      // Found on a Mac whose default input is a silent loopback device:
+      // the chosen microphone never reached the audio device module.
+      expect(await capture(TargetPlatform.macOS), [
+        'selectAudioInput mic-2',
+        'getUserMedia',
+      ]);
+    });
+
+    test('on Android', () async {
+      expect(await capture(TargetPlatform.android), [
+        'selectAudioInput mic-2',
+        'getUserMedia',
+      ]);
+    });
+
+    test('not on Windows or iOS', () async {
+      expect(await capture(TargetPlatform.windows), ['getUserMedia']);
+      calls.clear();
+      expect(await capture(TargetPlatform.iOS), ['getUserMedia']);
+    });
+  });
+
+  group('MacInputReselector', () {
+    test('selects the input again after each delay', () {
+      fakeAsync((async) {
+        final selected = <String>[];
+        MacInputReselector((id) async => selected.add(id)).selected('mic');
+        async.elapse(const Duration(milliseconds: 999));
+        expect(selected, isEmpty);
+        async.elapse(const Duration(milliseconds: 1));
+        expect(selected, ['mic']);
+        async.elapse(const Duration(seconds: 7));
+        expect(selected, ['mic', 'mic', 'mic', 'mic']);
+        async.elapse(const Duration(minutes: 1));
+        expect(selected, hasLength(4));
+      });
+    });
+
+    test('leaves the system default alone', () {
+      fakeAsync((async) {
+        final selected = <String>[];
+        MacInputReselector((id) async => selected.add(id)).selected('default');
+        async.elapse(const Duration(minutes: 1));
+        expect(selected, isEmpty);
+      });
+    });
+
+    test('a newer selection replaces the pending ones', () {
+      fakeAsync((async) {
+        final selected = <String>[];
+        final reselector = MacInputReselector((id) async => selected.add(id))
+          ..selected('a');
+        async.elapse(const Duration(seconds: 1));
+        reselector.selected('default');
+        async.elapse(const Duration(minutes: 1));
+        expect(selected, ['a']);
+        reselector.selected('b');
+        async.elapse(const Duration(minutes: 1));
+        expect(selected, ['a', 'b', 'b', 'b', 'b']);
+      });
+    });
+
+    test('ignores a device that is gone', () {
+      fakeAsync((async) {
+        var calls = 0;
+        MacInputReselector((id) async {
+          calls++;
+          throw PlatformException(code: 'selectAudioInputFailed');
+        }).selected('unplugged');
+        async.elapse(const Duration(minutes: 1)); // No unhandled error.
+        expect(calls, 4);
+      });
+    });
   });
 }

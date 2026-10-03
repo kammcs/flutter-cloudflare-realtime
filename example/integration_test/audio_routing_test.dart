@@ -143,8 +143,11 @@ void main() {
 
       // Each microphone in turn, then back to the first.
       final mic = published.mediaSource as MicrophoneSource;
-      final mics = mic.devices;
-      _log('microphones: ${mics.map((m) => '"${m.label}"').join('; ')}');
+      _log('microphones: ${mic.devices.map((m) => '"${m.label}"').join('; ')}');
+      final mics = mic.devices.where(settings.mayOpenMicrophone).toList();
+      if (settings.microphones != null) {
+        _log('only: ${mics.map((m) => '"${m.label}"').join('; ')}');
+      }
       if (mics.length < 2) _log('only one microphone: nothing to switch to');
       for (final device in [...mics.skip(1), if (mics.length > 1) mics.first]) {
         await mic.setPreferredDevice(device);

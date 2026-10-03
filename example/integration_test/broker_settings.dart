@@ -10,6 +10,10 @@
 //   CF_REALTIME_CROSS_DEVICE  set to 1 to run cross_device_test.dart, which
 //                             needs a second device running it at the same
 //                             time in the same room (docs/checkpoint.md §7)
+//   CF_REALTIME_MICROPHONES   comma-separated microphone labels: the tests
+//                             that go through every microphone open only
+//                             these (say, to leave alone a phone's
+//                             Continuity microphone that is in use)
 //
 // Against the dev server (docs/checkpoint.md):
 //
@@ -32,6 +36,7 @@ const _definedToken = String.fromEnvironment('CF_REALTIME_BROKER_TOKEN');
 const _definedUser = String.fromEnvironment('CF_REALTIME_BROKER_USER');
 const _definedRoom = String.fromEnvironment('CF_REALTIME_ROOM');
 const _definedCrossDevice = String.fromEnvironment('CF_REALTIME_CROSS_DEVICE');
+const _definedMicrophones = String.fromEnvironment('CF_REALTIME_MICROPHONES');
 
 String? _setting(String defined, String name) {
   if (defined.isNotEmpty) return defined;
@@ -48,6 +53,7 @@ class BrokerSettings {
     this._user,
     this.room, {
     this.crossDevice = false,
+    this.microphones,
   });
 
   /// Reads the settings.
@@ -58,7 +64,18 @@ class BrokerSettings {
     _setting(_definedRoom, 'CF_REALTIME_ROOM') ?? 'integration-test',
     crossDevice:
         _setting(_definedCrossDevice, 'CF_REALTIME_CROSS_DEVICE') == '1',
+    microphones: _labels(
+      _setting(_definedMicrophones, 'CF_REALTIME_MICROPHONES'),
+    ),
   );
+
+  static Set<String>? _labels(String? value) {
+    final labels = {
+      for (final label in (value ?? '').split(','))
+        if (label.trim().isNotEmpty) label.trim(),
+    };
+    return labels.isEmpty ? null : labels;
+  }
 
   /// The broker's base URL, or `null` to skip the tests.
   final String? url;
@@ -70,6 +87,14 @@ class BrokerSettings {
 
   /// Whether `CF_REALTIME_CROSS_DEVICE` is `1`.
   final bool crossDevice;
+
+  /// The labels of the microphones the tests may open
+  /// (`CF_REALTIME_MICROPHONES`), or `null` for all.
+  final Set<String>? microphones;
+
+  /// Whether the tests may open [device] ([microphones]).
+  bool mayOpenMicrophone(MediaDevice device) =>
+      microphones?.contains(device.label) ?? true;
 
   /// The user name sent as `X-Dev-User`, if any.
   String? get user => _user;
