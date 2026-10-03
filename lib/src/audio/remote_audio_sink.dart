@@ -44,9 +44,8 @@ abstract interface class RemoteAudioSink {
 typedef AudioBlockedListener = void Function(bool blocked);
 
 /// Creates a [RemoteAudioSink]; the platform's by default.
-typedef RemoteAudioSinkFactory = RemoteAudioSink Function(
-  AudioBlockedListener onBlockedChanged,
-);
+typedef RemoteAudioSinkFactory =
+    RemoteAudioSink Function(AudioBlockedListener onBlockedChanged);
 
 /// **Tests only:** replaces the platform sink, so unit tests can check the
 /// room's bookkeeping with a fake. Reset it to `null` afterwards.

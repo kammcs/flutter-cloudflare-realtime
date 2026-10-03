@@ -408,8 +408,9 @@ void main() {
 
     test('close by id', () {
       expect(
-        DataChannelsRequest(dataChannels: [DataChannelObject.withId(2)])
-            .toJson(),
+        DataChannelsRequest(
+          dataChannels: [DataChannelObject.withId(2)],
+        ).toJson(),
         {
           'dataChannels': [
             {'id': 2},

@@ -13,8 +13,9 @@ enum SfuDataChannelState {
   /// Messages can flow.
   open,
 
-  /// Its session failed or closed, or the channel closed without [close]
-  /// (for example because the SFU dropped it). Move it to a session with
+  /// Its session failed or closed, or the channel closed without
+  /// [SfuDataChannel.close] (for example because the SFU dropped it). Move
+  /// it to a session with
   /// `SfuSession.republishDataChannel` or `resubscribeDataChannel`.
   interrupted,
 
@@ -297,11 +298,13 @@ final class LocalDataChannel extends SfuDataChannel {
 /// [remoteSessionId] from the channel, never from the payload.
 final class RemoteDataChannel extends SfuDataChannel {
   RemoteDataChannel._({
-    required this._remoteSessionId,
+    required String remoteSessionId,
     required String name,
     required DataChannelProfile profile,
-    required this._canReply,
-  }) : super._(name, profile);
+    required bool canReply,
+  }) : _remoteSessionId = remoteSessionId,
+       _canReply = canReply,
+       super._(name, profile);
 
   String _remoteSessionId;
   bool _canReply;

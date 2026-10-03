@@ -35,10 +35,11 @@ class LocalTrackPublication {
   LocalTrackPublication._({
     required this.trackName,
     required this.kind,
-    required this._track,
-    required this._sendEncodings,
+    required MediaStreamTrack? track,
+    required List<SendEncoding> sendEncodings,
     required this.codecPreferences,
-  });
+  }) : _track = track,
+       _sendEncodings = sendEncodings;
 
   /// The name other participants pull this track by, together with the
   /// publisher's [sessionId]. It stays the same across sessions.
@@ -248,10 +249,11 @@ class LocalTrackPublication {
 /// [MediaStreamTrack].
 class RemoteTrackSubscription {
   RemoteTrackSubscription._({
-    required this._remoteSessionId,
+    required String remoteSessionId,
     required this.trackName,
-    required this._simulcast,
-  });
+    required SimulcastConfig? simulcast,
+  }) : _remoteSessionId = remoteSessionId,
+       _simulcast = simulcast;
 
   /// The pulled track's name.
   final String trackName;

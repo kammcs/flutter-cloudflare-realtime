@@ -74,10 +74,8 @@ part 'screen_share_watchdog.dart';
 
 /// Connects a new [SfuSession] through a broker: the room's session
 /// factory, used when joining and on every re-session.
-typedef _Connector = Future<SfuSession> Function(
-  BrokerClient broker,
-  SfuSessionOptions options,
-);
+typedef _Connector =
+    Future<SfuSession> Function(BrokerClient broker, SfuSessionOptions options);
 
 /// A call: one SFU session tied to one room on the app's [Signaling].
 ///
@@ -107,16 +105,22 @@ class Room {
     required this.roomId,
     required this.signaling,
     required this.options,
-    required this._session,
-    required this._broker,
-    required this._connect,
-    required this._mediaBackend,
-    required this._wrapTrack,
-    required this._networkChanges,
-    required this._appLifecycle,
+    required SfuSession session,
+    required BrokerClient broker,
+    required _Connector connect,
+    required MediaBackend mediaBackend,
+    required MediaStreamWrapper wrapTrack,
+    required NetworkChangeSource? networkChanges,
+    required AppLifecycleSource? appLifecycle,
     required String participantId,
     Map<String, Object?>? metadata,
-  }) {
+  }) : _session = session,
+       _broker = broker,
+       _connect = connect,
+       _mediaBackend = mediaBackend,
+       _wrapTrack = wrapTrack,
+       _networkChanges = networkChanges,
+       _appLifecycle = appLifecycle {
     localParticipant = LocalParticipant._(this, participantId, metadata);
   }
 

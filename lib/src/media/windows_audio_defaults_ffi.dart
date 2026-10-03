@@ -34,20 +34,22 @@ typedef _CoInitializeExNative = Int32 Function(Pointer<Void>, Uint32);
 typedef _CoInitializeEx = int Function(Pointer<Void>, int);
 typedef _CoUninitializeNative = Void Function();
 typedef _CoUninitialize = void Function();
-typedef _CoCreateInstanceNative = Int32 Function(
-  Pointer<Uint8>,
-  Pointer<Void>,
-  Uint32,
-  Pointer<Uint8>,
-  Pointer<Pointer<Void>>,
-);
-typedef _CoCreateInstance = int Function(
-  Pointer<Uint8>,
-  Pointer<Void>,
-  int,
-  Pointer<Uint8>,
-  Pointer<Pointer<Void>>,
-);
+typedef _CoCreateInstanceNative =
+    Int32 Function(
+      Pointer<Uint8>,
+      Pointer<Void>,
+      Uint32,
+      Pointer<Uint8>,
+      Pointer<Pointer<Void>>,
+    );
+typedef _CoCreateInstance =
+    int Function(
+      Pointer<Uint8>,
+      Pointer<Void>,
+      int,
+      Pointer<Uint8>,
+      Pointer<Pointer<Void>>,
+    );
 typedef _CoTaskMemAllocNative = Pointer<Void> Function(IntPtr);
 typedef _CoTaskMemAlloc = Pointer<Void> Function(int);
 typedef _CoTaskMemFreeNative = Void Function(Pointer<Void>);
@@ -56,18 +58,10 @@ typedef _CoTaskMemFree = void Function(Pointer<Void>);
 // COM methods take the object ("this") first.
 typedef _ReleaseNative = Uint32 Function(Pointer<Void>);
 typedef _Release = int Function(Pointer<Void>);
-typedef _GetDefaultAudioEndpointNative = Int32 Function(
-  Pointer<Void>,
-  Int32,
-  Int32,
-  Pointer<Pointer<Void>>,
-);
-typedef _GetDefaultAudioEndpoint = int Function(
-  Pointer<Void>,
-  int,
-  int,
-  Pointer<Pointer<Void>>,
-);
+typedef _GetDefaultAudioEndpointNative =
+    Int32 Function(Pointer<Void>, Int32, Int32, Pointer<Pointer<Void>>);
+typedef _GetDefaultAudioEndpoint =
+    int Function(Pointer<Void>, int, int, Pointer<Pointer<Void>>);
 typedef _GetIdNative = Int32 Function(Pointer<Void>, Pointer<Pointer<Uint16>>);
 typedef _GetId = int Function(Pointer<Void>, Pointer<Pointer<Uint16>>);
 

@@ -25,6 +25,20 @@ plugins {
     id("com.android.library")
 }
 
+// Kotlin. AGP 9's built-in Kotlin compiles the plugin's Kotlin sources and
+// rejects the Kotlin Gradle plugin; older AGP versions (the Android
+// templates of Flutter releases before AGP 9) need that plugin. So apply it
+// only when built-in Kotlin isn't active: AGP 8, or AGP 9 with
+// `android.builtInKotlin=false`. flutter_webrtc uses the same rule.
+val agpMajorVersion =
+    com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.substringBefore('.').toInt()
+val builtInKotlin =
+    agpMajorVersion >= 9 &&
+        (findProperty("android.builtInKotlin")?.toString()?.toBoolean() ?: true)
+if (!builtInKotlin) {
+    apply(plugin = "org.jetbrains.kotlin.android")
+}
+
 android {
     namespace = "dev.kammcs.cloudflare_realtime"
 
@@ -53,8 +67,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-    }
+// The type-safe `kotlin { }` accessor isn't generated for a plugin applied
+// with `apply(...)`, so set the JVM target on the compile tasks, which works
+// either way.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
 }

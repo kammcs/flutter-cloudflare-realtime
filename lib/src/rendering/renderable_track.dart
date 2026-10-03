@@ -37,9 +37,8 @@ class RenderableTrack {
 ///
 /// The default, [wrapTrackInMediaStream], calls `flutter_webrtc`. Tests
 /// substitute a fake, since plugins don't run under `flutter test`.
-typedef MediaStreamWrapper = Future<MediaStream> Function(
-  MediaStreamTrack track,
-);
+typedef MediaStreamWrapper =
+    Future<MediaStream> Function(MediaStreamTrack track);
 
 /// Creates a local [MediaStream] with `createLocalMediaStream` and adds
 /// [track] to it.

@@ -1,20 +1,38 @@
 name: cloudflare_realtime
-description: "Unofficial Flutter client for the Cloudflare Realtime SFU: rooms, simulcast, screen share and data channels, built on flutter_webrtc."
+description: "Unofficial Flutter client for the Cloudflare Realtime SFU: calls, rooms, simulcast, screen share and data channels, built on flutter_webrtc."
 version: 0.0.1
 repository: https://github.com/kammcs/flutter-cloudflare-realtime
 issue_tracker: https://github.com/kammcs/flutter-cloudflare-realtime/issues
+documentation: https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/doc
 topics:
   - webrtc
   - cloudflare
   - video
   - realtime
   - sfu
-# Remove at the first pub.dev release (roadmap M8).
+# Remove at the first pub.dev release (roadmap M8). Until then a mistaken
+# `dart pub publish` stops here.
 publish_to: none
 
+# The platforms the package supports and has been verified on (README,
+# "Platforms"). The plugin has native code on Android and iOS only; macOS,
+# Windows and the web run the Dart code on flutter_webrtc.
+platforms:
+  android:
+  ios:
+  macos:
+  web:
+  windows:
+
 environment:
-  sdk: ^3.13.0
-  flutter: ">=3.47.0"
+  # Flutter 3.41 (Dart 3.11) is the oldest SDK the code builds with: it uses
+  # `TickerMode.valuesOf`, new in Flutter 3.41 (the `TickerMode.of` it
+  # replaces is deprecated). Checked with `flutter pub get` and
+  # `flutter pub downgrade`, then `flutter analyze` and `flutter test`, on
+  # Flutter 3.41.0, and an Android build with its app template
+  # (docs/api-review.md).
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
 
 dependencies:
   flutter:

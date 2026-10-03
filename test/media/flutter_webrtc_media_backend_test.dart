@@ -202,8 +202,10 @@ void main() {
         );
       }
       expect(
-        mediaDeviceFromSource({'deviceId': 'default', 'kind': 'videoinput'})!
-            .isDefault,
+        mediaDeviceFromSource({
+          'deviceId': 'default',
+          'kind': 'videoinput',
+        })!.isDefault,
         isFalse,
       );
     });

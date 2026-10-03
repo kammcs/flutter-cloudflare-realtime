@@ -1,158 +1,181 @@
 # cloudflare_realtime
 
-An **unofficial** Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/), built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc). It targets Android, iOS, macOS, Windows and Web.
+An **unofficial** Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/), built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc). One Dart API for calls, video conferences and screen sharing on Android, iOS, macOS, Windows and the web.
 
-> **Status: pre-release.** The design is written and the implementation has started: so far, the broker client, the SFU session (`SfuSession`: publish, subscribe, simulcast layer switching), the `Signaling` interface with an in-memory implementation, the media layer (devices, local camera/microphone capture, screen share on desktop, web, Android and iOS), and an example app in [`example/`](example/). The package is not on pub.dev yet.
+> **Unofficial.** This project isn't affiliated with, endorsed by or supported by Cloudflare. "Cloudflare" is a trademark of Cloudflare, Inc.
 
-This project isn't affiliated with or endorsed by Cloudflare.
+> **Pre-1.0.** The API can still change between minor versions. See the [changelog](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/CHANGELOG.md).
 
-## What it will do
+## Features
 
-- Rooms on top of the SFU, with presence supplied by your own signaling (for example, Supabase Realtime, Firebase or your own WebSocket).
-- Camera, microphone and screen publishing, and selective subscription.
-- The same calls behave the same on every platform: the front camera by default, `switchCamera()` that flips front and back on phones and cycles cameras on desktops, presets honoured, and a self-view mirrored only when it should be.
-- Simulcast with per-tile layer selection, layers announced at the size the camera captures, and (opt-in) pausing the layers no one pulls.
-- VP8 by default; H.264, VP9 or AV1 per room or per publication (`RoomOptions.videoCodec`).
-- Active-speaker detection.
-- Automatic reconnection.
-- Calls that keep going in the background on phones, pause for a phone call and resume after it, and turn the screen off at the ear.
-- Reliable and unreliable DataChannels.
+- **Rooms** on top of the SFU, with presence from your own signaling (Supabase Realtime, Firebase, your own WebSocket server…). The SFU has no rooms; the package diffs participants and pulls only what is subscribed.
+- **Camera, microphone and screen** publishing, mute and unmute, and selective subscription.
+- **The same call on every platform:** the front camera by default, `switchCamera()` that flips front and back on phones and cycles cameras on desktops, presets honoured, a self-view mirrored only when it should be, and one audio-route API on both phones.
+- **Simulcast** with per-tile layer selection from the size of each video view, a manual layer override, and (opt-in) pausing layers that no one pulls.
+- **VP8 by default**; H.264, VP9 or AV1 per room or per publication.
+- **Active speaker** detection and per-participant audio levels.
+- **Connection quality** per participant and **typed stats** (bitrate, resolution, frame rate, loss, jitter, RTT).
+- **Automatic reconnection:** a failed or expired SFU session is replaced, tracks and DataChannels are republished under the same names and subscriptions pulled again, with backoff.
+- **Calls on phones:** keep running in the background, pause for a phone call or Siri and resume after it, turn the screen off at the ear, and route audio to the speaker, earpiece, wired or Bluetooth headsets.
+- **System calls:** CallKit and PushKit on iOS, Android Telecom (Core-Telecom), as primitives: report, answer, end, hold, mute.
+- **Reliable and unreliable DataChannels** for app messages, with the sender's identity from signaling, never from the payload.
+
+It doesn't include a signaling server, push delivery or a meeting UI: your app brings those.
+
+## Platforms
+
+| | Android | iOS | macOS | Windows | Web |
+|---|---|---|---|---|---|
+| Camera and microphone calls, simulcast | Yes | Yes | Yes | Yes | Yes |
+| Screen share | Yes (no audio) | Yes, with a Broadcast Upload Extension in your app (no audio) | Yes (no audio) | Yes, with system audio | Yes, the browser's picker (tab audio) |
+| Calls in the background | Yes (foreground service) | Audio yes; the camera pauses | n/a | n/a | n/a |
+| Audio routes (speaker, earpiece, headsets) | Yes | Yes | Output device | Output device | Output device where the browser allows |
+| System calls | Telecom | CallKit, PushKit | In Dart only | In Dart only | In Dart only |
+| Verified against the real SFU | Pixel 10 (Android 16), emulator (API 34) | iPhone (iOS 27) | MacBook Pro (macOS 27) | Windows 11 | Chrome, Firefox (JS and Wasm) |
+
+- **Minimums:** Flutter 3.41 (Dart 3.11); Android 7.0 (API 24); iOS 15; macOS 10.15.
+- **Not verified yet:** Safari, 4-person calls, a real network drop, CallKit on a device (the iOS backend is unit-tested), and Bluetooth and wired headsets on every phone. Linux isn't supported.
+- "In Dart only" means the `SystemCalls` API works and emits the same events, without a system call UI.
 
 ## How it fits together
 
-- The SFU API needs your **App Secret**, so the client never calls Cloudflare directly.
-- Instead, you run a small **broker** that authenticates your users, checks room membership, and forwards requests to Cloudflare.
-- The broker's paths are compatible with [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks)' proxy.
+```
+your app ── Signaling (your presence transport) ──► other participants
+   │
+   │  cloudflare_realtime: Room, SfuSession, media, broker client
+   │
+   └── HTTPS + your auth ──► your broker ── App Secret ──► Cloudflare Realtime SFU
+```
 
-See [docs/design.md](docs/design.md) for the architecture, the broker contract and its security rules.
+- The SFU API needs your Cloudflare **App Secret**, so the client never calls Cloudflare directly. You run a small **broker** that authenticates your users, checks room membership, and forwards the SFU calls ([below](#the-broker)).
+- The SFU has no rooms or presence. Participants find each other through **signaling** you provide ([below](#signaling)).
+- Media flows between each client and the SFU over WebRTC.
 
-To try a real call across devices from your laptop, use the DEV ONLY local broker and WebSocket signaling in [tools/dev-server/](tools/dev-server/README.md). It needs just your Cloudflare SFU credentials in environment variables. Reference brokers for deployment are in [broker/](broker/README.md).
+## Install
+
+```sh
+flutter pub add cloudflare_realtime
+```
+
+Then follow the setup for each platform you ship: [Android](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/android.md), [iOS](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/ios.md), [macOS](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/macos.md), [Windows](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/windows.md) and [web](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md). At a minimum: camera and microphone permissions (Android) or usage descriptions (iOS, macOS), and the sandbox entitlements on macOS.
+
+## Quick start
+
+```dart
+import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+
+// 1. Point the package at your broker. `headers` runs before every request,
+//    so it can refresh an expiring token.
+final realtime = CloudflareRealtime(
+  broker: BrokerConfig(
+    baseUrl: Uri.parse('https://api.example.com/realtime'),
+    headers: () async => {'Authorization': 'Bearer ${await getAppJwt()}'},
+  ),
+);
+
+// 2. Join a room. `signaling` is your Signaling implementation; for a local
+//    demo, InMemorySignaling(InMemorySignalingHub()) works in one process.
+final room = await realtime.join(
+  'room-123',
+  signaling: mySignaling,
+  participantId: '$userId:$deviceId', // unique in the room
+  metadata: {'displayName': 'Ada'},
+);
+
+// 3. Publish. The camera is sent as three simulcast layers by default.
+final microphone = await room.localParticipant.publishMicrophone();
+final camera = await room.localParticipant.publishCamera();
+await microphone.mute(); // announced to the others; unmute() to undo
+
+// 4. Render. Remote audio plays by itself; remote video is pulled while its
+//    view is on screen, at the layer that fits the view.
+Widget build(BuildContext context) {
+  return StreamBuilder<List<RemoteParticipant>>(
+    stream: room.participants, // emits on joins, leaves and track changes
+    initialData: room.currentParticipants,
+    builder: (context, snapshot) => GridView.count(
+      crossAxisCount: 2,
+      children: [
+        ParticipantVideoView.local(camera.mediaSource), // mirrored self-view
+        for (final participant in snapshot.data!)
+          if (participant.camera case final video?)
+            ParticipantVideoView.remote(video),
+      ],
+    ),
+  );
+}
+
+// 5. Leave: unpublishes, stops capture and closes the session.
+await room.leave();
+```
+
+**Next:**
+
+- `room.events` (a `RoomEvent` stream: participants joining and leaving, tracks published and muted, reconnection, errors) and `room.connectionState`.
+- `room.activeSpeakers` / `dominantSpeaker`, and `isSpeaking` and `connectionQuality` on each participant.
+- `room.localParticipant.publishScreen()`: a `ScreenSourcePicker` source on desktops; the system or browser picker elsewhere.
+- `room.localParticipant.switchCamera()`, `room.audioRoutes` / `selectAudioRoute()` on phones, `room.setAudioOutputDevice()` elsewhere.
+- `room.data.publish()` and `room.data.subscribe()` for DataChannels.
+- `RoomOptions` for what's subscribed automatically, reconnection, the video codec, stats and the phone behaviours.
+- The [example app](https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/example) puts all of it in a call screen.
+
+## The broker
+
+Every SFU call goes through a broker that **you** operate; the App Secret lives only there. Its paths mirror the SFU API under a base URL (`POST sessions/new`, `POST sessions/{id}/tracks/new`, `PUT …/renegotiate`, …, plus `POST generate-ice-servers`), so it is compatible with partytracks' proxy. Each request carries your app's auth headers and `X-Realtime-Room: <roomId>`.
+
+A broker must enforce these rules, or one user can listen in on another room:
+
+1. **Authenticate** every request with your app's credential (`401` otherwise).
+2. **Authorize the room** named in `X-Realtime-Room`: the caller must be a member (`403`). Never trust a room list from the client.
+3. **Bind sessions to their creator:** every call on `sessions/{id}` must come from the user who created that session, for the same room.
+4. **Pull only from the same room:** every `sessionId` a request names (track pulls, DataChannel subscriptions) must be a session the broker created for the caller's room.
+5. **Forward only what Cloudflare needs:** the App Secret as `Authorization: Bearer …`, and nothing from the client's headers.
+
+The repository has two **reference brokers** that implement these rules, a Cloudflare Worker and a Supabase Edge Function, with tests: see [broker/README.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/broker/README.md) for the full contract, the session tokens and CORS. They are references, not drop-in products: their room-membership check rejects every room until you implement it. The DEV ONLY [tools/dev-server/](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/tools/dev-server/README.md) runs a local broker and WebSocket signaling for trying calls across devices from a laptop; never deploy it.
+
+`HttpBrokerClient` is the default client. Implement `BrokerClient` yourself for a different transport.
+
+## Signaling
+
+The SFU knows sessions and tracks, not people. Each participant announces a `ParticipantState` (its SFU session ID, the tracks it publishes with their mute and simulcast flags, and your metadata) and learns everyone else's through `Signaling`, a four-member interface you implement on any transport with presence:
+
+```dart
+class MySignaling implements Signaling {
+  @override
+  Future<void> join(String roomId, ParticipantState self) async {
+    // Enter the room's presence channel and announce self.toJson().
+  }
+
+  @override
+  Future<void> update(ParticipantState self) async {
+    // Replace the announced state with self.toJson().
+  }
+
+  @override
+  Stream<List<ParticipantState>> get participants => _others.stream;
+  // Everyone else in the room (ParticipantState.fromJson), never this
+  // participant; replay the current list to new listeners.
+
+  @override
+  Future<void> leave() async {
+    // Withdraw the state; the list becomes empty.
+  }
+}
+```
+
+The contract is in the [`Signaling`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/Signaling-class.html) docs, and the JSON wire shape in [`ParticipantState`](https://pub.dev/documentation/cloudflare_realtime/latest/cloudflare_realtime/ParticipantState-class.html). `InMemorySignaling` is a ready-made implementation for tests and single-process demos, and the example app has a WebSocket one (`example/lib/ws_signaling.dart`).
+
+Presence data is only as trustworthy as your transport: the broker, not signaling, decides who may pull what.
 
 ## Platform setup
 
-### Calls in the background on Android
-
-While a room publishes a microphone or a camera, the package runs a foreground service so the call keeps its microphone, camera and connection when the user leaves the app. Android 11+ silences the microphone and stops the camera of a backgrounded app without one, and Android 14+ requires its types (`microphone`, plus `camera` while the camera captures) and starts it only while the app is in the foreground. The service starts with the first publish and stops when nothing is published or the room is left.
-
-- **Manifest:** nothing to add. The package's manifest declares the service (`CallService`, types `microphone|camera|phoneCall`) and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `FOREGROUND_SERVICE_CAMERA`, `POST_NOTIFICATIONS` and `WAKE_LOCK` permissions; the manifest merger brings them into your app. Your app still declares and requests `RECORD_AUDIO` and `CAMERA`.
-- **Notification:** the service shows a "Call in progress" notification that opens the app. It needs `POST_NOTIFICATIONS` on Android 13+, which the package doesn't ask for; without it the call still works in the background, the notification just isn't in the drawer. Override the strings `cloudflare_realtime_call_channel`, `…_title` and `…_text`, or the drawable `cloudflare_realtime_call`, in your app's resources.
-- **Google Play:** apps that use the `microphone` and `camera` foreground service types must declare them in the Play Console.
-- **Your own service:** pass `RoomOptions(foregroundService: false)`, and drop the package's with `tools:node="remove"` on `<service android:name="dev.kammcs.cloudflare_realtime.CallService">` (and its permissions, if nothing else needs them).
-- **A start that fails** (for example a camera published while the app is in the background) is a `RoomErrorEvent` with operation `foregroundService`, retried when the app is back in the foreground.
-
-### Calls in the background on iOS
-
-Add the `audio` background mode to your app's `Info.plist`; with it, iOS keeps the app running during a call (any call with a published or received audio track keeps the audio session active):
-
-```xml
-<key>UIBackgroundModes</key>
-<array>
-  <string>audio</string>
-</array>
-```
-
-iOS stops the camera of a backgrounded app. The track stays published and sends no frames until the app is back, when the camera restarts by itself; `Room.cameraPause` and `LocalCameraPausedEvent` / `LocalCameraResumedEvent` report it (on Android the service keeps the camera running). The `voip` mode belongs with system calls and VoIP pushes (below).
-
-### System calls on iOS (CallKit and VoIP pushes)
-
-`SystemCalls.instance.configure()` sets up CallKit, and the app's calls then show in the system's call UI: the lock screen, Recents, a headset, a car or a watch (see [design.md §4.8](docs/design.md#48-system-calls-callkit-and-android-telecom-native)).
-
-- **`Info.plist`:** add `voip` next to `audio` in `UIBackgroundModes`:
-
-  ```xml
-  <key>UIBackgroundModes</key>
-  <array>
-    <string>audio</string>
-    <string>voip</string>
-  </array>
-  ```
-
-- **Call audio:** CallKit activates the audio session when a call starts or is answered. Once `configure` has run, the package switches WebRTC to manual audio, so a call's audio starts only after CallKit activated the session. Don't activate the session yourself during a system call.
-- **Optional:** `SystemCallsConfig.iconTemplateImageName` (a 40×40 pt template image in your asset catalog) and `ringtoneSound` (a sound file in your bundle).
-- **China mainland:** apps on the China mainland App Store must not use CallKit. There, don't call `configure`.
-
-**VoIP pushes** wake the app for an incoming call (`SystemCalls.instance.voipPush`). They need the following:
-
-- **The Push Notifications capability** (Xcode: Signing & Capabilities, + Capability; this adds the `aps-environment` entitlement). Your provisioning profile must include it. Without it, no VoIP token arrives.
-- **An APNs key or certificate for your server:** a token-based key (`.p8`, from Certificates, Identifiers & Profiles, Keys, with APNs enabled), or a VoIP Services certificate.
-- **The token:** `await SystemCalls.instance.voipPush.register()` (remembered across launches) and `tokenChanges`. Send the token to your server. iOS only.
-- **The push:** HTTP/2 to `api.push.apple.com` (`api.sandbox.push.apple.com` for development builds), `/3/device/<token>`, with the headers `apns-push-type: voip`, `apns-topic: <bundle id>.voip`, `apns-priority: 10` and `apns-expiration: 0`. The package reads these keys at the top level of the JSON payload:
-
-  ```json
-  {
-    "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
-    "handle": "ada@example.com",
-    "handleType": "emailAddress",
-    "displayName": "Ada",
-    "video": true,
-    "room": "your-room-id"
-  }
-  ```
-
-  - **Required:** `id`, a UUID that the call keeps (share it with your signaling), and `handle`.
-  - **Optional:** `handleType` (`generic`, the default, `phoneNumber` or `emailAddress`), `displayName` and `video`.
-  - **Everything else** except `aps` becomes `SystemCall.payload`, for finding the room.
-  - **What the package does:** it reports the call to CallKit itself, before Dart runs, as iOS requires. The call then arrives as a `SystemCallAddedEvent`, or in `SystemCalls.instance.calls` after `configure`.
-- **Push only for calls.** iOS terminates an app that receives a VoIP push and doesn't report a call. After repeated failures, iOS stops delivering VoIP pushes to it. A push without `id` or `handle` still rings for an instant and is ended as failed. A push for a call your signaling already reported is ignored.
-
-### Interruptions and the proximity sensor (phones)
-
-- **Interruptions:** a phone call, Siri, an alarm or another app taking the audio pauses the call: `CallInterruptedEvent` (with a `CallInterruptionReason`), `Room.audioInterruption`, and the call is silent in both directions (nothing is announced as muted). It resumes by itself when the system gives the audio back or the app returns to the foreground (`CallResumedEvent`); `Room.resumeAudio()` tries at once. Android tells a phone call (`phoneCall`) from other audio (`otherAudio`); iOS doesn't say (`unknown`).
-- **Proximity sensor:** during a voice call on the earpiece, the screen turns off when the phone is held to the ear. It's off on the speaker, on a headset and with video. Turn it off with `RoomOptions(proximitySensor: false)`; `Room.proximitySensorActive` says whether it's on.
-
-See [design.md §4.7](docs/design.md#47-calls-outside-the-foreground-background-interruptions-proximity-native) for the details.
-
-### System calls on Android
-
-`SystemCalls` puts the app's calls in Android's Telecom through Jetpack Core-Telecom (Android 8+; `configure` completes with `false` below), so a phone call holds them instead of cutting them off, and cars, watches and headsets answer, end and mute them. See [design.md §4.8](docs/design.md#48-system-calls-callkit-and-android-telecom-native).
-
-- **Manifest:** nothing to add. The package declares `FOREGROUND_SERVICE_PHONE_CALL`, `USE_FULL_SCREEN_INTENT`, the `phoneCall` type on `CallService` and the receiver for the notification's Decline and Hang up; Core-Telecom adds `MANAGE_OWN_CALLS` and its `ConnectionService`.
-- **Notifications:** while a call exists, `CallService` runs with the type `phoneCall` and shows the call's `CallStyle` notification: ringing (the "Incoming calls" channel, with the ringtone, full screen, Answer and Decline) and then ongoing (Hang up). Ask for `POST_NOTIFICATIONS` (Android 13+). On Android 14+ check `NotificationManager.canUseFullScreenIntent()` and, if it's `false`, send the user to `Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`: Google Play grants it by default only to calling and alarm apps, and without it an incoming call is a heads-up notification instead of a full-screen ring. The example app does both (`example/lib/system_call_demo.dart`).
-- **Answer** opens your launch activity (with the action `dev.kammcs.cloudflare_realtime.action.ANSWER_CALL`), which brings the app to the foreground and answers the call; listen to `SystemCalls.instance.events` for `SystemCallAnsweredEvent` and join the room. Answer and the full-screen ring show your activity over the lock screen until the last call ends. Your launch activity should be `singleTop` (Flutter's template is).
-- **Report incoming calls from the foreground or a high-priority FCM message's handler:** Android lets the call's foreground service start from the background only then.
-- **Texts and icon** are resources you can override: `cloudflare_realtime_call_incoming_channel`, `…_incoming`, `…_incoming_video`, `…_outgoing`, `…_ongoing`, `…_answer`, `…_decline`, `…_hang_up` (Android 12+ labels the `CallStyle` buttons itself), and the drawable `cloudflare_realtime_call`.
-- **Mute** is the global microphone mute, as Telecom's own mute button sets it (Core-Telecom 1.0 has no per-call mute); it's cleared when the last call ends.
-- **Google Play:** declare the `phoneCall` foreground service type in the Play Console.
-
-### Screen share on Android
-
-`LocalParticipant.publishScreen()` (or `ScreenShareSource.start()`) takes no source on Android: the system's consent dialog is the picker. The share runs under a foreground service of type `mediaProjection` that this package provides, which Android 14+ requires.
-
-- **Manifest:** nothing to add. The package's manifest declares the service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PROJECTION` and `POST_NOTIFICATIONS` permissions, and the manifest merger brings them into your app. An app that never shares its screen can drop them with `tools:node="remove"`.
-- **Notification permission (Android 13+):** the service shows a "Sharing your screen" notification with a **Stop sharing** action. If `POST_NOTIFICATIONS` isn't granted, the package asks for it once per app launch, before the consent dialog. If the user says no, the share still works; the notification just isn't shown in the drawer. To ask at a better moment, request it yourself first (for example with `permission_handler`).
-- **Customizing the notification:** override the strings `cloudflare_realtime_screen_share_channel`, `…_title`, `…_text` and `…_stop`, or the drawable `cloudflare_realtime_screen_share`, in your app's resources.
-- **Google Play:** apps that use the `mediaProjection` foreground service type must declare it in the Play Console.
-- **Behaviour:** a cancelled consent dialog makes `start()` return `false` (and `publishScreen` throw a `MediaCaptureException`), as a cancelled browser picker does. A share stopped from the system's status-bar chip or the notification ends with `ScreenShareEndReason.userStopped`. Screen audio (`captureAudio`) isn't supported on Android and is ignored.
-
-### iOS screen share setup
-
-On iOS, a screen share is captured by a **Broadcast Upload Extension**, a separate target in your app that iOS runs while the user shares. `publishScreen()` (or `ScreenShareSource.start()`) takes no source: the system's broadcast picker opens, and the call completes once the user taps **Start Broadcast**. This package ships the extension's code as templates in [`ios/broadcast_extension/`](ios/broadcast_extension/) (MIT); you add the target once. The [example app](example/ios/) is set up this way.
-
-1. **Add the target.** In Xcode, File → New → Target → *Broadcast Upload Extension*, named for example `BroadcastExtension`, without a UI extension. Set its deployment target to iOS 15 or later, and its bundle identifier to your app's plus a suffix (`com.example.app.BroadcastExtension`). It must link **ReplayKit only**: never add Flutter or any plugin to it.
-2. **Use the templates.** Replace the generated `SampleHandler.swift` with this package's `SampleHandler.swift` and add `BroadcastUploader.swift` (copy them, or reference them from the package). Use its `Info.plist` and `BroadcastExtension.entitlements`, or copy their keys: `NSExtension` (point `com.apple.broadcast-services-upload`, principal class `$(PRODUCT_MODULE_NAME).SampleHandler`, mode `RPBroadcastProcessModeSampleBuffer`) and `RTCAppGroupIdentifier`. To give the extension the app's version, base its configurations on `Flutter/Debug.xcconfig` and `Flutter/Release.xcconfig`, as the app's are.
-3. **An App Group on both targets.** Add the *App Groups* capability to the app and to the extension, with the same group (`group.com.example.app`). The templates read it from a build setting, `CF_REALTIME_APP_GROUP`, which you can define in `Flutter/Debug.xcconfig` and `Flutter/Release.xcconfig` (before any `#include?` of your own); or write the group into the files directly.
-4. **The app's `Info.plist`:**
-
-   ```xml
-   <key>RTCAppGroupIdentifier</key>
-   <string>group.com.example.app</string>
-   <key>RTCScreenSharingExtension</key>
-   <string>com.example.app.BroadcastExtension</string>
-   <key>UIBackgroundModes</key>
-   <array>
-     <string>audio</string>
-   </array>
-   ```
-
-   The first two tell `flutter_webrtc` where the frames come from. `audio` keeps the app running while the user is in other apps, which is the point of sharing a screen; the app's call audio (a published microphone) keeps it active.
-5. **Embed the extension before "Thin Binary".** Xcode adds an *Embed Foundation Extensions* (or *Embed App Extensions*) build phase to the app target. In the app target's *Build Phases*, drag it above Flutter's **Thin Binary** script, or the build fails with a dependency cycle.
-6. **Signing:** both targets need the same team. With automatic signing, Xcode creates the extension's App ID, its profile and the App Group.
-
-**Checking the setup:** if something is missing, the share doesn't start: `start()` returns `false`, `publishScreen()` throws, and a `ScreenShareSetupException` says what's missing (`problems`, and `guidance` to log). It checks both `Info.plist` keys, the App Group container, an embedded broadcast extension with the bundle ID in `RTCScreenSharingExtension`, and the extension's `RTCAppGroupIdentifier`.
-
-**Behaviour:** the picker can't report a cancel, so a dismissed picker makes `start()` return `false` (and `publishScreen()` throw a `MediaCaptureException`) after `ScreenShareOptions.broadcastStartTimeout` (60 s). A broadcast the user stops from the status bar or Control Center ends with `ScreenShareEndReason.userStopped`. The extension sends at most `ScreenShareOptions.frameRate` frames per second, scaled by `ScreenShareOptions.broadcastScale` (0.5 by default), and repeats a still screen once a second. Screen audio (`captureAudio`) isn't supported on iOS and is ignored.
-
-See [design.md §10](docs/design.md#10-screen-share-by-platform) for the details.
+| Platform | Guide | The short version |
+|---|---|---|
+| Android | [doc/android.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/android.md) | Declare `CAMERA`, `RECORD_AUDIO` and `BLUETOOTH_CONNECT` (and request the last yourself). The foreground services for calls (`microphone`, `camera`, `phoneCall`) and screen share (`mediaProjection`) come from the package's manifest; declare their types in the Play Console. |
+| iOS | [doc/ios.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/ios.md) | Camera and microphone usage descriptions; the `audio` background mode (plus `voip` for CallKit and VoIP pushes); a Broadcast Upload Extension target, from the package's templates, for screen sharing, with an App Group and the same signing team on both targets. |
+| macOS | [doc/macos.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/macos.md) | The camera, audio-input and network-client entitlements, the usage descriptions, and the user's Screen Recording permission for sharing. |
+| Windows | [doc/windows.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/windows.md) | Visual Studio 2022 17.14+ with the C++ ATL component. Nothing to declare. |
+| Web | [doc/web.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md) | HTTPS, your web origins in the broker's CORS list, and a "tap to enable audio" button for the autoplay policy (`Room.audioPlaybackBlocked`, `Room.startAudio()`). |
 
 ## Testing your app
 
@@ -161,16 +184,19 @@ Widget tests (`testWidgets`, or anything under `fake_async`) run in fake time, a
 - Advance time with a duration, `await tester.pump(const Duration(milliseconds: 100))`, rather than relying on `pumpAndSettle()`.
 - Run calls that really wait, such as `join` and `room.leave()`, inside `await tester.runAsync(() => room.leave())`.
 - `ParticipantVideoView.defaultRendererFactory` swaps in a fake renderer, since `flutter_webrtc`'s plugin doesn't run in `flutter test`.
+- `CloudflareRealtime`'s `mediaBackend`, `createBrokerClient` and `connectSession` parameters replace the capture, the broker client and the SFU session with fakes; `InMemorySignaling` stands in for your signaling.
 
 ## Docs
 
 | | |
 |---|---|
-| [docs/design.md](docs/design.md) | Architecture, broker contract, simulcast, reconnection, DataChannels, platform notes |
-| [docs/cloudflare-sfu.md](docs/cloudflare-sfu.md) | What the SFU API provides, and its rules |
-| [docs/roadmap.md](docs/roadmap.md) | Milestones |
-| [docs/checkpoint.md](docs/checkpoint.md) | Runbook: demonstrate the week-6 checkpoint (calls on Windows, macOS and Android, simulcast layer switching, recovery from a network drop) with the example app |
+| [API reference](https://pub.dev/documentation/cloudflare_realtime/latest/) | Every public class and member |
+| [doc/](https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/doc) | Setup for each platform |
+| [docs/design.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md) | Architecture, the broker contract, simulcast, reconnection, DataChannels, platform notes |
+| [docs/cloudflare-sfu.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/cloudflare-sfu.md) | What the SFU API provides, and its rules |
+| [docs/roadmap.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/roadmap.md) | Milestones and what's verified |
+| [example/](https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/example) | The example app, and integration tests against a real broker |
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Code ported from partytracks keeps its ISC notice; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+MIT. See [LICENSE](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/LICENSE). Code ported from [partytracks](https://github.com/cloudflare/partykit/tree/main/packages/partytracks) keeps its ISC notice; see [THIRD_PARTY_NOTICES.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/THIRD_PARTY_NOTICES.md).

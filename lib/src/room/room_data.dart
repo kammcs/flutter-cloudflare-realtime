@@ -68,8 +68,9 @@ class RoomData {
   /// [profile] must match the publisher's. With [canReply], this
   /// participant may send back on the channel (only one subscriber per
   /// channel can). When [participant] moves to a new session (they
-  /// reconnected), the subscription follows them; [RemoteDataSubscription
-  /// .messages] carries on. See [SfuSession.subscribeDataChannel].
+  /// reconnected), the subscription follows them and
+  /// [RemoteDataSubscription.messages] carries on. See
+  /// [SfuSession.subscribeDataChannel].
   ///
   /// Throws like [SfuSession.subscribeDataChannel].
   Future<RemoteDataSubscription> subscribe(

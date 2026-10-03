@@ -95,11 +95,12 @@ class SfuSessionOptions {
 /// [RemoteTrackSubscription]s to it with [republish] and [resubscribe].
 class SfuSession {
   SfuSession._({
-    required this._broker,
+    required BrokerClient broker,
     required this.sessionId,
     required PeerConnection peerConnection,
     required this.options,
-  }) : _pc = peerConnection {
+  }) : _broker = broker,
+       _pc = peerConnection {
     _pushes = BatchDispatcher(
       (batch) => _enqueue(batch, _runPushBatch, requireAlive: true),
     );
