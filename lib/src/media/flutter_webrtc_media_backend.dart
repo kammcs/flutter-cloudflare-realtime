@@ -23,7 +23,11 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
 
   @override
   Future<rtc.MediaStream> getUserMedia(Map<String, dynamic> constraints) async {
+    final platform = this.platform;
     if (audioInputToSelect(constraints, platform) case final input?) {
+      // Before the selection, so a re-selection of the previous input
+      // can't land after it.
+      if (platform == MediaPlatform.macos) _macInputReselector.selected(input);
       await rtc.Helper.selectAudioInput(input);
     }
     return rtc.navigator.mediaDevices.getUserMedia(constraints);
@@ -205,17 +209,25 @@ class AndroidScreenCaptureService implements ScreenCaptureServiceBackend {
 /// The microphone to select before `getUserMedia` with [constraints] on
 /// [platform], or `null` when the request picks it by itself.
 ///
-/// The Android plugin reads the microphone named in the constraints
-/// (`optional: [{sourceId: id}]`) only to report it back in the track's
-/// settings: it captures from whichever input was selected last. Only
-/// `Helper.selectAudioInput` changes it. Darwin, Windows and browsers
-/// select it from the constraints.
+/// The Android and macOS plugins read the microphone named in the
+/// constraints (`optional: [{sourceId: id}]`) only to report it back in
+/// the track's settings: they capture from whichever input was selected
+/// last (on macOS, libwebrtc's one audio device module per process, which
+/// starts on the system default). Only `Helper.selectAudioInput` changes
+/// it. The Darwin plugin means to select it from the constraints on
+/// macOS, but behind `#if !defined(TARGET_OS_IPHONE)`, which is never
+/// true on an Apple platform (`TARGET_OS_IPHONE` is defined as 0 on
+/// macOS). Windows and browsers select it from the constraints. iOS is
+/// left alone: there `selectAudioInput` sets the audio session's preferred
+/// input, which moves the call's audio route (docs/design.md §4.6).
 @visibleForTesting
 String? audioInputToSelect(
   Map<String, dynamic> constraints,
   MediaPlatform platform,
 ) {
-  if (platform != MediaPlatform.android) return null;
+  if (platform != MediaPlatform.android && platform != MediaPlatform.macos) {
+    return null;
+  }
   final audio = constraints['audio'];
   if (audio is! Map) return null;
   final optional = audio['optional'];
@@ -225,6 +237,72 @@ String? audioInputToSelect(
     if (id is String && id.isNotEmpty) return id;
   }
   return null;
+}
+
+final _macInputReselector = MacInputReselector(rtc.Helper.selectAudioInput);
+
+/// Selects the microphone chosen on macOS again a few times after the
+/// switch, because libwebrtc's audio device module sometimes undoes it.
+///
+/// The module (WebRTC-SDK's `AudioEngineDevice`) goes back to the system
+/// default input whenever it sees the device list change, and rebuilding
+/// its voice-processing graph for the new input can change that list: on a
+/// MacBook, 1 switch in 5 to 1 in 2 logged `Setting input device: MacBook
+/// Pro Microphone`, then `Did update devices` and `Using default input
+/// device` within a second or two (docs/design.md §4.5). `flutter_webrtc`
+/// doesn't pass that event on, so the backend selects the input again
+/// after each of [delays]. Selecting the input the module already uses
+/// does nothing, so this costs nothing when the switch held.
+///
+/// The system default (`default`) needs nothing, and a newer selection
+/// cancels the pending ones. A failure (the device is gone) is ignored:
+/// the source moves to another device, which is then selected.
+@visibleForTesting
+class MacInputReselector {
+  /// Creates a reselector that selects inputs with [select].
+  MacInputReselector(
+    this._select, {
+    this.delays = const [
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+    ],
+  });
+
+  final Future<void> Function(String deviceId) _select;
+
+  /// When to select the input again, counted from [selected].
+  final List<Duration> delays;
+
+  final List<Timer> _timers = [];
+
+  /// Records that [deviceId] is being selected for a capture, cancels the
+  /// pending selections of the previous input, and schedules selecting
+  /// [deviceId] again.
+  void selected(String deviceId) {
+    cancel();
+    if (deviceId == 'default') return;
+    for (final delay in delays) {
+      _timers.add(
+        Timer(delay, () {
+          unawaited(
+            _select(deviceId).catchError((Object _) {
+              // Gone: the source moves to another device and selects it.
+            }),
+          );
+        }),
+      );
+    }
+  }
+
+  /// Cancels the pending selections.
+  void cancel() {
+    for (final timer in _timers) {
+      timer.cancel();
+    }
+    _timers.clear();
+  }
 }
 
 /// A [MediaDevice] from one entry of `flutter_webrtc`'s device list, or
