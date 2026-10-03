@@ -263,10 +263,10 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 
 | # | Scenario | Win ↔ Mac | Win ↔ Android | Mac ↔ Android | 4-person |
 |---|---|---|---|---|---|
-| 1a | Join, see and hear each other | | | | |
-| 1b | Mute / camera off and on | | | | |
-| 1c | Screen share shown on the stage, stopped cleanly (desktop sharer) | | | | n/a |
-| 1d | Leave and rejoin | | | | |
+| 1a | Join, see and hear each other | | Pass (Windows mic: wrong input picked among many devices; see notes) | | |
+| 1b | Mute / camera off and on | | Pass (Android local preview flickers; see notes) | | |
+| 1c | Screen share shown on the stage, stopped cleanly (desktop sharer) | | Pass | | n/a |
+| 1d | Leave and rejoin | | Pass (rejoin in ~6.5 s, fresh session) | | |
 | 1e | 5 minutes stable | n/a | n/a | n/a | |
 
 | # | Layer switching, seen on | Windows | macOS | Android |
@@ -284,6 +284,13 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 | 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | | | |
 
 The checkpoint passes when every applicable cell passes.
+
+**Run notes.**
+
+- **2026-10-03, Win ↔ Android** (commit `300ea41`; Windows 11 with the example in debug, Pixel 10 with Android 16 over `adb reverse`; dev server on Windows). Media and screen share worked both ways.
+  - On a Windows machine with many audio inputs, the call used an input the user doesn't use, and there was no way to pick another from the call screen.
+  - The Pixel's own camera preview flickered to the background every few seconds, like a rebuilt widget. Windows received the Pixel's video without gaps, so only the local preview was affected.
+  - Fixes are tracked in the CHANGELOG.
 
 ## 7. Integration tests against the dev server
 
