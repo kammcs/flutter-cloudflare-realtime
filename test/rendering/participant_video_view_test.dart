@@ -1,6 +1,8 @@
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/rendering.dart' show RenderFittedBox;
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:flutter_webrtc/flutter_webrtc.dart' show MediaStream;
 
 import '../support/room_harness.dart';
@@ -34,6 +36,45 @@ class _FakeRenderer implements VideoRenderer {
 
   @override
   Future<void> dispose() async => log.add('dispose');
+}
+
+/// Renders as [FlutterWebrtcVideoRenderer] does, with flutter_webrtc's own
+/// RTCVideoView, for a frame of [width]×[height] as the native side reports
+/// it. Nothing is initialized, so no texture is drawn, but the view lays
+/// out as it does with real video.
+class _FrameRenderer implements VideoRenderer {
+  _FrameRenderer(double width, double height) {
+    _renderer.value = rtc.RTCVideoValue(width: width, height: height);
+  }
+
+  final rtc.RTCVideoRenderer _renderer = rtc.RTCVideoRenderer();
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> setStream(MediaStream? stream) async {}
+
+  @override
+  Widget build(
+    BuildContext context, {
+    required VideoViewFit fit,
+    required bool mirror,
+    required FilterQuality filterQuality,
+  }) => rtc.RTCVideoView(
+    _renderer,
+    mirror: mirror,
+    filterQuality: filterQuality,
+    objectFit: switch (fit) {
+      VideoViewFit.contain =>
+        rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+      VideoViewFit.cover =>
+        rtc.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+    },
+  );
+
+  @override
+  Future<void> dispose() => _renderer.dispose();
 }
 
 class _RecordingReporter implements LayerDemandReporter {
@@ -102,6 +143,11 @@ Widget _frame(Widget child) => Directionality(
 );
 
 const _cam = TrackInfo(kind: TrackKind.video, source: TrackSource.camera);
+
+Matcher _near(Offset expected) => predicate<Offset>(
+  (o) => (o - expected).distance < 0.5,
+  'within 0.5 of $expected',
+);
 
 void main() {
   final log = <String>[];
@@ -242,6 +288,80 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await _drive(tester, camera.dispose());
     });
+  });
+
+  group('fit', () {
+    // A 16:9 cell at an offset, as in a gallery, and the extreme frames
+    // seen in calls: a phone's portrait screen and a desktop's.
+    const cell = Rect.fromLTWH(100, 50, 480, 270);
+    Widget inCell(Widget view) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Stack(
+        children: [Positioned.fromRect(rect: cell, child: view)],
+      ),
+    );
+
+    for (final (name, frame) in [
+      ('portrait 1080×2424', const Size(1080, 2424)),
+      ('landscape 1920×1080', const Size(1920, 1080)),
+      ('ultra-wide 3440×1440', const Size(3440, 1440)),
+    ]) {
+      testWidgets('a $name frame letterboxes inside the view with contain, '
+          'and is clipped to it with cover', (tester) async {
+        final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+        await _drive(tester, camera.enable());
+        for (final fit in VideoViewFit.values) {
+          await tester.pumpWidget(
+            inCell(
+              ParticipantVideoView.local(
+                camera,
+                fit: fit,
+                mirror: false,
+                rendererFactory: () =>
+                    _FrameRenderer(frame.width, frame.height),
+              ),
+            ),
+          );
+          await _settle(tester);
+          expect(tester.getRect(find.byType(ParticipantVideoView)), cell);
+          final picture = tester.getRect(
+            find.descendant(
+              of: find.byType(rtc.RTCVideoView),
+              matching: find.byType(Transform),
+            ),
+          );
+          expect(
+            picture.width / picture.height,
+            moreOrLessEquals(frame.width / frame.height, epsilon: 0.01),
+            reason: '$fit keeps the aspect ratio',
+          );
+          expect(picture.center, _near(cell.center), reason: '$fit centers');
+          final fitted = tester.renderObject<RenderFittedBox>(
+            find.byType(FittedBox),
+          );
+          switch (fit) {
+            case VideoViewFit.contain:
+              // Within the cell, touching two opposite sides.
+              expect(cell.inflate(0.5).contains(picture.topLeft), isTrue);
+              expect(cell.inflate(0.5).contains(picture.bottomRight), isTrue);
+              expect(
+                (picture.width - cell.width).abs() < 0.5 ||
+                    (picture.height - cell.height).abs() < 0.5,
+                isTrue,
+              );
+            case VideoViewFit.cover:
+              // Covers the cell; the overflow is clipped at the view.
+              expect(picture.inflate(0.5).contains(cell.topLeft), isTrue);
+              expect(picture.inflate(0.5).contains(cell.bottomRight), isTrue);
+              expect(fitted.size, cell.size);
+              expect(fitted.clipBehavior, isNot(Clip.none));
+          }
+        }
+        await tester.pumpWidget(const SizedBox());
+        await _settle(tester);
+        await _drive(tester, camera.dispose());
+      });
+    }
   });
 
   group('remote', () {

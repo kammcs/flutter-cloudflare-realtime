@@ -197,8 +197,10 @@ class DeviceSettingsSheet extends StatelessWidget {
           (_, DeviceMediaSource(:final deviceList)) => deviceList,
           _ => null,
         };
+        // Scrolls on short screens (a phone in landscape) instead of
+        // overflowing.
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,

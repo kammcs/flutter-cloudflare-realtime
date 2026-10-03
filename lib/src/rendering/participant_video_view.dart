@@ -93,6 +93,11 @@ class ParticipantVideoView extends StatefulWidget {
   final bool subscribe;
 
   /// How the video fills the view. Default [VideoViewFit.cover].
+  ///
+  /// With [VideoViewFit.contain] (for screen shares), the frame is
+  /// letterboxed in the middle of the view and the bars are transparent:
+  /// put a background behind the view, or a portrait share in a wide tile
+  /// reads as a strip floating beside the tile's label.
   final VideoViewFit fit;
 
   /// Whether to mirror the video horizontally. Defaults to `true` for a

@@ -47,8 +47,9 @@ Future<void> showAudioRoutesSheet(BuildContext context, Room room) =>
           builder: (context, routes) => StreamBuilder<AudioRoute?>(
             stream: room.audioRouteChanges,
             initialData: room.currentAudioRoute,
-            builder: (context, current) => Column(
-              mainAxisSize: MainAxisSize.min,
+            builder: (context, current) => ListView(
+              // Sized to its routes; scrolls when they don't fit.
+              shrinkWrap: true,
               children: [
                 for (final route in routes.data ?? const <AudioRoute>[])
                   ListTile(
