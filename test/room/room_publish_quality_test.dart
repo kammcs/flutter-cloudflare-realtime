@@ -490,6 +490,96 @@ void main() {
       });
     });
 
+    group('in the orientation the layers are sent (iOS)', () {
+      // An iPhone held upright: its media-source says 1280x720, while the
+      // capturer's rotation makes the encoded layers portrait.
+
+      test('turns the media-source size while the layers are paused or '
+          'bandwidth-limited', () {
+        _run((async, h, alice, bob, pump) {
+          final published = _publishCamera(alice, pump);
+          // Before a layer reports a size: the media-source as it is.
+          h.pcOf(alice).stats = stats(published, [], width: 1280, height: 720);
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 1280);
+          expect(published.simulcast!.height, 720);
+
+          // Bob pulls c: a and b paused (keeping their last size), c
+          // limited by bandwidth (the quality scaler shrank it).
+          h.pcOf(alice).stats = stats(
+            published,
+            [
+              layer('a', 720, 1280, active: false),
+              layer('b', 360, 640, active: false),
+              layer('c', 135, 240, reason: 'bandwidth'),
+            ],
+            width: 1280,
+            height: 720,
+          );
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 720);
+          expect(published.simulcast!.height, 1280);
+          expect(bob.participant('alice')!.camera!.simulcast!.height, 1280);
+
+          // The start of a call: every layer limited by bandwidth.
+          h.pcOf(alice).stats = stats(
+            published,
+            [
+              layer('a', 360, 640, reason: 'bandwidth'),
+              layer('b', 180, 320, reason: 'bandwidth'),
+              layer('c', 90, 160, reason: 'bandwidth'),
+            ],
+            width: 1280,
+            height: 720,
+          );
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 720);
+          expect(published.simulcast!.height, 1280);
+        });
+      });
+
+      test('follows the lowest sending layer, not a paused one', () {
+        _run((async, h, alice, bob, pump) {
+          final published = _publishCamera(alice, pump);
+          // The phone was turned to landscape while a was paused: a keeps
+          // its portrait size, c sends landscape.
+          h.pcOf(alice).stats = stats(
+            published,
+            [
+              layer('a', 720, 1280, active: false),
+              layer('b', 640, 360, reason: 'bandwidth'),
+              layer('c', 320, 180, reason: 'bandwidth'),
+            ],
+            width: 1280,
+            height: 720,
+          );
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 1280);
+          expect(published.simulcast!.height, 720);
+        });
+      });
+
+      test('a sending layer still gives the size', () {
+        _run((async, h, alice, bob, pump) {
+          final published = _publishCamera(alice, pump);
+          h.pcOf(alice).stats = stats(
+            published,
+            [layer('a', 720, 1280), layer('b', 360, 640), layer('c', 180, 320)],
+            width: 1280,
+            height: 720,
+          );
+          async.elapse(const Duration(seconds: 3));
+          pump();
+          expect(published.simulcast!.width, 720);
+          expect(published.simulcast!.height, 1280);
+        });
+      });
+    });
+
     group('without a size in the media-source (Windows)', () {
       test('is read from the largest sending layer, scaled back up', () {
         _run((async, h, alice, bob, pump) {

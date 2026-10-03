@@ -11,7 +11,10 @@
 //     room reports a RoomErrorEvent and the rest runs as the baseline.
 // (b) Announcement: the announced simulcast size is the size the encoder
 //     gets (what layer a sends, which follows libwebrtc's CPU adaptation;
-//     else the sender's media-source), portrait on a phone held upright.
+//     else the sender's media-source size, in either orientation), and
+//     throughout the test it has the aspect of the layers Alice is
+//     encoding (portrait on a phone held upright; an iPhone's media-source
+//     is landscape even then), apart from a few seconds after a change.
 // (c) Codec: with RoomOptions.videoCodec H.264, Bob decodes H.264 (the
 //     codec in Bob's stats), and the encoder in use is logged (hardware or
 //     not). Windows never sends H.264: it sends VP8 and reports a
@@ -21,6 +24,7 @@
 // for the settings (including the dev server's X-Dev-User) and a command
 // line. The test never prints them.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
@@ -45,6 +49,10 @@ const _switchTimeout = Duration(seconds: 20);
 const _newPullTimeout = Duration(seconds: 10);
 
 const _pauseDelay = Duration(seconds: 3);
+
+/// How long the announced size may have another aspect than the layers
+/// Alice encodes: the room re-reads it every 3 s.
+const _aspectGrace = Duration(seconds: 5);
 
 /// `--dart-define=CF_QUALITY_PAUSING=false` runs (a) without pausing, as a
 /// baseline for the switch-up time.
@@ -110,23 +118,31 @@ void main() {
         _log('Windows: no layer pausing (${errors.first.error})');
       }
       await published.publication.whenSending().timeout(_timeout);
+      final aspect = _AspectWatch(alice, published)..start();
+      addTearDown(aspect.stop);
       final cam = await _remoteCamera(bob, alice);
 
-      // (b) The announced size is what the encoder gets.
-      var sent = (0, 0, 'none');
+      // (b) The announced size is what the encoder gets, in the aspect of
+      // the layers it encodes.
+      var sent = (0, 0, 'none', false);
       final announced = await _poll(
         () async {
           sent = _sentSize(await alice.session.getStats());
           return published.simulcast;
         },
-        (s) => sent.$1 > 0 && s!.width == sent.$1 && s.height == sent.$2,
+        (s) =>
+            sent.$1 > 0 &&
+            (s!.width == sent.$1 && s.height == sent.$2 ||
+                sent.$4 && s.width == sent.$2 && s.height == sent.$1) &&
+            aspect.matches(s),
         'the announced size to match what the encoder gets',
       );
       _log(
         'sent ${sent.$1}x${sent.$2} (${sent.$3}), announced '
         '${announced!.width}x${announced.height} '
         '(the camera reported ${published.mediaSource.track?.track.getSettings()['width']}x'
-        '${published.mediaSource.track?.track.getSettings()['height']})',
+        '${published.mediaSource.track?.track.getSettings()['height']}); '
+        'encoding ${aspect.sending}',
       );
       await _poll(
         () async => cam.simulcast,
@@ -151,9 +167,22 @@ void main() {
         );
         _log('a and b paused after ${watch.elapsedMilliseconds} ms');
         final before = _outbound(await alice.session.getStats());
-        await Future<void>.delayed(const Duration(seconds: 2));
+        // Longer than the room's 3 s size check: the announcement with only
+        // c sending (an iPhone's media-source is landscape; c, often limited
+        // by bandwidth then, portrait).
+        await Future<void>.delayed(const Duration(seconds: 4));
         final after = _outbound(await alice.session.getStats());
-        _log('paused: $after');
+        _log(
+          'paused: $after; announced '
+          '${published.simulcast!.width}x${published.simulcast!.height}',
+        );
+        expect(
+          aspect.matches(published.simulcast!),
+          isTrue,
+          reason:
+              'announced ${published.simulcast} while encoding '
+              '${aspect.sending}',
+        );
         for (final rid in ['a', 'b']) {
           final layer = after[rid]!;
           expect(
@@ -242,6 +271,9 @@ void main() {
       );
       expect(alice.session.failure, isNull);
       expect(bob.session.failure, isNull);
+      aspect.stop();
+      _log('aspect: $aspect');
+      expect(aspect.failure, isNull);
     },
     skip: settings.skip,
     timeout: const Timeout(Duration(minutes: 3)),
@@ -350,6 +382,7 @@ class _Video {
     this.framesEncoded = 0,
     this.framesDecoded = 0,
     this.active,
+    this.limit,
     this.encoder,
     this.decoder,
     this.codecId,
@@ -361,6 +394,9 @@ class _Video {
   final int framesEncoded;
   final int framesDecoded;
   final bool? active;
+
+  /// The outbound layer's `qualityLimitationReason`.
+  final String? limit;
   final String? encoder;
   final String? decoder;
   final String? codecId;
@@ -370,6 +406,7 @@ class _Video {
   @override
   String toString() =>
       '${rid ?? '-'}: ${width}x$height, active $active, '
+      '${limit == null ? '' : 'limited by $limit, '}'
       'encoded $framesEncoded, decoded $framesDecoded';
 }
 
@@ -403,14 +440,17 @@ Map<String, _Video> _outbound(List<StatsReport> reports) => {
         height: _int(r.values['frameHeight']),
         framesEncoded: _int(r.values['framesEncoded']),
         active: r.values['active'] as bool?,
+        limit: r.values['qualityLimitationReason'] as String?,
         encoder: r.values['encoderImplementation'] as String?,
       ),
 };
 
-/// The size the encoder gets, and where it comes from: what the full-size
-/// layer `a` encodes (after libwebrtc's CPU adaptation), unless it is paused
-/// or limited by `bandwidth`; else the (first) video media-source's size.
-(int, int, String) _sentSize(List<StatsReport> reports) {
+/// The size the encoder gets, where it comes from, and whether its
+/// orientation is unknown: what the full-size layer `a` encodes (after
+/// libwebrtc's CPU adaptation), unless it is paused or limited by
+/// `bandwidth`; else the (first) video media-source's size, which is
+/// landscape on an iPhone held upright ([_AspectWatch] checks the aspect).
+(int, int, String, bool) _sentSize(List<StatsReport> reports) {
   for (final r in reports) {
     if (r.type != 'media-source' || r.values['kind'] != 'video') continue;
     final width = _int(r.values['width']);
@@ -432,11 +472,103 @@ Map<String, _Video> _outbound(List<StatsReport> reports) => {
         _int(v['frameWidth']),
         _int(v['frameHeight']),
         'layer a, limited by ${v['qualityLimitationReason']}; $source',
+        false,
       );
     }
-    if (width > 0) return (width, height, source);
+    if (width > 0) return (width, height, source, true);
   }
-  return (0, 0, 'none');
+  return (0, 0, 'none', false);
+}
+
+/// Checks, every 500 ms, that the size [published] announces has the
+/// aspect of the layers [room] encodes (their `framesEncoded` grew since
+/// the last sample): a portrait announcement for portrait layers. A
+/// mismatch for longer than [_aspectGrace] is a [failure].
+class _AspectWatch {
+  _AspectWatch(this.room, this.published);
+
+  final Room room;
+  final LocalMediaPublication published;
+  Timer? _timer;
+  bool _reading = false;
+  Map<String, int> _encoded = const {};
+
+  /// The layers encoding at the last sample.
+  List<_Video> sending = const [];
+
+  int _samples = 0;
+  int _mismatches = 0;
+  DateTime? _since;
+  Duration _longest = Duration.zero;
+
+  /// The first mismatch that outlasted [_aspectGrace], or `null`.
+  String? failure;
+
+  void start() {
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      if (_reading) return;
+      _reading = true;
+      try {
+        _sample(await room.session.getStats());
+      } catch (_) {
+        // A session being replaced: the next sample.
+      } finally {
+        _reading = false;
+      }
+    });
+  }
+
+  void _sample(List<StatsReport> reports) {
+    final layers = _outbound(reports);
+    sending = [
+      for (final layer in layers.values)
+        if (layer.width > 0 &&
+            layer.height > 0 &&
+            layer.active != false &&
+            layer.framesEncoded > (_encoded[layer.rid ?? '-'] ?? 1 << 62))
+          layer,
+    ];
+    _encoded = {for (final e in layers.entries) e.key: e.value.framesEncoded};
+    final announced = published.simulcast;
+    if (sending.isEmpty || announced == null) return;
+    _samples++;
+    if (matches(announced)) {
+      _since = null;
+      return;
+    }
+    _mismatches++;
+    final now = DateTime.now();
+    final since = _since ??= now;
+    final lasted = now.difference(since);
+    if (lasted > _longest) _longest = lasted;
+    if (lasted > _aspectGrace && failure == null) {
+      failure =
+          'announced ${announced.width}x${announced.height} for '
+          '${lasted.inMilliseconds} ms while encoding $sending';
+    }
+  }
+
+  /// Whether [announced] has the aspect of every layer encoding at the last
+  /// sample (within 10 %, for the encoder's rounding); false before one.
+  bool matches(SimulcastInfo announced) {
+    final (width, height) = (announced.width, announced.height);
+    if (width == null || height == null || height == 0) return false;
+    return sending.isNotEmpty &&
+        sending.every((layer) {
+          final ratio = width * layer.height / (height * layer.width);
+          return ratio > 0.9 && ratio < 1.1;
+        });
+  }
+
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  String toString() =>
+      '$_samples samples, $_mismatches with another aspect, longest '
+      '${_longest.inMilliseconds} ms${failure == null ? '' : '; $failure'}';
 }
 
 String? _codecOf(List<StatsReport> reports, String? codecId) {
