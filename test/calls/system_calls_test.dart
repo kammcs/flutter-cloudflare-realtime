@@ -564,6 +564,33 @@ void main() {
       expect(events.whereType<SystemCallAddedEvent>(), hasLength(2));
     });
 
+    test('a VoIP cancel push (iOS) ends the pushed call with its reason; '
+        'one for a call Dart never had changes nothing', () async {
+      final events = <SystemCallEvent>[];
+      calls().events.listen(events.add);
+      await calls().configure();
+      // As the native side buffers them before Dart listens: the call, then
+      // its cancel.
+      system
+        ..system(
+          const CallReportedSignal(SystemCallInfo(id: _id, handle: _ada)),
+        )
+        ..system(
+          const CallEndedSignal(_id, SystemCallEndReason.answeredElsewhere),
+        )
+        ..system(const CallEndedSignal(_id2, SystemCallEndReason.remoteEnded));
+      await _settle();
+      expect(events.map((e) => e.runtimeType), [
+        SystemCallAddedEvent,
+        SystemCallEndedEvent,
+      ]);
+      final ended = events.last as SystemCallEndedEvent;
+      expect(ended.call.id, _id);
+      expect(ended.reason, SystemCallEndReason.answeredElsewhere);
+      expect(ended.call.endReason, SystemCallEndReason.answeredElsewhere);
+      expect(calls().calls, isEmpty);
+    });
+
     test(
       'a refused or missing native side: the calls are kept in Dart',
       () async {

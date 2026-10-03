@@ -145,14 +145,38 @@ struct SystemCallRecord: Equatable {
 /// A VoIP push's payload, read as a call (docs/design.md §4.8): the keys
 /// `id` (a UUID), `handle`, and optionally `handleType`, `displayName` and
 /// `video`; every other key except `aps` becomes the call's `payload`.
+///
+/// A push with the key `ended` is a **cancel**: it stops the call `id`
+/// (the caller hung up, another device answered...), and needs no
+/// `handle`. Its value is a `SystemCallEndReason` name that CallKit can be
+/// told (`remoteEnded`, `unanswered`, `failed`, `answeredElsewhere`,
+/// `declinedElsewhere`); anything else ends the call as `remoteEnded`.
 struct VoipPushCall {
   /// The call to report. For a malformed payload, a placeholder (a new
   /// UUID, the handle "unknown") that is reported and ended at once.
   let call: SystemCallRecord
   /// Whether the payload lacked a call: the placeholder is ended as `failed`.
+  /// Never for a cancel.
   let malformed: Bool
+  /// For a cancel (the `ended` key), why the call ended; `nil` for a push
+  /// that rings.
+  let endReason: SystemCallEndReason?
+  /// For a cancel, the `ended` value when it isn't a reason a push can
+  /// carry (`endReason` is then `remoteEnded`).
+  let unknownEndReason: Any?
 
-  static let callKeys: Set<String> = ["id", "handle", "handleType", "displayName", "video"]
+  static let callKeys: Set<String> = [
+    "id", "handle", "handleType", "displayName", "video", "ended",
+  ]
+
+  /// The reasons a cancel can carry: those CallKit is told (ended
+  /// elsewhere), not `local` or `declined` (ended on this device).
+  static func pushEndReason(_ value: Any?) -> SystemCallEndReason? {
+    guard let name = value as? String, let reason = SystemCallEndReason(rawValue: name),
+      reason.callKitReason != nil
+    else { return nil }
+    return reason
+  }
 
   init(payload: [AnyHashable: Any]) {
     var rest: [String: Any] = [:]
@@ -164,10 +188,19 @@ struct VoipPushCall {
     let handle = payload["handle"] as? String
     let handleType = payload["handleType"] as? String ?? "generic"
     let displayName = payload["displayName"] as? String
-    malformed = id == nil || handle == nil || handle!.isEmpty
+    if let ended = payload["ended"], !(ended is NSNull) {
+      let known = Self.pushEndReason(ended)
+      endReason = known ?? .remoteEnded
+      unknownEndReason = known == nil ? ended : nil
+    } else {
+      endReason = nil
+      unknownEndReason = nil
+    }
+    let validHandle = handle.flatMap { $0.isEmpty ? nil : $0 }
+    malformed = endReason == nil && (id == nil || validHandle == nil)
     call = SystemCallRecord(
       uuid: id ?? UUID(),
-      handle: malformed ? "unknown" : handle!,
+      handle: malformed ? "unknown" : validHandle ?? "unknown",
       handleType: SystemCallRecord.handleTypes.contains(handleType) ? handleType : "generic",
       displayName: displayName,
       video: Self.bool(payload["video"]),

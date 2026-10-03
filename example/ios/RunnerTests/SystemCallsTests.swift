@@ -197,6 +197,59 @@ final class VoipPushPayloadTests: XCTestCase {
     XCTAssertNotEqual(
       VoipPushCall(payload: [:]).call.uuid, VoipPushCall(payload: [:]).call.uuid)
   }
+
+  func testARingingPushIsNoCancel() {
+    let push = VoipPushCall(payload: ["id": callId, "handle": "ada", "ended": NSNull()])
+    XCTAssertNil(push.endReason)
+    XCTAssertNil(push.unknownEndReason)
+    XCTAssertFalse(push.malformed)
+    XCTAssertTrue(push.call.payload.isEmpty, "`ended` never leaks into the payload")
+  }
+
+  func testCancelPayload() {
+    let push = VoipPushCall(payload: [
+      "aps": [:], "id": callId.uppercased(), "ended": "answeredElsewhere", "room": "r1",
+    ])
+    XCTAssertEqual(push.endReason, .answeredElsewhere)
+    XCTAssertNil(push.unknownEndReason)
+    XCTAssertFalse(push.malformed, "a cancel needs no handle")
+    XCTAssertEqual(push.call.id, callId)
+    XCTAssertEqual(push.call.handle, "unknown")
+    XCTAssertEqual(Set(push.call.payload.keys), ["room"])
+    // With the call's fields, the placeholder looks like the call.
+    let full = VoipPushCall(payload: [
+      "id": callId, "handle": "ada", "displayName": "Ada", "ended": "unanswered",
+    ])
+    XCTAssertEqual(full.call.handle, "ada")
+    XCTAssertEqual(full.call.displayName, "Ada")
+    // Without an ID, a cancel names no call: a fresh UUID, never a real one.
+    let anonymous = VoipPushCall(payload: ["ended": "remoteEnded"])
+    XCTAssertFalse(anonymous.malformed)
+    XCTAssertEqual(anonymous.endReason, .remoteEnded)
+  }
+
+  func testCancelReasons() {
+    let reasons: [String: CXCallEndedReason] = [
+      "remoteEnded": .remoteEnded, "unanswered": .unanswered, "failed": .failed,
+      "answeredElsewhere": .answeredElsewhere, "declinedElsewhere": .declinedElsewhere,
+    ]
+    for (name, callKit) in reasons {
+      let push = VoipPushCall(payload: ["id": callId, "ended": name])
+      XCTAssertEqual(push.endReason?.rawValue, name)
+      XCTAssertEqual(push.endReason?.callKitReason, callKit, name)
+      XCTAssertNil(push.unknownEndReason, name)
+    }
+  }
+
+  func testCancelWithAnUnknownReasonEndsAsRemoteEnded() {
+    // `local` and `declined` happen on this device, not in a push.
+    for value: Any in ["local", "declined", "hungUp", "", "REMOTEENDED", true, 3] {
+      let push = VoipPushCall(payload: ["id": callId, "ended": value])
+      XCTAssertEqual(push.endReason, .remoteEnded, "\(value)")
+      XCTAssertNotNil(push.unknownEndReason, "\(value)")
+      XCTAssertFalse(push.malformed)
+    }
+  }
 }
 
 final class SystemCallRegistryTests: XCTestCase {
@@ -546,6 +599,122 @@ final class SystemCallsHandlerTests: XCTestCase {
     XCTAssertNotNil(calls.provider, "a push before configure uses the defaults")
     XCTAssertTrue(calls.registry.isEmpty)
     XCTAssertTrue(calls.events.buffer.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 1)
+  }
+
+  private func push(_ calls: SystemCalls, _ payload: [AnyHashable: Any]) {
+    let done = expectation(description: "push completion")
+    calls.reportPush(payload) { done.fulfill() }
+    wait(for: [done], timeout: 10)
+  }
+
+  /// Reports an incoming call the way the app's signaling does, or skips
+  /// where CallKit refuses one.
+  private func reportRinging(_ calls: SystemCalls) throws {
+    if let error = invoke(calls, "reportIncomingCall", dartCall(id: id)) as? FlutterError {
+      throw XCTSkip("CallKit refused an incoming call here: \(error.code)")
+    }
+  }
+
+  /// No call is left ringing or going in CallKit: the placeholders ended.
+  private func waitForCallKitIdle() throws {
+    let observer = CXCallObserver()
+    try waitFor { observer.calls.allSatisfy { $0.hasEnded } }
+  }
+
+  func testCancelPushEndsAKnownCallWithItsReason() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    try reportRinging(calls)
+
+    push(calls, ["id": id, "ended": "answeredElsewhere"])
+    XCTAssertEqual(received.count, 1)
+    XCTAssertEqual(received.first?["event"] as? String, "ended")
+    XCTAssertEqual(received.first?["id"] as? String, id)
+    XCTAssertEqual(received.first?["reason"] as? String, "answeredElsewhere")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 0, "the call itself was the report")
+    XCTAssertTrue(calls.wasCancelled(UUID(uuidString: id)!))
+
+    // The same cancel again: reported (iOS requires it) and ignored.
+    push(calls, ["id": id, "ended": "answeredElsewhere"])
+    XCTAssertEqual(received.count, 1)
+    XCTAssertEqual(calls.placeholdersReported, 1)
+    // The call's own push, late or pushed again: it doesn't ring.
+    push(calls, ["id": id, "handle": "ada"])
+    XCTAssertEqual(received.count, 1, "no `reported` event")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 2)
+    try waitForCallKitIdle()
+  }
+
+  func testCancelPushForAPushedCallBeforeDartListens() throws {
+    let calls = make()
+    push(calls, ["id": id, "handle": "ada", "room": "r1"])
+    if calls.registry.isEmpty { throw XCTSkip("CallKit refused the pushed call here") }
+    push(calls, ["id": id, "ended": "unanswered"])
+    // Both wait for Dart, in order: the call arrives, then ends.
+    XCTAssertEqual(calls.events.buffer.map { $0["event"] as? String }, ["reported", "ended"])
+    XCTAssertEqual(calls.events.buffer.last?["id"] as? String, id)
+    XCTAssertEqual(calls.events.buffer.last?["reason"] as? String, "unanswered")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 0)
+  }
+
+  func testCancelPushForAnUnknownCallDoesNotRing() throws {
+    // The cancel launched the app: before configure, with no call.
+    let calls = make()
+    push(calls, ["id": id, "handle": "ada", "ended": "remoteEnded", "room": "r1"])
+    XCTAssertNotNil(calls.provider)
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertTrue(calls.events.buffer.isEmpty, "no `reported` event: nothing rings")
+    XCTAssertEqual(calls.placeholdersReported, 1)
+    XCTAssertTrue(calls.wasCancelled(UUID(uuidString: id)!))
+    // An unknown reason, and a cancel without an ID: the same.
+    push(calls, ["id": UUID().uuidString, "ended": "hungUp"])
+    push(calls, ["ended": "remoteEnded"])
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertTrue(calls.events.buffer.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 3)
+    try waitForCallKitIdle()
+    // Dart then configures and finds no call.
+    XCTAssertEqual((invoke(calls, "activeCalls") as? [Any])?.count, 0)
+  }
+
+  /// A call this device took (answered, or an outgoing call): a reason
+  /// about the ring doesn't end it, the other side hanging up does.
+  func testCancelPushForACallAlreadyTaken() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    if let error = invoke(calls, "startOutgoingCall", dartCall(id: id, outgoing: true))
+      as? FlutterError
+    {
+      throw XCTSkip("CallKit refused the start action here: \(error.code)")
+    }
+    XCTAssertNil(invoke(calls, "reportConnected", ["id": id]))
+    XCTAssertEqual(calls.registry.calls.first?.state, .active)
+
+    for reason in ["answeredElsewhere", "declinedElsewhere", "unanswered"] {
+      push(calls, ["id": id, "ended": reason])
+    }
+    XCTAssertEqual(calls.registry.calls.first?.state, .active, "still in the call")
+    XCTAssertTrue(received.isEmpty)
+    XCTAssertFalse(calls.wasCancelled(UUID(uuidString: id)!))
+
+    push(calls, ["id": id, "ended": "remoteEnded"])
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(received.count, 1)
+    XCTAssertEqual(received.first?["event"] as? String, "ended")
+    XCTAssertEqual(received.first?["reason"] as? String, "remoteEnded")
+    XCTAssertEqual(calls.placeholdersReported, 0)
   }
 
   func testPushedCallIsReportedAndBuffered() {

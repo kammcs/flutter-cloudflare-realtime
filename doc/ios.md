@@ -107,4 +107,18 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
   - **Optional:** `handleType` (`generic`, the default, `phoneNumber` or `emailAddress`), `displayName` and `video`.
   - **Everything else** except `aps` becomes `SystemCall.payload`, for finding the room.
   - **What the package does:** it reports the call to CallKit itself, before Dart runs, as iOS requires. The call then arrives as a `SystemCallAddedEvent`, or in `SystemCalls.instance.calls` after `configure`.
-- **Push only for calls.** iOS terminates an app that receives a VoIP push and doesn't report a call. After repeated failures, iOS stops delivering VoIP pushes to it. A push without `id` or `handle` still rings for an instant and is ended as failed. A push for a call your signaling already reported is ignored.
+- **Stopping the ring: a cancel push.** When the caller hangs up, another of the user's devices answers or declines, or the ring times out, send a second VoIP push (same headers) with the call's `id` and the reserved key `ended`:
+
+  ```json
+  {
+    "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "ended": "answeredElsewhere"
+  }
+  ```
+
+  - **`ended`** is a `SystemCallEndReason` name: `remoteEnded` (the caller hung up), `answeredElsewhere`, `declinedElsewhere`, `unanswered` (the ring timed out) or `failed`. Any other value (`local` and `declined` included: they happen on this device) is logged and taken as `remoteEnded`. `handle` isn't needed; `ended` never reaches `payload`.
+  - **A call the app has** ends with that reason: `SystemCallEndedEvent`, with `SystemCall.endReason` set, as when your code calls `call.end(reason)`. Before Dart runs, the event waits for it, after the call's `SystemCallAddedEvent`.
+  - **A call the app doesn't have** (the cancel woke a killed app, or came twice) doesn't ring: iOS still requires a report, so the package reports a stand-in and ends it at once with the reason. No event, and `calls` stays empty. It may flash for an instant, and may show in Recents. The package also remembers the cancelled ID, so the call's own push arriving after its cancel (APNs doesn't keep the order) doesn't ring either.
+  - **A call this device already took** (answered, or outgoing) ends only for `remoteEnded` or `failed`. `answeredElsewhere`, `declinedElsewhere` and `unanswered` are ignored for it, so a cancel your server sends to all of the user's devices doesn't end the call on the one that answered.
+  - **On Android** there are no VoIP pushes: your FCM handler ends the call itself, with the same reasons: `SystemCalls.instance.call(id)?.end(SystemCallEndReason.answeredElsewhere)`.
+- **Push only for calls.** iOS terminates an app that receives a VoIP push and doesn't report a call. After repeated failures, iOS stops delivering VoIP pushes to it. A push without `id` or `handle` still rings for an instant and is ended as failed. A ringing push for a call your signaling already reported is ignored; a cancel push for it ends it (above).
