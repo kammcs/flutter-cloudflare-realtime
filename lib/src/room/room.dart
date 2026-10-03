@@ -43,6 +43,7 @@ import '../reconnect/backoff.dart';
 import '../reconnect/network_change_source.dart';
 import '../reconnect/reconnect_trigger.dart';
 import '../rendering/renderable_track.dart';
+import '../screen_awake/screen_awake.dart';
 import '../session/publish_options.dart';
 import '../session/sfu_session.dart';
 import '../session/sfu_session_events.dart';
@@ -67,6 +68,7 @@ part 'remote_track_layers.dart';
 part 'room_data.dart';
 part 'room_events.dart';
 part 'room_reconnection.dart';
+part 'room_screen_awake.dart';
 part 'room_speakers.dart';
 part 'room_stats.dart';
 part 'room_system_call.dart';
@@ -181,6 +183,8 @@ class Room {
   late final _RoomAudio _audio = _RoomAudio();
   // Background service, interruptions, camera pauses: room_background.dart.
   late final _RoomBackground _background = _RoomBackground(this);
+  // Keeping the screen on while video is live: room_screen_awake.dart.
+  late final _RoomScreenAwake _screenAwake = _RoomScreenAwake(this);
   // The attached system call (CallKit, Telecom): room_system_call.dart.
   late final _RoomSystemCall _systemCall = _RoomSystemCall(this);
   ParticipantState? _announced;
@@ -464,6 +468,24 @@ class Room {
   Stream<bool> get proximitySensorChanges =>
       CallAudio.instance.proximity.stream;
 
+  /// Whether this platform can keep the screen on during a call
+  /// ([RoomOptions.keepScreenAwake]): Android, iOS, macOS, Windows, and
+  /// browsers with the Screen Wake Lock API. Not Linux.
+  bool get canKeepScreenAwake => ScreenAwake.instance.supported;
+
+  /// Whether the package keeps the screen on now (no dimming, no lock), as
+  /// the platform confirmed: while any joined room wants it
+  /// ([RoomOptions.keepScreenAwake], by default while video is live) and
+  /// the proximity sensor is off ([proximitySensorActive]). App-wide, like
+  /// the platforms' switches. In a browser it drops to `false` while the
+  /// tab is hidden (the browser releases the lock) and comes back when the
+  /// tab is visible again.
+  bool get keepingScreenAwake => ScreenAwake.instance.held.value;
+
+  /// [keepingScreenAwake], replaying the current value, then its changes.
+  Stream<bool> get keepingScreenAwakeChanges =>
+      ScreenAwake.instance.held.stream;
+
   /// Whether this platform reports a camera paused by the system
   /// ([cameraPause]): iOS. Android keeps the camera running in the
   /// background under the foreground service
@@ -541,6 +563,7 @@ class Room {
   void _emit(RoomEvent event) {
     if (!_events.isClosed) _events.add(event);
     _noteVideo();
+    _screenAwake.update();
   }
 
   // Tells call audio routing once this room has video, sent or received:
@@ -609,6 +632,7 @@ class Room {
     _speakers.start();
     _stats.start();
     _background.start();
+    _screenAwake.start();
   }
 
   // ---------------------------------------------------------------------------
@@ -847,6 +871,8 @@ class Room {
     // was connecting is closed by it.
     _reconnection.dispose();
     _stopListeningToSession();
+    // The screen may sleep again as soon as the call ends.
+    await _screenAwake.dispose();
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }

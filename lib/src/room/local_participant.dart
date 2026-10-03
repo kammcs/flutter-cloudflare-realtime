@@ -515,6 +515,7 @@ class LocalParticipant implements Participant {
   void _changed() {
     if (_room._left) return;
     _room._noteVideo();
+    _room._screenAwake.update();
     if (!_changes.isClosed) _changes.add(this);
     unawaited(_room._announcer.run());
   }
