@@ -217,7 +217,7 @@ class AndroidScreenCaptureService implements ScreenCaptureServiceBackend {
 /// it. The Darwin plugin means to select it from the constraints on
 /// macOS, but behind `#if !defined(TARGET_OS_IPHONE)`, which is never
 /// true on an Apple platform (`TARGET_OS_IPHONE` is defined as 0 on
-/// macOS). Windows and browsers select it from the constraints. iOS is
+/// macOS; flutter-webrtc issue #2216). Windows and browsers select it from the constraints. iOS is
 /// left alone: there `selectAudioInput` sets the audio session's preferred
 /// input, which moves the call's audio route (docs/design.md §4.6).
 @visibleForTesting
