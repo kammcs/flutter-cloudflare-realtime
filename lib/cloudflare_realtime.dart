@@ -64,6 +64,8 @@ export 'src/rendering/video_renderer.dart' show VideoViewFit;
 export 'src/broker/broker_config.dart'
     show BrokerHeadersProvider, BrokerOptions;
 export 'src/broker/broker_exception.dart';
+// The SFU's simulcast fallback order, which LayerSelectionOptions sets.
+export 'src/broker/models/tracks.dart' show SimulcastOrdering;
 
 // What the room API shares with the SFU session (design.md §4.2): session
 // options, send encodings and codecs, track states, session failures and

@@ -8,9 +8,10 @@ part of 'room.dart';
 /// - **Polling** runs while the room is joined and either someone listens
 ///   to [Room.statsChanges] (or a publication's `statsChanges`), or
 ///   connection quality is on ([RoomStatsOptions.connectionQuality], the
-///   default). With quality off and no listener, nothing is polled. [Room.getStats] takes one
-///   snapshot whenever asked. Polls never overlap, and a failed poll is
-///   skipped (`getStats` can fail briefly during renegotiation).
+///   default). With quality off and no listener, nothing is polled.
+///   [Room.getStats] takes one snapshot whenever asked. Polls never
+///   overlap, and a failed poll is skipped (`getStats` can fail briefly
+///   during renegotiation).
 /// - **Mapping** (see [CallStatsReader]): local tracks by their `mid` on
 ///   the current session (else the sent track's `media-source`); remote
 ///   tracks by the pull's `mid` (else the received track's ID), counting

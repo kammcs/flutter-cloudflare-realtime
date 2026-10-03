@@ -1,103 +1,163 @@
 # API review for the first pub.dev release (M8)
 
-October 2026, before 0.1.0. The public API is everything `lib/cloudflare_realtime.dart` exports: **212 symbols**. This page lists them, records what the review changed, and lists the judgement calls left open because they would break code that the first consumer already writes against the API.
+October 2026, before 0.1.0. The public API is three libraries, **217 symbols**, none exported twice:
 
-How the inventory was made: an `analyzer`-based script read the barrel's export namespace (names, kinds, class modifiers, `@visibleForTesting`/`@protected` members, documentation) and checked every public signature (supertypes, constructors, methods, getters, fields, typedefs) for package types that the barrel doesn't export. Result: **no leaked internal types**, and every exported symbol and public member has a doc comment (the `public_member_api_docs` lint is now on, with zero issues).
+| Library | Symbols | For |
+|---|---|---|
+| `package:cloudflare_realtime/cloudflare_realtime.dart` | 165 | What apps use |
+| `package:cloudflare_realtime/broker.dart` | 36 | The plumbing under `Room`: a custom `BrokerClient`, the SFU API's wire models, direct use of `SfuSession` |
+| `package:cloudflare_realtime/testing.dart` | 16 | Seams for testing an app without native WebRTC, and for single-process demos |
+
+This page lists them, records what the M8 review changed, and the decisions of the cleanup that followed it (one breaking pass before 0.1.0; [doc/migrating-to-0.1.md](../doc/migrating-to-0.1.md) has the exact old → new table). Before the cleanup the API was one library of 213 symbols.
+
+How the inventory was made: an `analyzer`-based script read each library's export namespace (names, kinds, class modifiers, `@visibleForTesting`/`@protected` members, documentation, and every public getter's type) and checked every public signature (supertypes, constructors, methods, getters, fields, typedefs) for package types that none of the three libraries export. Result: **no leaked internal types**, and every exported symbol and public member has a doc comment (the `public_member_api_docs` lint is on, with zero issues). The main library's signatures name some types that only `broker.dart` or `testing.dart` export, on purpose: the test seams (`CloudflareRealtime(mediaBackend:, createBrokerClient:, connectSession:, wrapTrack:)`, the sources' `backend:`, `ParticipantVideoView`'s renderer factories) and the escape hatches to the session layer (`Room.session`, `LocalMediaPublication.publication`, `RemoteTrackPublication.subscription`, `SfuDataChannel.session`). Apps use those members without importing the other library; they import it only to name the type.
 
 ## Inventory
 
-Modifiers are shown where a class has them; "–" means a plain class. Events and exceptions are grouped.
+Modifiers are shown where a class has them; "–" means a plain class. Events and exceptions are grouped. Everything is in the main library unless marked **(broker)** or **(testing)**.
 
 ### Entry point and rooms (`src/room/`)
 
 | Symbol | Kind | Notes |
 |---|---|---|
 | `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)` |
-| `BrokerClientFactory`, `SfuSessionConnector` | typedefs | Test seams for `CloudflareRealtime` |
+| `BrokerClientFactory`, `SfuSessionConnector` **(testing)** | typedefs | Test seams for `CloudflareRealtime` |
 | `Room` | class | The call. Includes `debugSimulateConnectionFailure()` (see below) |
 | `Participant` | sealed class | `LocalParticipant`, `RemoteParticipant` |
 | `LocalParticipant`, `RemoteParticipant` | classes | |
 | `LocalMediaPublication`, `RemoteTrackPublication` | classes | Room-level publications |
-| `RemoteTrackLease`, `RemoteTrackLayerState` | classes | Subscription lease; layer state for debug UIs |
-| `RoomData`, `RemoteDataSubscription`, `RoomDataMessage` | classes | DataChannels between participants |
-| `RoomOptions`, `AutoSubscribe`, `ReconnectOptions` | classes | Options |
-| `RoomConnectionState`, `SimulcastLayer`, `KeepScreenAwake` | enums | `KeepScreenAwake`: `RoomOptions.keepScreenAwake` (added after the review, §4.7) |
+| `RemoteTrackLease` | class | Subscription lease |
+| `RemoteTrackLayerState` | final class | Layer state for debug UIs |
+| `RoomData`, `RemoteDataSubscription` | classes | DataChannels between participants |
+| `RoomDataMessage` | final class | |
+| `RoomOptions`, `AutoSubscribe`, `ReconnectOptions` | final classes | Options |
+| `RoomConnectionState`, `SimulcastLayer`, `KeepScreenAwake` | enums | |
 | `ScreenSharePresets` | abstract final class | Static encodings |
-| `RoomEvent` | sealed class | 23 final subclasses: `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `ParticipantUpdatedEvent`, `TrackPublishedEvent`, `TrackUnpublishedEvent`, `TrackMutedEvent`, `TrackSubscribedEvent`, `TrackSubscriptionFailedEvent`, `LocalTrackPublishedEvent`, `LocalTrackUnpublishedEvent`, `LocalScreenShareStalledEvent`, `LocalCameraPausedEvent`, `LocalCameraResumedEvent`, `CallInterruptedEvent`, `CallResumedEvent`, `ConnectionQualityChangedEvent`, `RoomConnectionStateChangedEvent`, `RoomReconnectingEvent`, `RoomReconnectAttemptEvent`, `RoomReconnectedEvent`, `RoomReconnectFailedEvent`, `RoomSessionFailedEvent`, `RoomErrorEvent` |
+| `RoomEvent` | sealed class | 23 final subclasses. **Participant:** `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `ParticipantUpdatedEvent`, `ParticipantConnectionQualityChangedEvent`. **Remote track:** `TrackPublishedEvent`, `TrackUnpublishedEvent`, `TrackMutedEvent`, `TrackSubscribedEvent`, `TrackSubscriptionFailedEvent`. **Local track:** `LocalTrackPublishedEvent`, `LocalTrackUnpublishedEvent`, `LocalTrackStalledEvent`. **Room:** `RoomConnectionStateChangedEvent`, `RoomSessionFailedEvent`, `RoomReconnectingEvent`, `RoomReconnectAttemptEvent`, `RoomReconnectedEvent`, `RoomReconnectFailedEvent`, `RoomAudioInterruptedEvent`, `RoomAudioResumedEvent`, `RoomCameraPausedEvent`, `RoomCameraResumedEvent`, `RoomErrorEvent` |
 
 ### Phones: audio, background, system calls (`src/audio/`, `src/background/`, `src/calls/`)
 
 | Symbol | Kind |
 |---|---|
-| `AudioRoute`, `AudioRouteKind`, `AudioRouteUnavailableException` | class, enum, exception |
+| `AudioRoute`, `AudioRouteKind`, `AudioRouteUnavailableException` | final class, enum, final exception |
 | `CallInterruptionReason`, `CameraPauseReason` | enums |
-| `SystemCalls`, `SystemCall`, `VoipPush`, `SystemCallsConfig`, `CallHandle` | classes (`SystemCalls.debugReset()` is `@visibleForTesting`) |
+| `SystemCalls`, `SystemCall`, `VoipPush` | classes (`SystemCalls.debugReset()` is `@visibleForTesting`) |
+| `SystemCallsOptions`, `CallHandle` | final classes |
 | `CallHandleType`, `SystemCallEndReason`, `SystemCallErrorCode`, `SystemCallState` | enums |
-| `SystemCallException` | exception |
+| `SystemCallException` | final exception |
 | `SystemCallEvent` | sealed class, with 8 final subclasses (`SystemCallAddedEvent`, `…AnsweredEvent`, `…EndedEvent`, `…HeldEvent`, `…MutedEvent`, `…DtmfEvent`, `…AudioActivatedEvent`, `…AudioDeactivatedEvent`) |
 
 ### Rendering (`src/rendering/`)
 
-`ParticipantVideoView` (widget), `RenderableTrack`, `VideoRenderer` (interface), `FlutterWebrtcVideoRenderer`, `VideoRendererFactory` (typedef), `VideoViewFit` (enum), `MediaStreamWrapper` (typedef) and `wrapTrackInMediaStream` (function; the default for `CloudflareRealtime(wrapTrack:)`).
+`ParticipantVideoView` (widget), `RenderableTrack` (final), `VideoViewFit` (enum). **(testing):** `VideoRenderer` (interface), `FlutterWebrtcVideoRenderer`, `VideoRendererFactory` (typedef), `MediaStreamWrapper` (typedef) and `wrapTrackInMediaStream` (function; the default for `CloudflareRealtime(wrapTrack:)`).
 
-### Broker client (`src/broker/`)
+### Broker (`src/broker/`)
 
-- **Client:** `BrokerClient` (interface), `HttpBrokerClient`, `BrokerConfig`, `BrokerHeadersProvider` (typedef), `BrokerHeaders` (abstract final, header names).
-- **Exceptions:** `BrokerException` and its subclasses `BrokerUnauthorizedException`, `BrokerForbiddenException`, `SessionGoneException`, `BrokerNetworkException` (→ `BrokerTimeoutException`), `BrokerProtocolException`.
-- **Wire models** (needed by anyone implementing `BrokerClient`): `NewSessionRequest`/`Response`, `SessionState`, `SessionTrackState`, `SessionDataChannelState`, `TracksRequest`/`Response`, `UpdateTracksRequest`, `CloseTracksRequest`, `RenegotiateRequest`/`Response`, `TrackObject`, `TrackResult`, `SimulcastConfig`, `DataChannelsRequest`/`Response`, `EstablishDataChannelsRequest`/`Response`, `DataChannelObject`, `DataChannelResult`, `SessionDescription`, `IceServer`, `IceServersResponse`, the `SfuErrorFields` mixin, and the enums `SdpType`, `TrackLocation`, `ResourceStatus`, `SimulcastOrdering`.
+- **Main library:** `BrokerOptions` (final), `BrokerHeadersProvider` (typedef), and the exceptions: `BrokerException` (sealed) with the final `BrokerUnauthorizedException`, `BrokerForbiddenException`, `SessionGoneException`, `BrokerNetworkException` (→ `BrokerTimeoutException`), `BrokerProtocolException` and `BrokerResponseException`. `SimulcastOrdering` (enum), because `LayerSelectionOptions` uses it.
+- **(broker):** `BrokerClient` (interface), `HttpBrokerClient`, `BrokerHeaders` (abstract final, header names), and the wire models, all final: `NewSessionRequest`/`Response`, `SessionState`, `SessionTrackState`, `SessionDataChannelState`, `TracksRequest`/`Response`, `UpdateTracksRequest`, `CloseTracksRequest`, `RenegotiateRequest`/`Response`, `TrackObject`, `TrackResult`, `SimulcastOptions`, `DataChannelsRequest`/`Response`, `EstablishDataChannelsRequest`/`Response`, `DataChannelObject`, `DataChannelResult`, `SessionDescription`, `IceServer`, `IceServersResponse`; the `SfuErrorFields` mixin, and the enums `SdpType`, `TrackLocation`, `ResourceStatus`.
 
 ### SFU session (`src/session/`, `src/data/`)
 
-- `SfuSession`, `SfuSessionOptions`, `SfuSessionDefaults`, `PublishOptions`, `SendEncoding`, `SimulcastPresets` (abstract final), `VideoCodec`, `defaultVideoCodecPreferences()`.
-- `LocalTrackPublication`, `RemoteTrackSubscription`, `SfuTrackState`, `SfuConnectionState`, `PeerConnectionFailureKind`.
-- `SfuSessionFailure` (sealed: `SfuPeerConnectionFailed`, `SfuSessionGone`); exceptions `SfuSessionException` → `SfuSessionClosedException`, `SfuSessionFailedException`, `SfuTrackException`, `SfuRequestException`, `SfuDataChannelException`.
-- `SfuDataChannel` (sealed: `LocalDataChannel`, `RemoteDataChannel`), `SfuDataChannelState`, `DataChannelProfile`, `DataChannelMessage`.
-- `SfuSession.debugSimulateFailure()` (see below).
+- **Main library** (what the room API shares with the session): `SfuSessionOptions`, `SfuSessionDefaults`, `SendEncoding` (final classes), `SimulcastPresets` (abstract final), `VideoCodec`, `SfuTrackState`, `PeerConnectionFailureKind` (enums); `SfuSessionFailure` (sealed: `SfuPeerConnectionFailed`, `SfuSessionGone`); `SfuSessionException` (sealed) with the final `SfuSessionClosedException`, `SfuSessionFailedException`, `SfuInterruptedException`, `SfuTrackException`, `SfuDataChannelException`, `SfuRequestException`, `SfuProtocolException`; `SfuDataChannel` (sealed: `LocalDataChannel`, `RemoteDataChannel`), `SfuDataChannelState`, `DataChannelProfile`, `DataChannelMessage` (final).
+- **(broker):** `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription`, `SfuConnectionState`, `PublishOptions` (final), `defaultVideoCodecPreferences()`. `SfuSession.debugSimulateFailure()` (see below).
 
 ### Media (`src/media/`)
 
-- Sources: `LocalMediaSource` (abstract; `@protected` hooks for subclasses), `DeviceMediaSource` (abstract), `CameraSource`, `MicrophoneSource`, `ScreenShareSource`, `ScreenSourcePicker`, `ScreenPickerState`, `MediaDeviceList`, `MutePolicy`.
-- Options: `CameraOptions`, `MicrophoneOptions`, `ScreenShareOptions`, `VideoPreset`.
-- Types: `MediaDevice`, `MediaDeviceKind`, `CameraFacing`, `CapturedTrack`, `MediaPlatform`, `ScreenSource`, `ScreenSourceType`, `ScreenShareEndReason`.
-- Backends (seams for tests and other capture paths): `MediaBackend`, `DesktopCapturerBackend`, `ScreenCaptureServiceBackend`, `BroadcastExtensionBackend` (interfaces), `FlutterWebrtcMediaBackend`, `BroadcastExtensionStatus`, `BroadcastExtensionEvent`, `BroadcastSetupProblem`.
+- Sources: `LocalMediaSource` (abstract; `@protected` hooks for subclasses), `DeviceMediaSource` (abstract), `CameraSource`, `MicrophoneSource`, `ScreenShareSource`, `ScreenSourcePicker`, `MediaDeviceList`; `ScreenPickerState` (final), `MutePolicy`.
+- Options: `CameraOptions`, `MicrophoneOptions`, `ScreenShareOptions`, `VideoPreset` (final).
+- Types: `MediaDevice`, `CapturedTrack`, `ScreenSource` (final); `MediaDeviceKind`, `CameraFacing`, `MediaPlatform`, `ScreenSourceType`, `ScreenShareEndReason`, `BroadcastSetupProblem` (enums).
 - Exceptions: `MediaException` (sealed) → `MediaPermissionDeniedException` (→ `ScreenCapturePermissionException`), `ScreenShareSetupException`, `DevicesExhaustedException`, `MediaCaptureException`, `ScreenSourcesException`, `ScreenSourceNotFoundException`, all final.
+- **(testing):** `MediaBackend`, `DesktopCapturerBackend`, `ScreenCaptureServiceBackend`, `BroadcastExtensionBackend` (interfaces), `FlutterWebrtcMediaBackend`, `BroadcastExtensionStatus` (final), `BroadcastExtensionEvent`.
 
 ### Signaling (`src/signaling/`)
 
-`Signaling` (interface), `ParticipantState`, `TrackInfo`, `SimulcastInfo`, `TrackKind`, `TrackSource`, `InMemorySignaling`, `InMemorySignalingHub`.
+`Signaling` (interface), `ParticipantState`, `TrackInfo`, `SimulcastInfo` (final), `TrackKind`, `TrackSource`. **(testing):** `InMemorySignaling`, `InMemorySignalingHub`.
 
 ### Quality and reconnection (`src/quality/`, `src/reconnect/`)
 
-- Stats: `RoomStats`, `ConnectionStats`, `LocalTrackStats`, `OutboundLayerStats`, `RemoteTrackStats`, `IceCandidateStats`, `IceCandidateType`, `QualityLimitationReason`.
-- Quality: `ConnectionQuality`, `ConnectionQualityConfig`, `QualityThresholds`, `RoomStatsOptions`, `ActiveSpeakerConfig`.
-- Layers: `LayerSelectionConfig`, `TileDemand`, `LayerDemandReporter` (interface), `SimulcastLayerReporter` (widget), `LayerPausingOptions`.
-- Reconnection: `BackoffConfig`, `ReconnectTriggerConfig`, `ReconnectReason`, `NetworkChangeSource` and `AppLifecycleSource` (interfaces), `FlutterAppLifecycleSource`.
+- Stats (final): `RoomStats`, `ConnectionStats`, `LocalTrackStats`, `OutboundLayerStats`, `RemoteTrackStats`, `IceCandidateStats`; enums `IceCandidateType`, `QualityLimitationReason`.
+- Quality: `ConnectionQuality` (enum), `ConnectionQualityOptions`, `QualityThresholds`, `RoomStatsOptions`, `ActiveSpeakerOptions` (final).
+- Layers: `LayerSelectionOptions`, `TileDemand`, `LayerPausingOptions` (final), `LayerDemandReporter` (interface), `SimulcastLayerReporter` (widget).
+- Reconnection: `BackoffOptions`, `ReconnectTriggerOptions` (final), `ReconnectReason`, `NetworkChangeSource` and `AppLifecycleSource` (interfaces), `FlutterAppLifecycleSource`.
 
-## Changed in this review
+## Changed in the M8 review
 
 - **dartdoc warnings fixed** (16 before, from `dart doc`): three unresolved references (`[close]` on `SfuDataChannelState.interrupted`, `[source]` on `ParticipantVideoView.local`, a reference split over two lines in `RoomData.subscribe`), a Markdown link definition in `VoipPush.supported` that dartdoc turned into a broken link, and eleven README links that pointed at repository files. The README now links to GitHub with absolute URLs, which also work on pub.dev.
 - **`public_member_api_docs`** is on in `analysis_options.yaml`. It reported nothing: every public member was already documented.
-- **No exported symbol was removed or renamed**, and no class modifier changed: see the open calls.
 - **Internal constructors** no longer use private named parameters (`required this._x`), a Dart 3.12 feature, so the SDK floor could go below 3.12. The named arguments callers pass are the same. Affected (all internal or private constructors): `Room._`, `LocalMediaPublication._`, `SfuSession._`, `LocalTrackPublication._`, `RemoteTrackSubscription._`, `RemoteDataChannel._`, `SystemCallAudioBackend`, `RoomAudioLevelSource`, `StatsAudioLevelSource`, `ActiveSpeakerMonitor`, `CallStatsReader`.
+- The review itself renamed nothing and changed no modifier; it listed the judgement calls below, which the cleanup then decided.
+
+## The 0.1.0 cleanup: decisions
+
+Breaking, before the first release, with the project owner's approval; the one consumer migrates with [doc/migrating-to-0.1.md](../doc/migrating-to-0.1.md). The member renames were made with an analyzer-based tool (every resolved reference, including overrides in tests and doc-comment references), so nothing was renamed by text matching in code.
+
+### 1. One style for observable state
+
+**Counted** on the public API before the change:
+
+| Style | Pairs | Where |
+|---|---|---|
+| Stream `x` + value `currentX` | 20 | `Room` (participants, connection state, active speakers, dominant speaker, stats, audio routes), the publications' stats and track, the media sources' tracks and devices, `ScreenSourcePicker.state`, `MediaDeviceList`, `SfuSession.connectionState` |
+| ... with `isX` for the value | 2 | `LocalMediaSource.enabled` / `isEnabled`, `broadcasting` / `isBroadcasting` |
+| Value `x` + stream `xChanges` | 20 | `Room` (audio playback blocked, audio route, speakerphone, audio interruption, proximity sensor, screen awake, camera pause), `connectionQuality`, `isSpeaking`, `isSpeakingWhileMuted`, `muted`, `pausedLayers`, `layerState`, `SystemCall`, `SystemCalls.calls`, `VoipPush.token` |
+| ... with another stream name | 6 | `audioLevel` / `audioLevels` (×2), `state` / `states` (×3), `RemoteTrackSubscription.track` / `trackStream` |
+
+**Decision: a getter `x` for the value now, and `Stream xChanges`** that replays the current value to each new listener, then emits each change (they are all backed by the internal `StateStream`, so the replay was already there). Booleans are `isX` (or `hasX`, `canX`), and the stream drops the `is`: `isMuted` / `mutedChanges`, `isSpeaking` / `speakingChanges`.
+
+**Why:** it was already the larger family (26 against 22), it reads better where apps read state (`room.participants.length`, `if (publication.isMuted)`), and it is how Flutter reads state elsewhere: `ValueListenable.value`, and `StreamBuilder(stream: room.participantsChanges, initialData: room.participants)`. With stream-first names, every synchronous read needs a `current` prefix, and the stream is the one you type less often.
+
+**Applied** to 67 getters on `Room`, `LocalParticipant`, `RemoteParticipant`, `LocalMediaPublication`, `RemoteTrackPublication`, `LocalMediaSource`, `DeviceMediaSource`, `CameraSource`, `ScreenShareSource`, `ScreenSourcePicker`, `MediaDeviceList`, `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription`, `SfuDataChannel`, `SystemCall`, `SystemCalls` and `VoipPush`. `MediaDeviceList` gained `audioInputs`, `videoInputs` and `audioOutputs` as lists next to their `…Changes`, and the sealed `Participant` now declares `speakingChanges`, `audioLevel` and `audioLevelChanges`, which both participants had. `CallAudio` (the internal audio-route engine behind `Room`) isn't public and wasn't renamed.
+
+**Not state, so not renamed:** streams of things that happen keep plain plural names (`Room.events`, `SystemCalls.events`, `LocalMediaSource.errors`, `SfuSession.failures`, `ScreenShareSource.ended`, the DataChannels' `messages` and `bufferedAmountLow`, and the `changes` stream of a participant or a publication, which emits the object itself). The interfaces an app implements are feeds into the package, not its state, and keep their names: `Signaling.participants` (renaming it would break every adapter for no gain), `NetworkChangeSource.changes`, `AppLifecycleSource.states`, and the `MediaBackend` parts' `onAdded`/`stopped`/`events`.
+
+**Booleans** on stateful objects were renamed where they lacked a verb, which was cheap: `Room.isAudioPlaybackBlocked`, `isSpeakerphoneOn`, `isProximitySensorActive`, `isKeepingScreenAwake`; `LocalMediaPublication.isMuted`, `RemoteTrackPublication.isMuted`, `SystemCall.isMuted`, `isOutgoing`, `isVideo`; `SystemCalls.isSupported` and `VoipPush.isSupported` (like `ScreenShareSource.isSupported`). Fields of value classes and named parameters keep adjectives, as Effective Dart suggests for parameters and as their JSON does (`TrackInfo.muted`, `AutoSubscribe.audio`, `ReconnectOptions.enabled`). Verb phrases stay (`ownsMediaSource`, `usesSystemPicker`, `hasNegotiated`).
+
+### 2. One suffix: `…Options`
+
+**Counted:** 9 `…Options` (`RoomOptions`, `ReconnectOptions`, `RoomStatsOptions`, `LayerPausingOptions`, `CameraOptions`, `MicrophoneOptions`, `ScreenShareOptions`, `SfuSessionOptions`, `PublishOptions`) against 8 `…Config` (`ActiveSpeakerConfig`, `BackoffConfig`, `BrokerConfig`, `ConnectionQualityConfig`, `LayerSelectionConfig`, `ReconnectTriggerConfig`, `SystemCallsConfig`, and the wire model `SimulcastConfig`). **Decision: `…Options`**, the majority and the suffix of the two classes every app writes (`RoomOptions`, `SfuSessionOptions`). The eight `…Config` classes were renamed, and `HttpBrokerClient(config:)` / `.config` became `options`. `SfuSessionDefaults` keeps its name: it is the session's defaults, held in `SfuSessionOptions.defaults`.
+
+### 3. Event names
+
+Every `RoomEvent` subtype ends in `Event` and starts with what it is about: `Participant…` (a remote participant), `Track…` (a remote track), `LocalTrack…` (a local publication) or `Room…` (the room, its connection, and the device's call audio and camera, which `Room` exposes). Six outliers were renamed: `ConnectionQualityChangedEvent` → `ParticipantConnectionQualityChangedEvent` (it is about a participant, local or remote), `LocalScreenShareStalledEvent` → `LocalTrackStalledEvent` (it carries the publication), `CallInterruptedEvent` / `CallResumedEvent` → `RoomAudioInterruptedEvent` / `RoomAudioResumedEvent` (they match `Room.audioInterruption`), `LocalCameraPausedEvent` / `LocalCameraResumedEvent` → `RoomCameraPausedEvent` / `RoomCameraResumedEvent` (they carry no publication and match `Room.cameraPause`). `RoomReconnectAttemptEvent`, added during the cleanup, already fit. `SystemCallEvent`'s subtypes were already consistent (`SystemCall…Event`).
+
+### 4. Class modifiers
+
+- **`final`:** the options (21 classes), the value types (`ParticipantState`, `TrackInfo`, `SimulcastInfo`, `MediaDevice`, `ScreenSource`, `CapturedTrack`, `RenderableTrack`, `AudioRoute`, `CallHandle`, `ScreenPickerState`, `RemoteTrackLayerState`, `TileDemand`, `BroadcastExtensionStatus`, `RoomDataMessage`; `DataChannelMessage` already was), the six stats classes and the 23 wire models. All have public constructors, so tests build them instead of subclassing; `RoomDataMessage` got one (it only had a private one). Nothing in the tests, the example or the integration tests extended or implemented them.
+- **`sealed`:** `BrokerException` and `SfuSessionException`, like `MediaException`, `RoomEvent`, `SystemCallEvent`, `SfuSessionFailure`, `SfuDataChannel` and `Participant` already were, so apps can `switch` over them exhaustively (`test/api_shape_test.dart` pins it). Every subtype is `final`. Both roots used to be thrown directly, so each got a final subtype for those cases: `BrokerResponseException` (any other error response: a non-2xx status other than 401/403/410, or an SFU error in a 2xx `sessions/new` body), `SfuInterruptedException` (unpublished, closed, interrupted or moved before the operation completed) and `SfuProtocolException` (an unusable answer from the SFU). `sealed` needs every subtype in the root's library: `SfuDataChannelException` lived in the DataChannel library (`data_channel_manager.dart` and its parts) and moved to `sfu_session_events.dart`, next to the other session exceptions; it only holds strings, so no `part` restructuring was needed. `AudioRouteUnavailableException` and `SystemCallException` are `final`.
+- **Events** are `final` under their sealed roots (they already were).
+- **Left open, for mocks** (`class MockRoom extends Mock implements Room`): `CloudflareRealtime`, `Room`, `LocalParticipant`, `RemoteParticipant`, `LocalMediaPublication`, `RemoteTrackPublication`, `RemoteTrackLease`, `RoomData`, `RemoteDataSubscription`, the media sources, `MediaDeviceList`, `ScreenSourcePicker`, `SystemCalls`, `SystemCall`, `VoipPush`, `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription`. Mocks implement them, which `final`, `base` or `sealed` would forbid outside the package; most also have private constructors, so they can't be extended anyway. The interfaces apps implement are `abstract interface` (`Signaling`, `BrokerClient`, `MediaBackend` and its parts, `VideoRenderer`, `NetworkChangeSource`, `AppLifecycleSource`, `LayerDemandReporter`).
+- **Left open on purpose:** the default implementations of those interfaces (`HttpBrokerClient`, `FlutterWebrtcMediaBackend`, `FlutterWebrtcVideoRenderer`, `FlutterAppLifecycleSource`, `InMemorySignaling`, `InMemorySignalingHub`), which an app may wrap or extend (a logging broker client, a backend that overrides one capture call), and the widgets (`ParticipantVideoView`, `SimulcastLayerReporter`).
+
+### 5. Three libraries
+
+- **`cloudflare_realtime.dart`** keeps what apps use.
+- **`broker.dart`** holds the plumbing: `BrokerClient`, `HttpBrokerClient`, `BrokerHeaders` and the wire models, which only a custom `BrokerClient` needs, and **the low-level `SfuSession`** with `LocalTrackPublication`, `RemoteTrackSubscription`, `SfuConnectionState`, `PublishOptions` and `defaultVideoCodecPreferences()`. Why the session moved: apps that use `Room` reach a session only through `Room.session` (and `LocalMediaPublication.publication`, `RemoteTrackPublication.subscription`), use it there without naming its type, and rarely touch it otherwise; and the session's `LocalTrackPublication` next to the room's `LocalMediaPublication` in one import was the API's most confusing pair of names (the review's call 4). What the room API shares with the session stays in the main library rather than being exported twice: `SfuSessionOptions` and `SfuSessionDefaults` (`RoomOptions.sessionOptions`), `SfuTrackState` (`RemoteTrackPublication.subscriptionState`), `SendEncoding`, `SimulcastPresets` and `VideoCodec` (`publishCamera`), the failures and exceptions (`Room.failure`, `RoomSessionFailedEvent`, errors from publishing), the DataChannels (`Room.data` returns them), `BrokerOptions` and the broker's exceptions, and `SimulcastOrdering` (`LayerSelectionOptions`).
+- **`testing.dart`** holds the test seams: `MediaBackend` and its platform parts with `FlutterWebrtcMediaBackend` and `BroadcastExtensionStatus`/`Event`, `VideoRenderer` with `FlutterWebrtcVideoRenderer` and `VideoRendererFactory`, `MediaStreamWrapper` with `wrapTrackInMediaStream`, `BrokerClientFactory`, `SfuSessionConnector`, and `InMemorySignaling` with its hub. The example app imports it for its demo mode (in-memory signaling and an injectable media backend), which is what it is for. `NetworkChangeSource` and `AppLifecycleSource` stay in the main library: apps plug their connectivity source into the first, and the two belong together. `SystemCalls.debugReset()` is a member and stays `@visibleForTesting`.
+- The main import went from 213 symbols to 165.
+
+### 6. Left as they were
+
+- **`LocalMediaPublication`** keeps its name, and **`ParticipantVideoView.defaultRendererFactory`** stays a static (decided before the cleanup).
+- **`RemoteTrackPublication.currentRid`** and **`RemoteTrackLayerState.currentRid`**: here "current" means the rid the live pull asks for, as opposed to `targetRid`, not the value of a stream.
+- **File names** under `lib/src/` (`broker_config.dart`, `active_speaker_config.dart`) still say "config"; they are internal.
+- **Debug hooks** (below).
 
 ## Kept on purpose
 
 - **Debug hooks.** `Room.debugSimulateConnectionFailure()` and `SfuSession.debugSimulateFailure()` stay public and unannotated: the example app's "simulate network drop" uses them in normal builds, and the integration tests too, so `@visibleForTesting` would flag legitimate demo use. Their docs say "debug and demo only" and that they exercise the real failure path; the `debug` prefix follows Flutter's convention. `SystemCalls.debugReset()` stays `@visibleForTesting`: only tests need to forget the singleton.
-- **Test seams.** `CloudflareRealtime`'s `mediaBackend`, `createBrokerClient`, `connectSession` and `wrapTrack` parameters, the `MediaBackend` family, `VideoRenderer` and `ParticipantVideoView.defaultRendererFactory` are public because apps need them to test their own code without native WebRTC (README, "Testing your app").
-- **The low-level layers.** `SfuSession` (with its publications, subscriptions and DataChannels) and the broker wire models are public for apps that need something `Room` doesn't do, and for custom `BrokerClient`s. `Room.session` exposes the current session.
+- **Test seams.** `CloudflareRealtime`'s `mediaBackend`, `createBrokerClient`, `connectSession` and `wrapTrack` parameters, the `MediaBackend` family, `VideoRenderer` and `ParticipantVideoView.defaultRendererFactory` are public because apps need them to test their own code without native WebRTC (README, "Testing your app"). Their types are in `testing.dart`.
+- **The low-level layers.** `SfuSession` (with its publications, subscriptions and DataChannels) and the broker wire models are public, in `broker.dart`, for apps that need something `Room` doesn't do, and for custom `BrokerClient`s. `Room.session` exposes the current session.
 - **`@protected` members** on `LocalMediaSource` and `DeviceMediaSource` are hooks for subclasses (custom capture through `publishMediaSource`), correctly annotated.
 
-## Open judgement calls (not changed)
+## The M8 review's open judgement calls, and what became of them
 
-Each of these would break code that compiles today. They are cheapest to do before 0.1.0, or else in a planned 0.2.0; the first consumer's code decides.
-
-1. **Class modifiers.** Most classes have none, so apps can `implements` and `extends` them. That keeps mocking easy (`class MockRoom extends Mock implements Room` with mocktail), which matters for `Room`, `LocalParticipant`, `RemoteParticipant`, the publications, `SfuSession` and `SystemCalls`; keep those open. Candidates for `final`: the value types (the `*Options`/`*Config` classes, `ParticipantState`, `TrackInfo`, `SimulcastInfo`, `MediaDevice`, `ScreenSource`, `AudioRoute`, `CallHandle`), the stats snapshots and the broker wire models. Candidates for `sealed`: `BrokerException` (exhaustive `switch` over broker errors) and `SfuSessionException`. Making them `final` later is a breaking change, so decide before 1.0.
-2. **Two naming styles for observable state.** Some state is a stream plus a `current…` getter (`participants` / `currentParticipants`, `activeSpeakers`, `dominantSpeaker`, `connectionState`, `audioRoutes`, `stats`, `track`, `devices`); other state is a getter plus a `…Changes` stream (`audioPlaybackBlocked` / `audioPlaybackBlockedChanges`, `connectionQuality`, `muted`, `isSpeaking` / `speakingChanges`, `cameraPause`, `audioInterruption`, `proximitySensorActive`, `keepingScreenAwake`, `speakerphone`, `pausedLayers`, `currentAudioRoute` / `audioRouteChanges`). Suggestion for 1.0: lists and snapshots keep the first style, single values the second, with deprecated aliases for a release.
-3. **`…Options` and `…Config`.** `RoomOptions`, `ReconnectOptions`, `RoomStatsOptions`, `LayerPausingOptions`, `CameraOptions`, `SfuSessionOptions` against `BackoffConfig`, `ReconnectTriggerConfig`, `ActiveSpeakerConfig`, `LayerSelectionConfig`, `ConnectionQualityConfig`, `SystemCallsConfig`, `BrokerConfig`. One suffix would read better; renaming is breaking.
-4. **Publication names.** The room's local publication is `LocalMediaPublication` because the session layer already has `LocalTrackPublication`; the room's remote one is `RemoteTrackPublication`, and the session's `RemoteTrackSubscription`. A cleaner set would be `LocalTrackPublication` / `RemoteTrackPublication` at room level and `Sfu…` names at session level.
-5. **Event names.** Room-wide events mix prefixes: `RoomReconnectingEvent`, `RoomErrorEvent` and `RoomConnectionStateChangedEvent` against `CallInterruptedEvent`, `ConnectionQualityChangedEvent` and `LocalCameraPausedEvent`. Harmless, but worth one rule before 1.0.
-6. **A second library for the plumbing.** The barrel exports 212 symbols, about 40 of them broker wire models and media backends that most apps never touch. They could move to `package:cloudflare_realtime/broker.dart` and `…/testing.dart`. That would break imports of custom `BrokerClient`s and test fakes.
-7. **`ParticipantVideoView.defaultRendererFactory`** is a mutable static (global state for tests). An `InheritedWidget` or a `CloudflareRealtime` parameter would scope it; it works as is.
+1. **Class modifiers:** decided, §4 above.
+2. **Two naming styles for observable state:** decided, §1 (one style, no deprecated aliases: nothing was released).
+3. **`…Options` and `…Config`:** decided, §2.
+4. **Publication names:** kept (`LocalMediaPublication` at room level); the session's `LocalTrackPublication` moved to `broker.dart`, out of the main import (§5).
+5. **Event names:** decided, §3.
+6. **A second library for the plumbing:** done, two (§5).
+7. **`ParticipantVideoView.defaultRendererFactory`:** kept as a static.
 
 ## SDK constraint
 

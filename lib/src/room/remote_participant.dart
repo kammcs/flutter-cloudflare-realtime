@@ -228,9 +228,9 @@ class RemoteTrackLease {
 /// rendering.
 ///
 /// When the publisher moves to a new session (they reconnected), the room
-/// pulls the track again from there and [trackChanges] emits the new one. When the
-/// track is unpublished, the subscription is closed and [trackChanges] emits
-/// `null`.
+/// pulls the track again from there and [trackChanges] emits the new one.
+/// When the track is unpublished, the subscription is closed and
+/// [trackChanges] emits `null`.
 class RemoteTrackPublication {
   RemoteTrackPublication._(this.participant, this.trackName, TrackInfo info)
     : _info = info,
@@ -362,8 +362,8 @@ class RemoteTrackPublication {
   Stream<RemoteTrackPublication> get changes => _changes.stream;
 
   /// Subscribes (pulls the track) and completes once the pull has been
-  /// attempted. The track then arrives on [trackChanges]. A failed pull is retried
-  /// (see [RoomOptions.pullRetry]); check [error] or listen for
+  /// attempted. The track then arrives on [trackChanges]. A failed pull is
+  /// retried (see [RoomOptions.pullRetry]); check [error] or listen for
   /// [TrackSubscriptionFailedEvent].
   Future<void> subscribe() {
     if (_closed) return Future.value();

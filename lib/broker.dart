@@ -13,7 +13,8 @@
 ///
 /// The options and errors these share with the room API (`BrokerOptions`,
 /// `BrokerException`, `SfuSessionOptions`, `SfuSessionException`,
-/// `SfuTrackState`, `SendEncoding`) are in the main library. See
+/// `SfuTrackState`, `SendEncoding`, and `SimulcastOrdering`, which
+/// `LayerSelectionOptions` uses) are in the main library. See
 /// `docs/design.md` §4.1, §4.2 and §5.
 library;
 
@@ -24,7 +25,7 @@ export 'src/broker/models/common.dart' hide putErrorFields;
 export 'src/broker/models/data_channels.dart';
 export 'src/broker/models/ice_servers.dart';
 export 'src/broker/models/session.dart';
-export 'src/broker/models/tracks.dart';
+export 'src/broker/models/tracks.dart' hide SimulcastOrdering;
 export 'src/session/publish_options.dart'
     show PublishOptions, defaultVideoCodecPreferences;
 export 'src/session/sfu_session.dart'

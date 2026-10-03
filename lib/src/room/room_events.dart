@@ -262,8 +262,8 @@ final class RoomAudioInterruptedEvent extends RoomEvent {
   String toString() => 'RoomAudioInterruptedEvent(${reason.name})';
 }
 
-/// The call has its audio back after a [RoomAudioInterruptedEvent]: remote audio
-/// plays and the microphone sends again.
+/// The call has its audio back after a [RoomAudioInterruptedEvent]: remote
+/// audio plays and the microphone sends again.
 final class RoomAudioResumedEvent extends RoomEvent {
   /// Creates the event.
   const RoomAudioResumedEvent(this.reason);
