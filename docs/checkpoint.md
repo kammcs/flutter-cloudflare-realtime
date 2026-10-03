@@ -290,7 +290,9 @@ The checkpoint passes when every applicable cell passes.
 - **2026-10-03, Win ↔ Android** (commit `300ea41`; Windows 11 with the example in debug, Pixel 10 with Android 16 over `adb reverse`; dev server on Windows). Media and screen share worked both ways.
   - On a Windows machine with many audio inputs, the call used an input the user doesn't use, and there was no way to pick another from the call screen.
   - The Pixel's own camera preview flickered to the background every few seconds, like a rebuilt widget. Windows received the Pixel's video without gaps, so only the local preview was affected.
-  - Fixes are tracked in the CHANGELOG.
+  - **Both fixed** (merge `634bf4e`):
+    - The Windows backend now marks the system default communications devices through Core Audio, and the default ranks first. The call screen has a Devices sheet with mic, camera and speaker pickers that switch live.
+    - The tiles keep the same widget tree when the speaking highlight changes, so renderers are no longer re-created. This fix is verified on the Pixel by hand.
 
 ## 7. Integration tests against the dev server
 
