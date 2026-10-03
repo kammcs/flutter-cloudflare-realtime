@@ -26,7 +26,7 @@ void main() {
   testWidgets(
     'a call recovers from a network drop on either side',
     (tester) async {
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
       final suffix = DateTime.now().microsecondsSinceEpoch;

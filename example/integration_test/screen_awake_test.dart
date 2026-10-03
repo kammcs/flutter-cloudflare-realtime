@@ -93,7 +93,7 @@ void main() {
         await cam.dispose();
       }
 
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final room = await realtime.join(
         settings.room,
         signaling: InMemorySignaling(InMemorySignalingHub()),

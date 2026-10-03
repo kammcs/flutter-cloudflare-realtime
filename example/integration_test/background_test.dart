@@ -75,7 +75,7 @@ void main() {
 
   /// Alice and Bob in one room; Bob pulls everything.
   Future<(Room, Room)> join(String test) async {
-    final realtime = CloudflareRealtime(broker: settings.config());
+    final realtime = CloudflareRealtime(broker: settings.brokerOptions());
     final hub = InMemorySignalingHub();
     const options = RoomOptions(autoSubscribe: AutoSubscribe.all);
     final suffix = DateTime.now().microsecondsSinceEpoch;

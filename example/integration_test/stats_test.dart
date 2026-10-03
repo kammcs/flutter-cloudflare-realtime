@@ -44,7 +44,7 @@ void main() {
     'a participant whose media stops is lost',
     (tester) async {
       await _askForPermissions();
-      final realtime = CloudflareRealtime(broker: settings.config());
+      final realtime = CloudflareRealtime(broker: settings.brokerOptions());
       final hub = InMemorySignalingHub();
       final suffix = DateTime.now().microsecondsSinceEpoch;
       final alice = await realtime.join(

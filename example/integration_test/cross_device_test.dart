@@ -62,7 +62,7 @@ void main() {
     'two devices exchange media through the SFU and switch layers',
     (tester) async {
       final dev = settings.devServer();
-      final realtime = CloudflareRealtime(broker: dev.brokerConfig());
+      final realtime = CloudflareRealtime(broker: dev.brokerOptions());
       final signaling = dev.createSignaling();
       final random = Random.secure();
       // Not 1 << 32: shifts are 32-bit on the web, which makes that 0.

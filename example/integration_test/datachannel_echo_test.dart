@@ -45,7 +45,10 @@ void main() {
   testWidgets(
     'publishes, subscribes and echoes over DataChannels',
     (tester) async {
-      final broker = HttpBrokerClient(roomId: room, options: settings.config());
+      final broker = HttpBrokerClient(
+        roomId: room,
+        options: settings.brokerOptions(),
+      );
       addTearDown(broker.dispose);
 
       final publisher = await SfuSession.connect(broker: broker);

@@ -66,7 +66,7 @@ void main() {
     await permission.enable();
     await permission.dispose();
 
-    final realtime = CloudflareRealtime(broker: settings.config());
+    final realtime = CloudflareRealtime(broker: settings.brokerOptions());
     final hub = InMemorySignalingHub();
     final suffix = DateTime.now().microsecondsSinceEpoch;
     final alice = await realtime.join(

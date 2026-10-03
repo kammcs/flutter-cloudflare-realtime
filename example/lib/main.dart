@@ -350,7 +350,7 @@ class _JoinPageState extends State<JoinPage> {
       signaling: signaling,
       participantId: dev.newParticipantId(),
       displayName: dev.userName,
-      broker: dev.brokerConfig(),
+      broker: dev.brokerOptions(),
       disposeSignaling: signaling.dispose,
       signalingStatus: signaling.statusChanges.map(
         (WsSignalingStatus status) => status.name,

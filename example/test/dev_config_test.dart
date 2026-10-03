@@ -15,7 +15,7 @@ void main() {
   );
 
   test('builds the broker config', () async {
-    final broker = config().brokerConfig();
+    final broker = config().brokerOptions();
     expect(broker.baseUrl, Uri.parse('http://192.168.1.10:8787'));
     expect(await broker.headers(), {
       'Authorization': 'Bearer tok-123',

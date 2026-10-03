@@ -88,8 +88,8 @@ class BrokerSettings {
   DevServerConfig devServer() =>
       DevServerConfig.parse(serverUrl: url!, token: _token!, userName: _user!);
 
-  /// The broker config: [url] with the token and dev-user headers.
-  BrokerOptions config() => BrokerOptions(
+  /// The broker options: [url] with the token and dev-user headers.
+  BrokerOptions brokerOptions() => BrokerOptions(
     baseUrl: Uri.parse(url!),
     headers: () async => {
       if (_token != null) 'Authorization': 'Bearer $_token',

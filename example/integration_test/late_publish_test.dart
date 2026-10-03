@@ -39,7 +39,7 @@ void main() {
     // a first run's prompt doesn't add to the idle time.
     await _askForPermissions();
 
-    final realtime = CloudflareRealtime(broker: settings.config());
+    final realtime = CloudflareRealtime(broker: settings.brokerOptions());
     final hub = InMemorySignalingHub();
     final suffix = DateTime.now().microsecondsSinceEpoch;
     final alice = await realtime.join(
