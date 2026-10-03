@@ -148,11 +148,20 @@ class DevServerConfig {
     queryParameters: {'token': token},
   );
 
-  /// Creates a [WsSignaling] connected to [signalingUrl].
+  /// Creates a [WsSignaling] connected to [signalingUrl]. See its
+  /// constructor for [networkChanges] and [log].
   WsSignaling createSignaling({
     WebSocketConnector? connect,
+    Stream<void>? networkChanges,
     void Function(Object error)? onError,
-  }) => WsSignaling(url: signalingUrl, connect: connect, onError: onError);
+    void Function(String message)? log,
+  }) => WsSignaling(
+    url: signalingUrl,
+    connect: connect,
+    networkChanges: networkChanges,
+    onError: onError,
+    log: log,
+  );
 
   /// A fresh `participantId` for this user on this device, such as
   /// `ada:3f9a1c`. The same user may join from several devices; each needs

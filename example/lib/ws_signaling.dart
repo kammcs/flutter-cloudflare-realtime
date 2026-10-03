@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -68,6 +69,12 @@ class WsSignalingException implements Exception {
 /// - A ping goes out every [heartbeatInterval]. If nothing arrives for
 ///   [heartbeatTimeout], the socket is treated as dead and replaced. This
 ///   catches network drops that never close the socket.
+/// - A socket that isn't open after [connectTimeout] is abandoned and
+///   retried. Without that, a connect started while the network is down can
+///   hang until the OS gives up (75 s on macOS), even once the network is
+///   back.
+/// - Each event of [networkChanges] cuts a backoff wait short, and restarts
+///   a connect still in progress (it may be stuck on the old network).
 /// - Participants that can't be parsed are skipped.
 class WsSignaling implements Signaling {
   /// Creates a signaling connection to [url], such as
@@ -76,11 +83,14 @@ class WsSignaling implements Signaling {
     required this.url,
     WebSocketConnector? connect,
     this.joinTimeout = const Duration(seconds: 15),
+    this.connectTimeout = const Duration(seconds: 10),
     this.heartbeatInterval = const Duration(seconds: 4),
     this.heartbeatTimeout = const Duration(seconds: 10),
     this.initialBackoff = const Duration(milliseconds: 500),
     this.maxBackoff = const Duration(seconds: 10),
+    this.networkChanges,
     this.onError,
+    this.log,
   }) : _connect = connect ?? WebSocketChannel.connect;
 
   /// Close code the server uses for a missing or wrong dev token.
@@ -95,6 +105,9 @@ class WsSignaling implements Signaling {
 
   /// How long [join] waits for the server's acknowledgement, across retries.
   final Duration joinTimeout;
+
+  /// How long a socket may take to open before it is abandoned and retried.
+  final Duration connectTimeout;
 
   /// How often to ping the server.
   final Duration heartbeatInterval;
@@ -112,7 +125,17 @@ class WsSignaling implements Signaling {
   /// [update] or being replaced by another connection.
   final void Function(Object error)? onError;
 
+  /// Receives one line per connection event (status changes, attempts and
+  /// why they failed, the participant count), for a console timeline. The
+  /// lines carry no URLs, tokens or participant states.
+  final void Function(String message)? log;
+
+  /// Emits when the device's network changes, such as a
+  /// [NetworkChangeSource]'s `changes`. Optional.
+  final Stream<void>? networkChanges;
+
   final WebSocketConnector _connect;
+  StreamSubscription<void>? _networkSubscription;
 
   // Room state: what the app asked for.
   String? _roomId;
@@ -132,6 +155,13 @@ class WsSignaling implements Signaling {
   Timer? _pingTimer;
   Timer? _watchdog;
   WsSignalingException? _terminalError;
+  // Monotonic time (`package:clock`, so tests can fake it) when the current
+  // socket started opening, when the current backoff wait started, and when
+  // the connection was lost (null until then, and again once rejoined).
+  final Stopwatch _clock = clock.stopwatch()..start();
+  Duration _openedAt = Duration.zero;
+  Duration _waitStartedAt = Duration.zero;
+  Duration? _lostAt;
 
   List<ParticipantState> _participants = const [];
   final StreamController<List<ParticipantState>> _participantChanges =
@@ -169,7 +199,12 @@ class WsSignaling implements Signaling {
     _self = self;
     _attempt = 0;
     _terminalError = null;
+    _lostAt = null;
     final completer = _joinCompleter = Completer<void>();
+    _networkSubscription ??= networkChanges?.listen(
+      (_) => _onNetworkChanged(),
+      onError: (Object _) {},
+    );
     _open();
     try {
       await completer.future.timeout(joinTimeout);
@@ -225,6 +260,7 @@ class WsSignaling implements Signaling {
   void _open() {
     _closeSocket();
     final generation = _generation;
+    _openedAt = _now;
     _setStatus(
       _attempt == 0
           ? WsSignalingStatus.connecting
@@ -233,8 +269,8 @@ class WsSignaling implements Signaling {
     final WebSocketChannel channel;
     try {
       channel = _connect(url);
-    } catch (_) {
-      _onSocketClosed(generation, null);
+    } catch (e) {
+      _onSocketClosed(generation, null, 'connect threw ${e.runtimeType}');
       return;
     }
     _channel = channel;
@@ -243,15 +279,36 @@ class WsSignaling implements Signaling {
         if (generation == _generation) _onData(data);
       },
       onError: (Object _) {},
-      onDone: () => _onSocketClosed(generation, channel.closeCode),
+      onDone: () => _onSocketClosed(
+        generation,
+        channel.closeCode,
+        'socket closed'
+        '${channel.closeCode == null ? '' : ' (code ${channel.closeCode})'}',
+      ),
     );
-    channel.ready.then((_) {
-      if (generation == _generation) _onReady();
-    }, onError: (Object _) => _onSocketClosed(generation, null));
+    channel.ready.then(
+      (_) {
+        if (generation == _generation) _onReady();
+      },
+      // The error's type only: its message names the server's address.
+      onError: (Object e) => _onSocketClosed(
+        generation,
+        null,
+        'connect failed after ${_seconds(_now - _openedAt)} '
+        '(${e.runtimeType})',
+      ),
+    );
+    // Nothing else bounds a connect whose packets go nowhere: the heartbeat
+    // starts once the socket is open, and the OS can take 75 s (macOS).
+    _armWatchdog(
+      connectTimeout,
+      'not open after ${_seconds(connectTimeout)}, abandoned',
+    );
   }
 
   void _onReady() {
     _connected = true;
+    _log('open in ${_seconds(_now - _openedAt)}, joining');
     _setStatus(WsSignalingStatus.connected);
     _resetWatchdog();
     _pingTimer = Timer.periodic(heartbeatInterval, (_) {
@@ -266,11 +323,20 @@ class WsSignaling implements Signaling {
     });
   }
 
-  /// Handles the end of socket [generation], once.
-  void _onSocketClosed(int generation, int? closeCode) {
+  /// Handles the end of socket [generation], once. [reason] is for the log.
+  void _onSocketClosed(int generation, int? closeCode, String reason) {
     if (generation != _generation) return;
+    final wasConnected = _connected;
     _closeSocket();
     if (_roomId == null) return;
+    _log(
+      wasConnected
+          ? 'connection lost: $reason'
+          : '${_attempt == 0 ? 'connect' : 'attempt $_attempt'} failed: '
+                '$reason',
+    );
+    // Once joined, time how long the room goes without presence.
+    if (_joinCompleter == null) _lostAt ??= _now;
 
     final terminal =
         _terminalError ??
@@ -294,9 +360,36 @@ class WsSignaling implements Signaling {
 
     _setStatus(WsSignalingStatus.reconnecting);
     final delay = _backoff(_attempt++);
+    _log('attempt $_attempt in ${_seconds(delay)}');
+    _waitStartedAt = _now;
     _reconnectTimer = Timer(delay, () {
       if (_roomId != null) _open();
     });
+  }
+
+  /// The device's network changed, so what was failing may work now.
+  void _onNetworkChanged() {
+    if (_roomId == null || _disposed) return;
+    if (_reconnectTimer?.isActive ?? false) {
+      _log(
+        'network changed: attempt $_attempt now, backoff cut short '
+        'after ${_seconds(_now - _waitStartedAt)}',
+      );
+      _open();
+    } else if (_channel != null && !_connected) {
+      // A connect started on the old network may never finish: its packets
+      // can keep going to an interface or address that is gone.
+      _log(
+        'network changed: restarting a connect pending for '
+        '${_seconds(_now - _openedAt)}',
+      );
+      if (_attempt > 0) _attempt++;
+      _open();
+    } else if (_connected) {
+      // A socket the server already dropped fails on this write, sooner
+      // than at the next heartbeat.
+      _send({'type': 'ping'});
+    }
   }
 
   Duration _backoff(int attempt) {
@@ -305,12 +398,19 @@ class WsSignaling implements Signaling {
     return delay > maxBackoff ? maxBackoff : delay;
   }
 
-  void _resetWatchdog() {
+  void _resetWatchdog() => _armWatchdog(
+    heartbeatTimeout,
+    'no message for ${_seconds(heartbeatTimeout)}',
+  );
+
+  /// Abandons the current socket unless it opens, or a message arrives,
+  /// within [timeout]. [reason] is for the log.
+  void _armWatchdog(Duration timeout, String reason) {
     _watchdog?.cancel();
     final generation = _generation;
-    _watchdog = Timer(heartbeatTimeout, () {
+    _watchdog = Timer(timeout, () {
       // A dead network may never close the socket; don't wait for it.
-      _onSocketClosed(generation, null);
+      _onSocketClosed(generation, null, reason);
     });
   }
 
@@ -343,9 +443,13 @@ class WsSignaling implements Signaling {
   }) {
     _roomEpoch++;
     _closeSocket();
+    unawaited(_networkSubscription?.cancel());
+    _networkSubscription = null;
+    if (error != null) _log('stopped: $error');
     _roomId = null;
     _self = null;
     _terminalError = null;
+    _lostAt = null;
     final waiting = _joinCompleter;
     _joinCompleter = null;
     if (waiting != null && !waiting.isCompleted) {
@@ -374,6 +478,15 @@ class WsSignaling implements Signaling {
       case 'ack':
         if (id != null && id == _pendingJoinId) {
           _pendingJoinId = null;
+          final lostAt = _lostAt;
+          _log(
+            lostAt == null
+                ? 'joined'
+                : 'rejoined ${_seconds(_now - lostAt)} after the connection '
+                      'was lost, in $_attempt '
+                      'attempt${_attempt == 1 ? '' : 's'}',
+          );
+          _lostAt = null;
           _attempt = 0;
           final waiting = _joinCompleter;
           if (waiting != null && !waiting.isCompleted) waiting.complete();
@@ -438,12 +551,16 @@ class WsSignaling implements Signaling {
 
   void _publish(List<ParticipantState> next) {
     if (listEquals(next, _participants)) return;
+    if (_roomId != null && next.length != _participants.length) {
+      _log('participants: ${next.length} other${next.length == 1 ? '' : 's'}');
+    }
     _participants = List.unmodifiable(next);
     if (!_participantChanges.isClosed) _participantChanges.add(_participants);
   }
 
   void _setStatus(WsSignalingStatus next) {
     if (next == _status) return;
+    _log('status: ${next.name}');
     _status = next;
     if (!_statusChanges.isClosed) _statusChanges.add(next);
   }
@@ -469,6 +586,13 @@ class WsSignaling implements Signaling {
     // keeps `first` and friends working under fake_async).
     listener.onCancel = () => unawaited(subscription.cancel());
   });
+
+  Duration get _now => _clock.elapsed;
+
+  void _log(String message) => log?.call(message);
+
+  static String _seconds(Duration d) =>
+      '${(d.inMilliseconds / 1000).toStringAsFixed(1)} s';
 
   void _checkNotDisposed() {
     if (_disposed) throw StateError('This WsSignaling was disposed.');
