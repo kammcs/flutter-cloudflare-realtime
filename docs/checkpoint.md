@@ -271,17 +271,17 @@ Record the date, the commit (`git rev-parse --short HEAD`), and the device model
 
 | # | Layer switching, seen on | Windows | macOS | Android |
 |---|---|---|---|---|
-| 2a | Gallery: automatic `b`/`c`, resolution matches | | | |
-| 2b | Stage `a` (1280×720), thumbnails `c` | | | |
-| 2c | Manual *Low* / *High* / *Medium* / *Auto* | | | |
-| 2d | Publisher platforms received (list them) | | | |
+| 2a | Gallery: automatic `b`/`c`, resolution matches | Pass (Pixel camera at `b`, 360×640) | | Pass |
+| 2b | Stage `a` (1280×720), thumbnails `c` | Pass (Pixel thumbnail `c` 180×320; Pixel camera on stage `a`) | | Pass (Windows on stage `a` 1280×720 30 fps) |
+| 2c | Manual *Low* / *High* / *Medium* / *Auto* | Pass | | |
+| 2d | Publisher platforms received (list them) | Android (camera, front and back; screen 1080×2424) | | Windows (camera, screen) |
 
 | # | Recovery, dropped device | Windows | macOS | Android |
 |---|---|---|---|---|
-| 3a | Simulated drop: reconnected in < 5 s | | | |
-| 3b | Real 10–20 s drop: back within 30 s of restoring | | | |
-| 3c | Capture not restarted (own tile stayed live) | | | |
-| 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | | | |
+| 3a | Simulated drop: reconnected in < 5 s | Pass (~1.1 s server-side, presence kept) | | |
+| 3b | Real 10–20 s drop: back within 30 s of restoring | **Fail (61 s after link-up; investigating — the dev server shared the dropped network)** | | Pass (~1 s after LTE took over from Wi-Fi) |
+| 3c | Capture not restarted (own tile stayed live) | Pass | | Pass |
+| 3d | Integration tests ([section 7](#7-integration-tests-against-the-dev-server)) | Pass (2026-10-02, M13) | | Pass (Pixel 10, M2–M12 runs) |
 
 The checkpoint passes when every applicable cell passes.
 
@@ -293,6 +293,17 @@ The checkpoint passes when every applicable cell passes.
   - **Both fixed** (merge `634bf4e`):
     - The Windows backend now marks the system default communications devices through Core Audio, and the default ranks first. The call screen has a Devices sheet with mic, camera and speaker pickers that switch live.
     - The tiles keep the same widget tree when the speaking highlight changes, so renderers are no longer re-created. This fix is verified on the Pixel by hand.
+- **2026-10-03, second pass** (example build `06ed94f`, room `cp-3`). The re-checks passed:
+  - the Windows mic is the system default (SteelSeries Sonar) with a level meter;
+  - the Pixel's self-view is steady;
+  - the Pixel's app bar reaches the stage toggle;
+  - the Pixel's screen stays on during video;
+  - a remote screen share switches the viewer to the stage.
+- **3b on Windows:**
+  - The NIC was down from 09:55:55Z to 09:56:16Z. Every retry failed until 09:57:17Z, then the re-push and re-pull finished within 1.2 s.
+  - The dev server (the broker) ran on the same PC, so the broker lost its network too. Production brokers don't.
+  - Under investigation. Re-run with the client's network dropped alone.
+- **3b on Android:** Wi-Fi was turned off at 09:59:12Z. The app re-sessioned at once (its broker path stayed up over USB). Media came back at 09:59:26Z, about 1 s after the phone moved to LTE.
 
 ## 7. Integration tests against the dev server
 
