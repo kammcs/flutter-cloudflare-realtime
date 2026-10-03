@@ -89,13 +89,22 @@ void main() {
 }
 
 /// A camera track if there is one, otherwise a microphone track.
+///
+/// Without a camera, getUserMedia either throws or (on the iOS Simulator)
+/// returns a stream with no track; either way, fall back to the microphone.
 Future<MediaStream> _captureLocalMedia() async {
   try {
-    return await navigator.mediaDevices.getUserMedia({
+    final stream = await navigator.mediaDevices.getUserMedia({
       'audio': false,
       'video': {'width': 640, 'height': 360},
     });
+    if (stream.getVideoTracks().isNotEmpty) return stream;
+    for (final t in stream.getTracks()) {
+      await t.stop();
+    }
+    await stream.dispose();
   } catch (_) {
-    return navigator.mediaDevices.getUserMedia({'audio': true, 'video': false});
+    // No camera, or no permission for it.
   }
+  return navigator.mediaDevices.getUserMedia({'audio': true, 'video': false});
 }

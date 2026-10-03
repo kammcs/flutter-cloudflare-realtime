@@ -22,6 +22,8 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 
 ### Development history
 
+- **iOS: the privacy manifest ships** with CocoaPods and Swift Package Manager. The podspec's `source_files` took every file under `Sources/`, so a CocoaPods build warned `no rule to process file '…/PrivacyInfo.xcprivacy'`; it now takes the Swift sources and ships the manifest as the `cloudflare_realtime_privacy` resource bundle, and `Package.swift` processes it as a resource. The manifest declares the plugin's `UserDefaults` use (`CA92.1`, `1C8F.1`); `doc/ios.md` says what the broadcast extension templates need in the app's own manifest.
+
 - **Web: a refused audio output no longer sticks** (Safari 27). `Room.setAudioOutputDevice` keeps a device only once the browser accepted it; a refusal (Safari's `NotAllowedError` outside a user gesture) throws as before and leaves the output, and later `<audio>` elements, on the previous device, instead of every later element retrying it silently. Its dartdoc and `doc/web.md` say what browsers throw and to call it from a gesture; `doc/web.md` adds the Safari results and notes (gestures for `setSinkId` and `getDisplayMedia`, the refused wake lock, `wasmAllowList` for WebAssembly). `audio_routing_test.dart` expects the refusal in WebKit; the example's output dropdown catches non-`Exception` browser errors.
 
 - **API cleanup before 0.1.0** (breaking; `docs/api-review.md`, `docs/design.md` §11, [doc/migrating-to-0.1.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/migrating-to-0.1.md)):
