@@ -20,6 +20,7 @@ import '../audio/remote_audio_sink.dart';
 import '../background/call_background.dart';
 import '../background/camera_pause.dart';
 import '../broker/broker_client.dart';
+import '../calls/system_call_types.dart';
 import '../calls/system_calls.dart';
 import '../data/data_channel_manager.dart';
 import '../media/constraints.dart';
@@ -545,7 +546,11 @@ class Room {
   ///   microphone is published later, both end up muted);
   /// - with [leaveWhenEnded] (default `true`), the room leaves when the
   ///   call ends, for example from the lock screen or a headset button;
-  /// - with [endWhenLeft] (default `true`), [leave] ends the call.
+  /// - with [endWhenLeft] (default `true`), [leave] ends the call:
+  ///   [SystemCallEndReason.local], or [SystemCallEndReason.failed] for an
+  ///   incoming call still ringing, since the room leaving (on an error,
+  ///   for example) is not the user declining it. To decline, end the call
+  ///   first ([SystemCall.end]).
   ///
   /// While the call is on hold, the room's audio is interrupted
   /// ([CallInterruptionReason.held]). Attaching another call replaces this
