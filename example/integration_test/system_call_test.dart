@@ -10,7 +10,9 @@
 //    the publication, the publication's mute updates the call; on Android
 //    the test also flips the global microphone mute behind the package's
 //    back, as Telecom, a car or a watch would. Holding interrupts the
-//    room's audio (CallInterruptionReason.held) and unholding resumes it.
+//    room's audio (CallInterruptionReason.held) and unholding resumes it,
+//    with audio both ways again: a quick hold (on iOS CallKit's session
+//    deactivation then arrives after the unhold) and a hold of 4 s.
 //    On Android the routes are Telecom's endpoints (UUID IDs): the speaker
 //    and the earpiece are selected through them. Ending the call leaves the
 //    room and, on Android, stops the foreground service.
@@ -156,23 +158,38 @@ void main() {
     _log('mute in step both ways');
     await _rising(alice, bob, 'after the mutes');
 
-    // Hold: the room's audio is interrupted, then resumed.
-    await call.setHeld(true);
-    await _until(() => call.state == SystemCallState.held, 'the call is held');
-    final interrupted = await events.next<RoomAudioInterruptedEvent>();
-    expect(interrupted.reason, CallInterruptionReason.held);
-    expect(alice.audioInterruption, CallInterruptionReason.held);
-    if (android) await _checkTelecom('held');
-    await call.setHeld(false);
-    await _until(
-      () => call.state == SystemCallState.active,
-      'the call is active again',
-    );
-    final resumed = await events.next<RoomAudioResumedEvent>();
-    expect(resumed.reason, CallInterruptionReason.held);
-    expect(alice.audioInterruption, isNull);
-    _log('held and resumed');
-    await _rising(alice, bob, 'after the hold');
+    // Hold: the room's audio is interrupted, then resumed. First a quick
+    // hold (on iOS, CallKit's deactivation of the session then arrives
+    // after the unhold), then one of a few seconds, as a person would.
+    for (final (name, holdFor) in [
+      ('quick hold', Duration.zero),
+      ('hold of 4 s', const Duration(seconds: 4)),
+    ]) {
+      await call.setHeld(true);
+      await _until(
+        () => call.state == SystemCallState.held,
+        '$name: the call is held',
+      );
+      final interrupted = await events.next<RoomAudioInterruptedEvent>();
+      expect(interrupted.reason, CallInterruptionReason.held);
+      expect(alice.audioInterruption, CallInterruptionReason.held);
+      if (android && holdFor == Duration.zero) await _checkTelecom('held');
+      await Future<void>.delayed(holdFor);
+      expect(alice.audioInterruption, CallInterruptionReason.held);
+      await call.setHeld(false);
+      await _until(
+        () => call.state == SystemCallState.active,
+        '$name: the call is active again',
+      );
+      final resumed = await events.next<RoomAudioResumedEvent>();
+      expect(resumed.reason, CallInterruptionReason.held);
+      expect(alice.audioInterruption, isNull);
+      _log('$name: held and resumed');
+      await _rising(alice, bob, 'after the $name');
+      // Late events from the hold (iOS: the session's deactivation and
+      // activation) don't interrupt the room again.
+      expect(alice.audioInterruption, isNull, reason: 'after the $name');
+    }
 
     // The routes: Telecom's endpoints on Android, the platform's on iOS.
     final endpoints = await _native.invokeMapMethod<String, Object?>(

@@ -740,6 +740,67 @@ void main() {
       ]);
     });
 
+    test("iOS: a quick hold's deactivation, arriving after the unhold, "
+        "doesn't interrupt the call again", () async {
+      system.systemActivatesAudio = true;
+      await calls().configure();
+      final call = await calls().reportIncomingCall(id: _id, handle: _ada);
+      await call.answer();
+      system.system(const CallAudioSignal(activated: true));
+      await _settle();
+      final audio = CallAudio.instance;
+      final changes = <CallInterruptionReason?>[];
+      final sub = audio.interruption.stream.listen(changes.add);
+      addTearDown(sub.cancel);
+
+      // As on an iPhone: CallKit deactivates the session ~0.5 s after the
+      // hold, so a quick unhold comes first.
+      system.system(const CallHeldSignal(_id, onHold: true));
+      await _settle();
+      expect(audio.interruption.value, CallInterruptionReason.held);
+      system.system(const CallHeldSignal(_id, onHold: false));
+      await _settle();
+      expect(audio.interruption.value, isNull);
+      system.system(const CallAudioSignal(activated: false));
+      await _settle();
+      expect(audio.interruption.value, isNull, reason: "the hold's");
+      system.system(const CallAudioSignal(activated: true));
+      await _settle();
+      expect(audio.interruption.value, isNull);
+      expect(changes, [null, CallInterruptionReason.held, null]);
+
+      // The hold's deactivation came: a later one interrupts again.
+      system.system(const CallAudioSignal(activated: false));
+      await _settle();
+      expect(audio.interruption.value, CallInterruptionReason.unknown);
+      system.system(const CallAudioSignal(activated: true));
+      await _settle();
+      expect(audio.interruption.value, isNull);
+    });
+
+    test('a hold whose deactivation came in time owes nothing', () async {
+      system.systemActivatesAudio = true;
+      await calls().configure();
+      final call = await calls().reportIncomingCall(id: _id, handle: _ada);
+      await call.answer();
+      system.system(const CallAudioSignal(activated: true));
+      await _settle();
+      final audio = CallAudio.instance;
+
+      system.system(const CallHeldSignal(_id, onHold: true));
+      system.system(const CallAudioSignal(activated: false));
+      await _settle();
+      expect(audio.interruption.value, CallInterruptionReason.held);
+      system.system(const CallHeldSignal(_id, onHold: false));
+      system.system(const CallAudioSignal(activated: true));
+      await _settle();
+      expect(audio.interruption.value, isNull);
+
+      system.system(const CallAudioSignal(activated: false));
+      await _settle();
+      expect(audio.interruption.value, CallInterruptionReason.unknown);
+    });
+
     test('an interruption from before the call is taken back by the '
         'call', () async {
       phone.interrupt(

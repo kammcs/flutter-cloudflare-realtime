@@ -24,9 +24,11 @@ import UIKit
 ///
 /// Interruptions: `AVAudioSession.interruptionNotification` is forwarded as
 /// `{event: interruption, type: began|ended, reason: unknown}` (iOS doesn't
-/// say what interrupted). WebRTC's `RTCAudioSession` re-activates the
-/// session itself after an interruption (and when the app becomes active
-/// during one); `resume` does the same, for Dart's policy.
+/// say what interrupted), except while a CallKit call exists (§4.8: the
+/// call's hold and audio deactivation are its interruptions then). WebRTC's
+/// `RTCAudioSession` re-activates the session itself after an interruption
+/// (and when the app becomes active during one); `resume` does the same,
+/// for Dart's policy.
 public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var sink: FlutterEventSink?
   private var observers: [NSObjectProtocol] = []
@@ -245,16 +247,36 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
   }
 
   private func interruption(_ notification: Notification) {
-    guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+    let event = Self.interruptionEvent(
+      notification.userInfo, callKitOwnsSession: SystemCalls.shared.ownsAudioSession)
+    if let event { sink?(event) }
+  }
+
+  /// The event for an `AVAudioSession` interruption, or `nil`.
+  ///
+  /// `nil` while a CallKit call exists (§4.8): CallKit owns the session
+  /// then, and the call's interruptions are its hold and its audio
+  /// deactivation (`SystemCalls`). A notification iOS posts for those (it
+  /// can arrive late, after the unhold) must not interrupt the room again.
+  static func interruptionEvent(_ userInfo: [AnyHashable: Any]?, callKitOwnsSession: Bool)
+    -> [String: Any]?
+  {
+    guard let raw = userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
       let type = AVAudioSession.InterruptionType(rawValue: raw)
-    else { return }
+    else { return nil }
+    if callKitOwnsSession {
+      NSLog(
+        "cloudflare_realtime: audio session interruption (%@) left to CallKit",
+        type == .began ? "began" : "ended")
+      return nil
+    }
     switch type {
     case .began:
-      sink?(["event": "interruption", "type": "began", "reason": "unknown"])
+      return ["event": "interruption", "type": "began", "reason": "unknown"]
     case .ended:
-      sink?(["event": "interruption", "type": "ended"])
+      return ["event": "interruption", "type": "ended"]
     @unknown default:
-      break
+      return nil
     }
   }
 

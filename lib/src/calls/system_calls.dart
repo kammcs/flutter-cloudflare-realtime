@@ -74,6 +74,9 @@ class SystemCalls {
   final StreamController<AudioInterruptionSignal> _audioInterruptions =
       StreamController.broadcast();
   final StreamController<void> _endpointChanges = StreamController.broadcast();
+  // A hold took the audio and its deactivation hasn't arrived yet (iOS:
+  // CallKit's didDeactivate can come after a quick unhold).
+  bool _holdOwesDeactivation = false;
   SystemCallAudioBackend? _audio;
   late final CoalescingRunner _audioRunner = CoalescingRunner(_applyAudio);
   final StateStream<String?> _voipToken = StateStream(null, distinct: true);
@@ -282,6 +285,8 @@ class SystemCalls {
         _emit(SystemCallHeldEvent(call, onHold: onHold));
         if (onHold &&
             !_calls.values.any((c) => c.state == SystemCallState.active)) {
+          // The system takes the audio for the hold.
+          _holdOwesDeactivation = true;
           _audioInterruptions.add(
             const AudioInterruptionSignal.began(CallInterruptionReason.held),
           );
@@ -306,10 +311,16 @@ class SystemCalls {
               : SystemCallAudioDeactivatedEvent(call),
         );
         // A deactivation without a hold (iOS) leaves the call silent too.
+        // One a hold owes is the hold's, even when it arrives after the
+        // unhold (iOS: CallKit deactivates the session ~0.5 s after the
+        // hold, then activates it again for the unheld call), so it doesn't
+        // interrupt the call a second time.
         final held = _calls.values.any((c) => c.state == SystemCallState.held);
+        final owed = _holdOwesDeactivation;
+        _holdOwesDeactivation = false;
         if (activated) {
           _audioInterruptions.add(const AudioInterruptionSignal.ended());
-        } else if (!held && call.state == SystemCallState.active) {
+        } else if (!held && !owed && call.state == SystemCallState.active) {
           _audioInterruptions.add(
             const AudioInterruptionSignal.began(CallInterruptionReason.unknown),
           );
@@ -324,6 +335,7 @@ class SystemCalls {
   void _ended(String id, SystemCallEndReason reason) {
     final call = _calls.remove(id);
     if (call == null) return;
+    if (_calls.isEmpty) _holdOwesDeactivation = false;
     call._end(reason);
     _publish();
     unawaited(_audioRunner.run());
