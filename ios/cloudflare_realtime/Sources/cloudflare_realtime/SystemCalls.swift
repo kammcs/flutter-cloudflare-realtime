@@ -534,6 +534,13 @@ extension SystemCalls: CXProviderDelegate {
     action.fulfill()
   }
 
+  /// An end the app didn't request is `declined` while ringing incoming,
+  /// else `local`. CallKit's API doesn't say who asked: the user's Decline
+  /// (the lock screen, the banner, a headset, a watch) and CallKit ending
+  /// the call itself (the Simulator's "no UI to host the call", another
+  /// call taking over) arrive as the same action, so a ringing call CallKit
+  /// ends on its own is `declined` too (docs/design.md §4.8, Who ended a
+  /// ringing call).
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     let uuid = action.callUUID
     if let call = registry[uuid] {

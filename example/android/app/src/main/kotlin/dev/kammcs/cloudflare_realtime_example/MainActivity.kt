@@ -86,6 +86,12 @@ class MainActivity : FlutterActivity() {
                     "sendCallNotificationAction" -> result.success(
                         sendCallNotificationAction(call.argument<String>("action") ?: ""),
                     )
+                    // Telecom ending a ringing call, through a companion
+                    // InCallService (debug builds, with the driver's app op).
+                    "companionSeesRingingCall" -> result.success(TestCallCompanion.seesRingingCall())
+                    "companionEndRingingCall" -> result.success(
+                        TestCallCompanion.endRingingCall(call.argument<String>("how") ?: ""),
+                    )
                     else -> result.notImplemented()
                 }
             }

@@ -361,10 +361,25 @@ internal object SystemCallRegistry {
         if (entry.state == "ringing") answered(entry)
     }
 
+    /**
+     * Telecom ended the call. The package's own Decline and Hang up, and
+     * Dart's `end`, never get here with a reason to find: they set
+     * [SystemCallEntry.endingReason] first. So this is Telecom, for someone
+     * else (docs/design.md §4.8, Who ended a ringing call):
+     *
+     * - `REJECTED`: Telecom's reject, which a person asks for (a Bluetooth
+     *   headset, a car or a watch declining it): `declined`.
+     * - Telecom's disconnect of a ringing call (it makes room for an
+     *   emergency call or a phone call the user places, or a companion
+     *   app ends it) carries Telecom's own cause on Android 14+, `UNKNOWN`
+     *   unless it set one, and is `LOCAL` through Core-Telecom's
+     *   `ConnectionService` below 14. Nobody declined it: `failed`, as for
+     *   any other cause. Once answered, `LOCAL` is `local`.
+     */
     private fun onSystemDisconnect(entry: SystemCallEntry, cause: DisconnectCause) {
         val ringing = !entry.outgoing && entry.state == "ringing"
         val reason = when (cause.code) {
-            DisconnectCause.LOCAL -> if (ringing) "declined" else "local"
+            DisconnectCause.LOCAL -> if (ringing) "failed" else "local"
             DisconnectCause.REJECTED -> "declined"
             DisconnectCause.MISSED -> "unanswered"
             DisconnectCause.CANCELED -> if (entry.outgoing) "local" else "unanswered"
@@ -372,6 +387,7 @@ internal object SystemCallRegistry {
             DisconnectCause.ANSWERED_ELSEWHERE -> "answeredElsewhere"
             else -> "failed"
         }
+        Log.i(TAG, "System call ${entry.id}: Telecom disconnected it ($cause), ringing $ringing")
         entry.endingReason = entry.endingReason ?: reason
         finish(entry, entry.endingReason!!)
     }

@@ -742,6 +742,35 @@ final class SystemCallsHandlerTests: XCTestCase {
     }
   }
 
+  /// CallKit ends a ringing call by itself on the Simulator (callservicesd:
+  /// "Disconnecting call because there wont be a UI to host the call"),
+  /// about a second after the report. It arrives as an ordinary
+  /// `CXEndCallAction` the app didn't request, as the user's Decline does:
+  /// CallKit's API doesn't say who asked, so the package can't tell them
+  /// apart and reports `declined` (docs/design.md §4.8, Who ended a ringing
+  /// call). This records that limit.
+  func testCallKitEndingARingingCallItselfIsDeclinedOnSimulator() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    try reportRinging(calls)
+    let deadline = Date().addingTimeInterval(5)
+    while !calls.registry.isEmpty && Date() < deadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard calls.registry.isEmpty else {
+      _ = invoke(calls, "end", ["id": id, "reason": "failed"])
+      throw XCTSkip("CallKit kept the ringing call here (it has a UI to host it)")
+    }
+    XCTAssertEqual(received.count, 1)
+    XCTAssertEqual(received.first?["event"] as? String, "ended")
+    XCTAssertEqual(received.first?["id"] as? String, id)
+    XCTAssertEqual(received.first?["reason"] as? String, "declined")
+  }
+
   private func waitFor(_ condition: @escaping () -> Bool, timeout: TimeInterval = 10) throws {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition() && Date() < deadline {

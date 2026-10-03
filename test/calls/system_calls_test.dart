@@ -473,6 +473,39 @@ void main() {
       expect(call.endReason, SystemCallEndReason.declined);
     });
 
+    test('a ringing call the system ends keeps the system\'s reason: '
+        'declined only when declined', () async {
+      await calls().configure();
+      final ended = <SystemCallEndedEvent>[];
+      final sub = calls().events.listen((e) {
+        if (e is SystemCallEndedEvent) ended.add(e);
+      });
+      addTearDown(sub.cancel);
+
+      // The user's Decline in the system's UI (Telecom's reject, CallKit's
+      // end action).
+      final declined = await calls().reportIncomingCall(id: _id, handle: _ada);
+      system.system(const CallEndedSignal(_id, SystemCallEndReason.declined));
+      await _settle();
+      expect(declined.endReason, SystemCallEndReason.declined);
+
+      // The system ending it without anyone declining (Telecom making room
+      // for an emergency call): failed, not reclassified as a decline
+      // because it was ringing.
+      final dropped = await calls().reportIncomingCall(id: _id2, handle: _ada);
+      expect(dropped.state, SystemCallState.ringing);
+      system.system(const CallEndedSignal(_id2, SystemCallEndReason.failed));
+      await _settle();
+      expect(dropped.state, SystemCallState.ended);
+      expect(dropped.endReason, SystemCallEndReason.failed);
+      expect(await dropped.whenEnded, SystemCallEndReason.failed);
+      expect(system.calls.where((c) => c.startsWith('end')), isEmpty);
+      expect(ended.map((e) => (e.call.id, e.reason)), [
+        (_id, SystemCallEndReason.declined),
+        (_id2, SystemCallEndReason.failed),
+      ]);
+    });
+
     test('an outgoing call: dialing, connecting, connected', () async {
       await calls().configure();
       final call = await calls().startOutgoingCall(

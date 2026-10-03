@@ -11,6 +11,11 @@
 #   and its types, 0x4 phoneCall, 0x80 microphone);
 # - the global microphone mute (`dumpsys audio`).
 #
+# It also allows the app op MANAGE_ONGOING_CALLS (before the test, and again
+# at "COMPANION NOW"), so Telecom binds the example's companion
+# InCallService (debug builds), which ends a ringing call from Telecom's
+# side; the op is reset when the test ends.
+#
 # Usage, from example/, with the phone's adb ID in ANDROID_SERIAL (adb uses
 # it too) and the broker settings as for any integration test:
 #
@@ -33,6 +38,11 @@ LOG=$(mktemp -t system_call_test.XXXXXX)
 # example reports incoming calls: let it post notifications.
 "$ADB" shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS 2>/dev/null
 "$ADB" shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO 2>/dev/null
+# Telecom decides which InCallServices to bind when a call starts and keeps
+# that while calls follow each other, so the companion's app op is allowed
+# before the first call (and again at "COMPANION NOW", after a fresh
+# install).
+"$ADB" shell appops set "$PACKAGE" MANAGE_ONGOING_CALLS allow 2>/dev/null
 
 flutter test integration_test/system_call_test.dart -d "$ANDROID_SERIAL" \
   --no-uninstall --dart-define=CF_REALTIME_SYSTEM_CALL_DRIVER=1 "$@" \
@@ -45,6 +55,7 @@ count() { grep -c -- "$1" "$LOG" 2>/dev/null || true; }
 checks=0
 background=0
 foreground=0
+companion=0
 while kill -0 "$TEST" 2>/dev/null; do
   if [ "$(count 'BACKGROUND NOW')" -gt "$background" ]; then
     background=$((background + 1))
@@ -55,6 +66,11 @@ while kill -0 "$TEST" 2>/dev/null; do
     foreground=$((foreground + 1))
     echo "--- driver: back to the app"
     "$ADB" shell am start -n "$PACKAGE/.MainActivity" >/dev/null
+  fi
+  if [ "$companion" -eq 0 ] && [ "$(count 'COMPANION NOW')" -gt 0 ]; then
+    companion=1
+    echo "--- driver: let the test's companion InCallService see the calls"
+    "$ADB" shell appops set "$PACKAGE" MANAGE_ONGOING_CALLS allow
   fi
   if [ "$(count 'CHECK TELECOM')" -gt "$checks" ]; then
     checks=$((checks + 1))
@@ -73,6 +89,7 @@ while kill -0 "$TEST" 2>/dev/null; do
 done
 wait "$TEST"
 STATUS=$?
+"$ADB" shell appops set "$PACKAGE" MANAGE_ONGOING_CALLS default 2>/dev/null
 sleep 1
 kill "$TAIL" 2>/dev/null
 rm -f "$LOG"

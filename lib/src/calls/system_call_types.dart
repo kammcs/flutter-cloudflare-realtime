@@ -81,7 +81,18 @@ enum SystemCallEndReason {
   /// lock screen, a headset or car button, a watch).
   local,
 
-  /// An incoming call declined on this device.
+  /// An incoming call declined on this device: by the app
+  /// ([SystemCall.end] while ringing), the package's Decline (Android's
+  /// call notification), or the system's call UI (the lock screen, a
+  /// headset, a car or a watch).
+  ///
+  /// **On iOS it may also be CallKit ending the ringing call by itself**
+  /// (for example when another call takes over, or on the Simulator, which
+  /// has no call UI): CallKit's API reports both as the same end action,
+  /// so they can't be told apart. Android tells them apart: Telecom ending
+  /// a ringing call that nobody declined is [failed] (except for an
+  /// emergency call placed while it rings, which Telecom ends as a
+  /// decline). See `docs/design.md` §4.8, Who ended a ringing call.
   declined,
 
   /// The other side hung up.
@@ -90,8 +101,12 @@ enum SystemCallEndReason {
   /// An incoming call was never answered.
   unanswered,
 
-  /// The call failed (for example it couldn't connect, or the system reset
-  /// its call service).
+  /// The call failed, or the system ended it without anyone choosing to:
+  /// it couldn't connect, the system refused it (a pushed call filtered by
+  /// Do Not Disturb), reset its call service (iOS), or disconnected it
+  /// (Android's Telecom making room for an emergency call or a phone call
+  /// the user places). For a ringing incoming call this means the user
+  /// didn't decline it, and may not have seen it.
   failed,
 
   /// Answered on another of the user's devices.
