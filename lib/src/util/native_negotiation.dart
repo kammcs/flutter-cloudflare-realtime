@@ -14,6 +14,7 @@ import 'dart:async';
 /// platform thread, which on macOS (and iOS) is also the Dart UI thread,
 /// until the description is applied: the app freezes. The description
 /// calls themselves complete asynchronously and don't block it.
+/// Reported upstream as flutter-webrtc issue #2217.
 ///
 /// The audio device module is one per process, so this is process-wide.
 ///

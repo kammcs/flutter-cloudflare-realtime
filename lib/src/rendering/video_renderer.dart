@@ -94,7 +94,8 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
     // without a nil check: a block that runs after the renderer is
     // released crashes the app. Let the blocks of the last frames run
     // first (docs/design.md §4.3,
-    // Releasing a native renderer).
+    // Releasing a native renderer). Fixed upstream by flutter-webrtc
+    // PR #2190 (after 1.6.2+hotfix.3): drop the wait once a release has it.
     if (_hadStream) await Future<void>.delayed(_releaseDelay);
     await _renderer.dispose();
   }
