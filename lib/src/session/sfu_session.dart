@@ -25,6 +25,7 @@ import 'flutter_webrtc_peer_connection.dart';
 import 'negotiation_guard.dart';
 import 'op_queue.dart';
 import 'peer_connection.dart';
+import 'peer_connection_warmup.dart';
 import 'publish_options.dart';
 import 'sdp_repair.dart';
 import 'sfu_session_events.dart';
@@ -1569,6 +1570,11 @@ Future<SfuSession> connectSfuSession({
   // flutter_webrtc's first `createPeerConnection` can take seconds on a
   // loaded machine, and the SFU expires a session whose peer connection
   // hasn't connected (docs/design.md §4.2, Connect).
+  // A prewarm still creating its peer connection
+  // (`CloudflareRealtime.prewarm`) would hold this one up too: wait for it
+  // before `sessions/new` starts the SFU's clock. Its peer connection is
+  // closed once this one exists, so the platform keeps what it set up.
+  await PeerConnectionWarmup.whenDone(options.negotiationTimeout);
   final configuredIceServers = options.iceServers;
   final NewSessionResponse session;
   final PeerConnection peerConnection;
@@ -1603,6 +1609,8 @@ Future<SfuSession> connectSfuSession({
     if (opened != null) await _closeQuietly(opened);
     final error = e.errors.$1 ?? e.errors.$2!;
     Error.throwWithStackTrace(error.error, error.stackTrace);
+  } finally {
+    unawaited(PeerConnectionWarmup.release());
   }
 
   if (session.hasError) {

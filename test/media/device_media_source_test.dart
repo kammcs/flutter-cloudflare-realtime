@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:cloudflare_realtime/src/media/device_media_source.dart'
+    show unlistedDefaultDevice;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -550,6 +552,182 @@ void main() {
         await camera.dispose();
       },
     );
+  });
+
+  group('capture before listing on macOS', () {
+    // libwebrtc's audio device module lists the system default first, as
+    // `default`.
+    const macDefault = MediaDevice(
+      deviceId: 'default',
+      kind: MediaDeviceKind.audioInput,
+      label: 'Default',
+      isDefault: true,
+    );
+    late FakeMediaBackend mac;
+
+    setUp(() {
+      mac = FakeMediaBackend(
+        platform: MediaPlatform.macos,
+        devices: [cam1, macDefault, mic1, mic2, speaker1],
+      );
+    });
+
+    tearDown(() => mac.close());
+
+    String? requested(Map<String, dynamic> constraints) =>
+        requestedDeviceId(Map<String, dynamic>.from(constraints['audio']));
+
+    test('a microphone with no preferred device captures the default '
+        'without listing the devices', () async {
+      final mic = MicrophoneSource(backend: mac);
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 0);
+
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 0);
+      expect(requested(mac.userMediaCalls.single), 'default');
+      expect(mic.track!.device!.deviceId, 'default');
+      expect(mic.activeDevice!.deviceId, 'default');
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 0, reason: 'no refresh after the capture');
+
+      // A device change before anyone used the list reads nothing either.
+      mac.setDevices([cam1, macDefault, mic1, speaker1]);
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 0);
+      expect(mac.userMediaCalls, hasLength(1));
+      await mic.dispose();
+    });
+
+    test('watching the devices lists them and keeps the capture', () async {
+      final mic = MicrophoneSource(backend: mac);
+      await mic.startBroadcasting();
+      final captured = mic.track;
+
+      expect(await mic.devicesChanges.firstWhere((l) => l.isNotEmpty), [
+        macDefault,
+        mic1,
+        mic2,
+      ]);
+      expect(mac.enumerateCalls, 1);
+      await pumpEventQueue();
+      expect(mic.track, same(captured));
+      expect(mac.userMediaCalls, hasLength(1));
+      expect(mic.activeDevice, macDefault, reason: 'the listed label');
+
+      // Choosing another microphone works as before.
+      await mic.setPreferredDevice(mic2);
+      expect(requested(mac.userMediaCalls.last), mic2.deviceId);
+      expect(mic.track!.device, mic2);
+      await mic.dispose();
+    });
+
+    test('reading the devices starts the list', () async {
+      final mic = MicrophoneSource(backend: mac);
+      expect(mic.devices, isEmpty);
+      await mic.deviceList.ready;
+      expect(mac.enumerateCalls, 1);
+      expect(mic.devices, [macDefault, mic1, mic2]);
+      await mic.dispose();
+    });
+
+    test('a preferred device lists the devices first', () async {
+      final mic = MicrophoneSource(backend: mac, preferredDevice: mic2);
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 1);
+      expect(requested(mac.userMediaCalls.single), mic2.deviceId);
+      expect(mic.track!.device, mic2);
+      await mic.dispose();
+    });
+
+    test('a list already in use is read first', () async {
+      final devices = MediaDeviceList(backend: mac);
+      await devices.ready;
+      final mic = MicrophoneSource(backend: mac, deviceList: devices);
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 1);
+      expect(requested(mac.userMediaCalls.single), 'default');
+      expect(mic.track!.device, macDefault);
+      await mic.dispose();
+      await devices.dispose();
+    });
+
+    test('when the default fails, lists the devices and falls back', () async {
+      mac.failingDeviceIds.add('default');
+      final mic = MicrophoneSource(backend: mac);
+      final errors = <MediaException>[];
+      mic.errors.listen(errors.add);
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 1);
+      expect(mac.userMediaCalls.map(requested), ['default', mic1.deviceId]);
+      expect(mic.track!.device, mic1);
+      expect(errors, isEmpty);
+      await mic.dispose();
+    });
+
+    test('when every microphone fails, reports each once', () async {
+      mac.failingDeviceIds.addAll(['default', mic1.deviceId, mic2.deviceId]);
+      final mic = MicrophoneSource(backend: mac);
+      final errors = <MediaException>[];
+      mic.errors.listen(errors.add);
+      expect(await mic.startBroadcasting(), isFalse);
+      await pumpEventQueue();
+      expect(mac.userMediaCalls.map(requested), [
+        'default',
+        mic1.deviceId,
+        mic2.deviceId,
+      ]);
+      final exhausted = errors.single as DevicesExhaustedException;
+      expect(exhausted.failures.map((f) => f.$1), [
+        isA<MediaDevice>().having((d) => d.deviceId, 'deviceId', 'default'),
+        mic1,
+        mic2,
+      ]);
+      await mic.dispose();
+    });
+
+    test('a camera lists the devices as before', () async {
+      final camera = CameraSource(backend: mac);
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 1);
+      await camera.enable();
+      expect(camera.track!.device, cam1);
+      await camera.dispose();
+    });
+
+    test('elsewhere a microphone lists the devices as before', () async {
+      for (final platform in [
+        MediaPlatform.windows,
+        MediaPlatform.android,
+        MediaPlatform.ios,
+        MediaPlatform.web,
+      ]) {
+        final other = FakeMediaBackend(
+          platform: platform,
+          devices: [mic1, mic2],
+        );
+        final mic = MicrophoneSource(backend: other);
+        await pumpEventQueue();
+        expect(other.enumerateCalls, 1, reason: '$platform');
+        await mic.dispose();
+        await other.close();
+      }
+    });
+
+    test('unlistedDefaultDevice is a Mac microphone only', () {
+      for (final platform in MediaPlatform.values) {
+        for (final kind in MediaDeviceKind.values) {
+          final device = unlistedDefaultDevice(kind, platform);
+          if (platform == MediaPlatform.macos &&
+              kind == MediaDeviceKind.audioInput) {
+            expect(device!.deviceId, 'default');
+            expect(device.isDefault, isTrue);
+          } else {
+            expect(device, isNull, reason: '$platform $kind');
+          }
+        }
+      }
+    });
   });
 
   group('capture timeout', () {

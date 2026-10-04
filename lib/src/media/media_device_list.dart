@@ -27,12 +27,22 @@ const ListEquality<MediaDevice> _listEquality = ListEquality<MediaDevice>();
 /// On the web, device IDs and labels are empty until the user grants
 /// permission. Sources call [refresh] after their first successful capture
 /// so the full list appears.
+///
+/// **The list enumerates when it is first used:** reading [ready], [devices]
+/// (or a kind's list) or one of the change streams, or calling [refresh].
+/// Until then it costs nothing, and ignores device changes. A
+/// [MicrophoneSource] on macOS with no preferred device captures from the
+/// system default without the list (`docs/design.md` §4.5, Capture before
+/// listing on macOS), because the first enumeration in a process blocks a
+/// Mac's UI thread for seconds.
 class MediaDeviceList {
-  /// Creates the list and starts enumerating devices through [backend].
+  /// Creates the list. It enumerates devices through [backend] when first
+  /// used.
   MediaDeviceList({MediaBackend backend = const FlutterWebrtcMediaBackend()})
     : _backend = backend {
-    _deviceChanges = backend.deviceChanges.listen((_) => refresh());
-    _ready = refresh();
+    _deviceChanges = backend.deviceChanges.listen((_) {
+      if (_started) refresh();
+    });
   }
 
   final MediaBackend _backend;
@@ -41,21 +51,34 @@ class MediaDeviceList {
     equals: _listEquality.equals,
   );
   late final StreamSubscription<void> _deviceChanges;
-  late final Future<void> _ready;
+  bool _started = false;
+  late final Future<void> _ready = _start();
   late final CoalescingRunner _enumerator = CoalescingRunner(_enumerate);
   bool _disposed = false;
 
+  Future<void> _start() {
+    _started = true;
+    return _disposed ? Future.value() : _enumerator.run();
+  }
+
   /// Completes when the first enumeration has finished (successfully or
-  /// not).
+  /// not). Starts it if the list wasn't used yet.
   Future<void> get ready => _ready;
 
   /// Every device, in the order the platform lists them. Empty until the
-  /// first enumeration finishes.
-  List<MediaDevice> get devices => _devices.value;
+  /// first enumeration finishes; reading it starts that enumeration.
+  List<MediaDevice> get devices {
+    unawaited(_ready);
+    return _devices.value;
+  }
 
   /// [devices], replaying the current list to each new listener, then
-  /// emitting when it changes. Completes after [dispose].
-  Stream<List<MediaDevice>> get devicesChanges => _devices.stream;
+  /// emitting when it changes. Completes after [dispose]. Starts the first
+  /// enumeration.
+  Stream<List<MediaDevice>> get devicesChanges {
+    unawaited(_ready);
+    return _devices.stream;
+  }
 
   /// The devices of one [kind], now.
   List<MediaDevice> devicesOfKind(MediaDeviceKind kind) =>
@@ -63,9 +86,15 @@ class MediaDeviceList {
 
   /// [devicesOfKind], replaying the current list to each new listener, then
   /// emitting when it changes.
-  Stream<List<MediaDevice>> devicesOfKindChanges(MediaDeviceKind kind) {
+  Stream<List<MediaDevice>> devicesOfKindChanges(MediaDeviceKind kind) =>
+      _kindChanges(devicesChanges, kind);
+
+  static Stream<List<MediaDevice>> _kindChanges(
+    Stream<List<MediaDevice>> all,
+    MediaDeviceKind kind,
+  ) {
     List<MediaDevice>? previous;
-    return devicesChanges.map((all) => _ofKind(all, kind)).where((list) {
+    return all.map((all) => _ofKind(all, kind)).where((list) {
       if (previous != null && _listEquality.equals(previous, list)) {
         return false;
       }
@@ -113,13 +142,17 @@ class MediaDeviceList {
   /// a process can take about 9 s (AVFoundation building its device list).
   static const enumerationTimeout = Duration(seconds: 10);
 
-  /// Re-enumerates devices now.
+  /// Re-enumerates devices now (the first time: enumerates them).
   ///
   /// Concurrent calls share one enumeration, plus one more if a call arrived
   /// while it was running. Enumeration errors (and an enumeration that
   /// takes longer than [enumerationTimeout]) are logged and leave the list
   /// unchanged.
-  Future<void> refresh() => _disposed ? Future.value() : _enumerator.run();
+  Future<void> refresh() {
+    if (_disposed) return Future.value();
+    if (!_started) return _ready;
+    return _enumerator.run();
+  }
 
   Future<void> _enumerate() async {
     if (_disposed) return;
@@ -141,4 +174,26 @@ class MediaDeviceList {
     await _deviceChanges.cancel();
     await _devices.close();
   }
+}
+
+/// The package's own access to a [MediaDeviceList], which doesn't start
+/// it: a source reads and watches the list without making it enumerate
+/// (`docs/design.md` §4.5, Capture before listing on macOS).
+///
+/// Internal: not exported from the package barrel.
+extension MediaDeviceListInternal on MediaDeviceList {
+  /// Whether the list has been used, so it enumerates (or has).
+  bool get isStarted => _started;
+
+  /// The devices of [kind] now, without starting the list.
+  List<MediaDevice> currentDevicesOfKind(MediaDeviceKind kind) =>
+      MediaDeviceList._ofKind(_devices.value, kind);
+
+  /// [currentDevicesOfKind], replaying the current list to each new
+  /// listener, then each change, without starting the list.
+  Stream<List<MediaDevice>> watchDevicesOfKind(MediaDeviceKind kind) =>
+      MediaDeviceList._kindChanges(_devices.stream, kind);
+
+  /// [MediaDeviceList.refresh] if the list has started; otherwise nothing.
+  Future<void> refreshIfStarted() => _started ? refresh() : Future.value();
 }

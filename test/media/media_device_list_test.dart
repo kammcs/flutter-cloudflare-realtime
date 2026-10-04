@@ -9,8 +9,10 @@ void main() {
   setUp(() => backend = FakeMediaBackend(devices: [cam1, mic1, speaker1]));
   tearDown(() => backend.close());
 
-  test('enumerates at creation and splits by kind', () async {
+  test('enumerates when first used and splits by kind', () async {
     final list = MediaDeviceList(backend: backend);
+    await pumpEventQueue();
+    expect(backend.enumerateCalls, 0);
     expect(list.devices, isEmpty);
     await list.ready;
     expect(list.devices, [cam1, mic1, speaker1]);
@@ -21,6 +23,39 @@ void main() {
     expect(await list.audioInputsChanges.first, [mic1]);
     expect(await list.videoInputsChanges.first, [cam1]);
     expect(await list.audioOutputsChanges.first, [speaker1]);
+    await list.dispose();
+  });
+
+  test('each use starts it, once', () async {
+    for (final use in <String, Future<void> Function(MediaDeviceList)>{
+      'ready': (l) => l.ready,
+      'refresh': (l) => l.refresh(),
+      'devices': (l) async => l.devices,
+      'audioInputs': (l) async => l.audioInputs,
+      'devicesChanges': (l) => l.devicesChanges.first,
+      'videoInputsChanges': (l) => l.videoInputsChanges.first,
+    }.entries) {
+      backend.enumerateCalls = 0;
+      final list = MediaDeviceList(backend: backend);
+      await use.value(list);
+      await list.ready;
+      expect(backend.enumerateCalls, 1, reason: use.key);
+      expect(list.devices, [cam1, mic1, speaker1], reason: use.key);
+      await list.dispose();
+    }
+  });
+
+  test('ignores device changes until used', () async {
+    final list = MediaDeviceList(backend: backend);
+    backend.setDevices([cam1, mic1, mic2, speaker1]);
+    await pumpEventQueue();
+    expect(backend.enumerateCalls, 0);
+    await list.ready;
+    expect(list.audioInputs, [mic1, mic2]);
+    backend.setDevices([cam1, mic1, speaker1]);
+    await pumpEventQueue();
+    expect(backend.enumerateCalls, 2);
+    expect(list.audioInputs, [mic1]);
     await list.dispose();
   });
 

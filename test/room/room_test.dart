@@ -778,6 +778,56 @@ void main() {
     });
   });
 
+  group('macOS microphone', () {
+    const macDefault = MediaDevice(
+      deviceId: 'default',
+      kind: MediaDeviceKind.audioInput,
+      label: 'Default',
+      isDefault: true,
+    );
+
+    setUp(() {
+      h = RoomHarness(
+        media: FakeMediaBackend(
+          platform: MediaPlatform.macos,
+          devices: [cam1, macDefault, mic1],
+        ),
+      );
+    });
+
+    test('publishes the default without listing the devices', () async {
+      final alice = await h.join('alice');
+      final mic = await alice.localParticipant.publishMicrophone();
+      await _settle();
+      expect(await mic.setMuted(true), isTrue);
+      expect(await mic.setMuted(false), isFalse);
+      await _settle();
+      expect(h.media.enumerateCalls, 0);
+      expect(h.media.userMediaCalls, hasLength(1));
+      expect((h.media.userMediaCalls.single['audio'] as Map)['optional'], [
+        {'sourceId': 'default'},
+      ]);
+      expect(h.pcOf(alice).transceivers.single.sentTrack, isNotNull);
+
+      // A camera lists them, and the microphone keeps its capture.
+      await alice.localParticipant.publishCamera();
+      await _settle();
+      expect(h.media.enumerateCalls, 1);
+      expect(h.media.userMediaCalls, hasLength(2));
+      await alice.leave();
+    });
+
+    test('a chosen microphone lists the devices first', () async {
+      final alice = await h.join('alice');
+      await alice.localParticipant.publishMicrophone(device: mic1);
+      expect(h.media.enumerateCalls, 1);
+      expect((h.media.userMediaCalls.single['audio'] as Map)['optional'], [
+        {'sourceId': mic1.deviceId},
+      ]);
+      await alice.leave();
+    });
+  });
+
   group('screen share', () {
     final screen1 = const ScreenSource(
       id: 'screen-1',
