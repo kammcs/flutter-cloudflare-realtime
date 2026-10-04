@@ -848,6 +848,205 @@ await session.republishDataChannel(input); await session.resubscribeDataChannel(
   - **Closing order.** On Windows, `RTCPeerConnection.close()` makes the plugin forget the connection, and `dispose()` then fails to close the channels (`dataChannelClose() peerConnection is null`), leaking their native observers. The wrapper closes its channels (including the SFU's `server-events`) before closing the connection.
 - **Not done:** `waitForAck` (hold delivery until the subscriber acks) and a reply-sender identity for `canReply` traffic; neither is needed by the first consumer.
 
+### 9.1 Media state over the SFU (proposal)
+
+**Status: proposed (October 2026), for the owner's review. Nothing here is built.** It came out of an integration review. Today every change to a participant's media state is a `Signaling.update` (§4.3, Announcing): a mute or unmute, a settled layer change of any remote video (`layerDemand`, §6.2), and a change of captured size (§6.3, checked every 3 s). Neither the media nor the SFU carries that state, so it all goes through the app's presence transport. Some apps' signaling is rate-limited, for example presence services that allow a few updates per 30 s. There, quick toggles lag, or the client is throttled or disconnected, and a gallery whose layer demand moves while the user scrolls can use up the budget by itself. This proposal moves that state onto an SFU DataChannel that the package manages, so the app's signaling only has to carry membership.
+
+**Goals.**
+- Signaling is updated only when **membership** changes: join and leave, a new `sessionId`, a track published or unpublished, and `metadata`. A typical call then makes 3–6 updates in total, not one per mute or layer change.
+- A mute reaches the other participants about as fast as the SFU forwards a packet, with no rate limit to wait for.
+- State is **at least as trustworthy as signaling**: a participant can't set another participant's state (Authenticity, below).
+- Older clients in the same room keep working. The default stays as it is today until the channel is verified on the real SFU.
+
+**Non-goals.**
+- Replacing membership or presence. The SFU has none, and a participant has to be discovered before its channel can be pulled.
+- Carrying app data. `metadata` stays in signaling, and app messages stay on `room.data`.
+- Making state more private than signaling, or end-to-end encrypted.
+- A server component. The proposal adds nothing to the broker contract (§5).
+
+#### What moves, and what stays
+
+| State | Today | Proposed | Why |
+|---|---|---|---|
+| `participantId`, `sessionId` | signaling | **stays** | Discovery: a channel is pulled by the publisher's `sessionId`, so the session must be known first. It also binds the session to a participant (Authenticity). |
+| Track list: `trackName`, `kind`, `source`, the simulcast `rids` and `scaleDownBy` | signaling | **stays** (phase 1) | See "Can the track list move?" below. Changes are rare: a publish, an unpublish, a screen share starting or ending. |
+| `TrackInfo.muted` | signaling | **moves** | It is the most frequent state change a person makes. |
+| `TrackInfo.simulcast.width` / `height` (captured size, §6.3) | signaling | **moves** | It is re-checked every 3 s and changes when a phone turns or CPU adaptation steps in. The size at publish time stays in the signaled track entry as an initial value. |
+| `layerDemand` (§6.2) | signaling | **moves** | It changes with every settled layer choice of every pulled video, and is the largest field. |
+| Speaking, audio level | not carried | **not carried** | Every receiver computes it from the audio it pulls (§7). Sending it would add traffic and add nothing. |
+| Connection quality (§7.1) | not carried (decided) | **not in v1** | §7.1 kept it out of signaling because of the update rate. The channel removes that objection, so v1 reserves a field for it (Open questions, 7). |
+| `metadata` | signaling | **stays** | It is app data, and apps may read it from presence outside the room. |
+
+**Can the track list move?** Technically, yes. Once a participant's `sessionId` is known, the snapshot could list its tracks with `kind` and `source`, and signaling would carry only `{participantId, sessionId, metadata}`. Then a screen share starting or stopping wouldn't touch signaling either. **Decision for phase 1: it stays in signaling**, because:
+1. **Media would depend on the channel.** If the state channel fails, a participant's mute icons are wrong but its media still plays. If the track list were on the channel, the participant's media would be gone.
+2. **First media would come later.** A pull could start only after the channel has been subscribed, has opened and has delivered a snapshot: one more `datachannels/new` and a sync round trip before the first `tracks/new`. Expect a few hundred milliseconds or more (to be measured).
+3. **Mixed rooms.** Older clients find tracks only in signaling, so a new client would have to write the track list there anyway while any of them is present.
+4. **The rate doesn't need it.** A call publishes and unpublishes a handful of times. Membership updates (join, re-session) already go out at those moments.
+
+Revisit after phase 1 has run on devices: a `tracks` field in the snapshot can be added in a later version without breaking v1 readers.
+
+#### Topology
+
+- **Each participant publishes one channel**, named `cf-realtime/media-state/1` (the major version is in the name, so two versions can be published side by side during a migration). It uses the reliable profile (`DataChannelProfile.reliable`: ordered, retransmitted), with `canReply: false`.
+- **Every other participant subscribes to it**, by the publisher's `sessionId` from signaling. In a room of N, that is N publications and **N×(N−1) subscriptions**. The SFU forwards a channel from one publisher to its subscribers (§9), and one channel can't carry several publishers, so a full mesh is the only way for every receiver to get state from each publisher's own session. It is the same shape as audio, which every participant already pulls from every other.
+- **The cost per subscription is small.** All channels share the session's one SCTP association, so a subscription is a `datachannels/new` with no SDP exchange. The transport is already up, because the room connects it at join (`RoomOptions.connectEarly`, §8.1). Subscriptions made in the same event-loop turn are batched, at most 32 per request (§4.2).
+- The `cf-realtime/` prefix becomes reserved: `room.data.publish` rejects names that start with it.
+
+Numbers, derived from §4.2's batching and the sizes under Wire format below. **The SFU documents no limit on DataChannels per session, subscribers per channel, or DataChannel message size** (checked 2026-10-04; [cloudflare-sfu.md, Limits](cloudflare-sfu.md#limits)).
+
+| | N = 10 | N = 25 | N = 50 |
+|---|---|---|---|
+| Subscriptions per participant (+1 publication) | 9 | 24 | 49 |
+| Subscriptions in the room | 90 | 600 | 2,450 |
+| `datachannels/new` requests for a newcomer (one publish, plus subscriptions in batches of ≤ 32) | 2 | 2 | 3 |
+| Extra requests for each existing participant per join | 1 | 1 | 1 |
+| DataChannels on one peer connection (own, subscribed and `server-events`) | 11 | 26 | 51 |
+| Snapshot size (3 own tracks, demand for N−1 cameras) | ≈ 0.8 KB | ≈ 1.5 KB | ≈ 2.8 KB |
+| SFU egress for one mute (≈ 170 B on the wire × (N−1)) | ≈ 1.5 KB | ≈ 4 KB | ≈ 8 KB |
+| SFU egress for a full resync (every participant sends a snapshot to every other) | ≈ 70 KB | ≈ 0.9 MB | ≈ 7 MB |
+| Heartbeats (≈ 100 B every 20 s × N×(N−1)), per hour for the whole room | ≈ 1.6 MB | ≈ 11 MB | ≈ 44 MB |
+
+- **SFU request rate.** The SFU allows 50 API requests per second per session ([cloudflare-sfu.md, Limits](cloudflare-sfu.md#limits)). Every number above stays well below that, even when the whole room joins at once: each session makes one request per batch of newcomers.
+- **The broker** checks every `sessionId` in a `datachannels/new` body against its session store (§5, rule 4). A newcomer's batch at N = 50 names 49 sessions, the same as the newcomer's first batch of audio pulls.
+- **Next to the media,** this is negligible. A 4-person call's media egress is about 0.75 GB per participant-hour (§6). The heartbeat overhead at N = 50 is under 1 MB per participant-hour. State changes add about 8 KB each at N = 50: one change per participant every 10 s is about 3 MB per participant-hour.
+- **Unknown:** whether libwebrtc m150's SCTP (dcSCTP) still limits a peer connection's streams, as libwebrtc historically did at 1,024, and how many DataChannel subscriptions the SFU allows per session. The scale test (Testing) measures both up to N = 50.
+- **Alternatives considered:**
+  - **A hub participant that relays everyone's state.** About 2N subscriptions instead of N×(N−1), but the hub could rewrite anyone's state, which loses the authenticity this proposal is for, and it is a single point of failure. Rejected.
+  - **An app server that relays state.** That puts a backend in the core package. Rejected; an app can do it in its own signaling.
+  - **Carrying state in the media** (RTP header extensions, SEI): `flutter_webrtc` exposes neither, and a muted track sends no RTP. Rejected.
+  - **Fewer channels.** Not possible: the SFU's channel fan-out is per publisher. An app channel and the state channel could share one name, but then app traffic would delay state, and state would be mixed with untrusted app payloads. Rejected.
+
+#### Wire format (v1)
+
+JSON text messages on the channel, at most **16 KiB** each. That is the size every WebRTC stack has interoperated with. The SFU's own `a=max-message-size` hasn't been recorded yet; the integration test reads it from the SFU's SDP. JSON over binary: at these rates and sizes a binary format saves nothing that matters, and JSON is easier to debug and evolve, and parses the same on every platform (including Wasm). Field names follow `ParticipantState`'s JSON (§4.4).
+
+```jsonc
+// Snapshot: the publisher's full dynamic state as of seq.
+{"v":1,"type":"snapshot","seq":12,
+ "tracks":{"camera-<uuid>":{"muted":false,"width":720,"height":1280},
+           "microphone-<uuid>":{"muted":true}},
+ "layerDemand":{"camera-<uuid>":"b","screen-<uuid>":"a"}}
+// Delta: only what changed; seq is the previous seq + 1. A null in layerDemand removes the entry.
+{"v":1,"type":"delta","seq":13,"tracks":{"microphone-<uuid>":{"muted":false}}}
+{"v":1,"type":"delta","seq":14,"layerDemand":{"camera-<uuid>":"c","screen-<uuid>":null}}
+// Heartbeat: the current seq, every 20 s while nothing else is sent.
+{"v":1,"type":"heartbeat","seq":14}
+// Sync request, sent on the requester's own channel: "send me a snapshot".
+{"v":1,"type":"sync","sessions":["<publisher sessionId>", "..."]}
+```
+
+- **Sequence numbers** count state changes on one channel publication. They start at 0 on each new session (the channel is republished with the session, §8.1), and receivers keep state per `(participantId, sessionId)`, so the reset is unambiguous. Each change increments `seq` and is sent as a delta. A snapshot and a heartbeat carry the current `seq` without incrementing it.
+- **Receiving:**
+  - A snapshot with `seq` ≥ the last applied replaces the state.
+  - A delta with `seq` = last + 1 is applied. One at or below the last is a duplicate and is ignored.
+  - A delta that leaves a gap, or a heartbeat ahead of the last applied `seq`, means messages were missed. The receiver keeps what it has and asks for a snapshot.
+  - Deltas that arrive before the first snapshot are ignored.
+
+  On a reliable, ordered channel, gaps happen only when a subscription opens after the publisher has already sent messages.
+- **Why the publisher needs sync requests.** The SFU doesn't tell a publisher who subscribes to its channel, or when (§9). So a subscriber whose subscription opens sends `sync` naming that publisher's session on **its own** state channel, which every participant pulls. It retries at 0.5, 1, 2 and 4 s, then every 10 s, until a snapshot arrives. The named publishers answer with one snapshot. A snapshot goes to every subscriber, so requests that arrive within 250 ms are answered with one snapshot. The publisher also sends a snapshot whenever its channel opens on a new session.
+- **Tolerance:** an unknown `type`, or unknown fields, are ignored. A message that isn't valid JSON, is over 64 KiB, or has an unknown major `v` is dropped. Parsing never throws into the room. A snapshot that would exceed 16 KiB (more than about 300 demand entries, far beyond N = 50) is split into consecutive messages with the same `seq` and `"part"` / `"parts"` fields, and applied once all parts have arrived.
+- **Capability:** a participant that publishes the channel announces `"mediaState": {"v": [1]}` at the top level of its `ParticipantState` (the major versions it publishes). Older readers ignore unknown keys (§4.4).
+
+#### Applying the state
+
+The Room keeps signaling's `ParticipantState` per participant, plus an overlay from that participant's channel. It feeds the merged state into the existing diffing (§4.3), layer pausing (§6.2) and ladders (§6.1, §6.3). So the existing events (`TrackMutedEvent`, `ParticipantUpdatedEvent`, …) and the code after the diff stay as they are, whichever path the state came by.
+
+- **The channel wins** for the dynamic fields (`muted`, `width`/`height`, `layerDemand`) once a snapshot from the participant's **current** session has arrived. Signaling's values for those fields are the initial values: they apply before the first snapshot, and for a track that the snapshot doesn't list yet (a publish whose signaling update came first).
+- **A track the channel lists before signaling does** (the delta came first) is held by `trackName` and applied when signaling lists the track. Channel state never creates a track: only signaling does.
+- **A new `sessionId` in signaling** (the participant re-sessioned) drops the overlay for the old session. The fresh signaling values apply until the new channel's snapshot arrives. Late messages from the old channel are ignored: `RoomDataMessage.fromSessionId` is captured per underlying channel (§9), and it no longer matches.
+- **Publishing:** the local participant sends a delta for every dynamic change, at most one message per 100 ms. A change after a quiet 100 ms goes out at once; later changes wait for the end of the window and go out as one delta. Layer demand is already debounced (§6.1, 300 ms) and the size check runs every 3 s, so normal use stays far below that. A heartbeat goes out after 20 s without a message.
+
+#### Authenticity
+
+The claim: **a state message is attributable to the session whose channel carried it, and that session to the participant who announced it.**
+
+1. **The subscriber chooses the source.** It pulls `cf-realtime/media-state/1` from one `sessionId`. The SFU delivers on that subscription only what that session's peer connection sent on that channel. The package records the session per underlying channel (`fromSessionId`, §9). Nothing in the payload names a sender, and nothing in the payload is used to attribute it.
+2. **Only the session's owner can send on it.** Sending requires that session's peer connection, which only the client that created it has: the DTLS keys never leave it. The broker's **session binding** (§5, rule 3) stops anyone else from publishing, closing or changing channels on that session through the API.
+3. **The session belongs to a participant** through signaling. The Room's `_sessionOwners` maps a session to the participant that announced it, and a session claimed by two participants maps to none (§4.3, `data`). State from an unmapped session is dropped.
+4. **Only room members can listen.** The broker's **same-room rule** (§5, rule 4) covers `datachannels/new` subscriptions, so no one outside the room can pull the channel.
+
+**What a malicious participant can do:**
+- **Lie about its own state:** say "muted" while sending audio, or name a captured size or layer demand that isn't true. Signaling allows the same today. A false demand can only keep a publisher's layers on, which is also what "not reported" does (§6.2).
+- **Flood its own channel.** That costs the app SFU egress, as flooding media does. Receivers drop messages beyond 50 per second per session, and after 5 s of that they unsubscribe from that participant's state, use its signaling state instead, and report a `RoomErrorEvent('mediaState')`.
+- **Claim another participant's `sessionId` in signaling,** if the app's signaling doesn't stop it. The session then maps to no one, and its state is dropped, as for `room.data` (§4.3). That doesn't let the attacker write the victim's state, only make the victim's state invisible, which a spoofing signaling transport allows anyway. Apps whose signaling isn't verified by a server can check session ownership against the broker's session store (an app-level step; see Open questions, 8).
+- **Reply on someone's state channel.** A participant that calls the broker directly can subscribe with `canReply: true`. Its replies go to the publisher, which ignores everything received on its own state channel. **To verify:** that the SFU forwards a reply only to the publisher, and not to the channel's other subscribers (Open questions, 5).
+
+**What a malicious participant can't do:** write another participant's mute, size or demand. With a shared broadcast channel in the app's signaling, anyone who can send to the channel could do that.
+
+#### Re-sessions (§8)
+
+- **Our re-session:** the state channel is a `room.data`-style publication, so step 3 of §8.1 republishes it on the new session **before** step 4 announces the new `sessionId`. Subscribers that follow the new session therefore find the channel already published. The first message on it is a snapshot with `seq` 0. Step 5 moves our subscriptions to everyone else's channels (the existing `RemoteDataSubscription` logic, §4.3), and each moved subscription sends a sync request when it opens.
+- **A peer's re-session:** its new `sessionId` in signaling moves our subscription (a live one is closed and subscribed afresh). Until its snapshot arrives, the fresh signaling values apply (Applying the state).
+- **The join window.** At join, the channel is published right after the early connect's `renegotiate` (§8.1; one more `datachannels/new`). The join announcement may reach peers before that request lands, so subscribers retry a failed subscribe with `RoomOptions.pullRetry`, as they do for tracks. **Unknown:** what the SFU answers to a subscription to a channel that isn't published yet: a per-channel error, a pending channel, or a session that opens later (Open questions, 4).
+
+#### Signaling rate limiting on the package side
+
+Separate from the channel, and useful on its own (and needed for the fallback): **`RoomOptions.minAnnounceInterval`** (`Duration?`, default `null`, which is today's behaviour). It spaces out signaling updates whose only changes are dynamic fields, so a burst becomes one update per interval. Updates that change membership-relevant fields (`sessionId`, the track list, `metadata`) go out at once, and carry the current dynamic fields with them. An app whose presence allows 5 updates per 30 s would set about 6 s. The announcer still coalesces as today (§4.3).
+
+#### Options, fallback and mixed rooms
+
+**`RoomOptions.mediaStateTransport`** (`MediaStateTransport`):
+- **`signaling` (the default until verified):** today's behaviour. No channel is published or pulled, and no capability is announced.
+- **`dataChannel`:** publish the channel, pull everyone's, and announce the capability. A change to dynamic fields **only** goes to signaling while some participant in the room lacks the capability (an older client, or one in `signaling` mode). Such updates are spaced by `minAnnounceInterval`. Every signaling update that happens anyway carries the current dynamic fields, so the signaled values are never older than the last membership change.
+- **`both`:** as `dataChannel`, but every dynamic change also goes to signaling (rate-limited the same way). This is for verification, where the two paths can be compared, and for apps that read `muted` from presence outside the room, such as a lobby list. In `dataChannel` mode, those fields in presence are stale between membership changes; the dartdoc says so.
+
+**Mixed rooms:**
+
+| Publisher → subscriber | Older client, or `signaling` mode | `dataChannel` / `both` |
+|---|---|---|
+| **Older client, or `signaling` mode** | signaling (today) | signaling: no capability is announced, so no channel is pulled |
+| **`dataChannel` / `both`** | signaling: the publisher sees a participant without the capability and keeps announcing dynamic changes | channel |
+
+**Fallback:**
+- **A participant whose channel never delivers a snapshot within 10 s** after the subscription opened (sync retries included), or whose subscription fails after `pullRetry`, is read from signaling. A `RoomErrorEvent('mediaState')` reports it.
+- **If that lasts 30 s,** this client drops its own capability from its state (one signaling update). Its peers then announce dynamic changes in signaling again, which degrades the room to today's behaviour instead of leaving stale mute icons. It announces the capability again once every subscription has a snapshot.
+- **A publisher whose channel can't be published** (an SFU rejection, or DataChannels unavailable on the session, §4.2) doesn't announce the capability, and stays on signaling.
+
+`RemoteParticipant.mediaStateSource` (`signaling` / `dataChannel`) shows which path a participant's state currently comes from, for tests, the example app and debugging.
+
+#### Privacy
+
+The channel carries **nothing that signaling doesn't carry today**: track names, `muted`, the captured size and layer demand. It carries no participant IDs (receivers map sessions), no metadata, no device names and no quality. Its audience is the room's members with a session (the broker's same-room rule), which is no wider than the room's presence. As with everything on the SFU, the traffic is encrypted between each client and Cloudflare (DTLS), and is not end-to-end encrypted (§2, Non-goals).
+
+#### Testing plan
+
+- **Unit, on the fakes** (the M7 fake peer connection already models negotiated channels; `test/support/room_harness.dart` with `InMemorySignaling`):
+  - the codec: round trips, tolerant parsing, unknown types and fields, size caps and split snapshots;
+  - the receiver state machine: snapshot, delta, duplicates, gaps, heartbeats, sync retries (`fake_async`);
+  - precedence against signaling: a track listed by the channel first, a track listed by signaling first, and a session change;
+  - the capability rule and the mixed-room table, cell by cell;
+  - `minAnnounceInterval`;
+  - fallback and the capability being dropped and announced again;
+  - re-sessions on both sides;
+  - attribution: messages from an unmapped session or a doubly claimed session are dropped, and anything received on our own state channel is ignored;
+  - flood limits;
+  - a **signaling budget test**: a scripted 10-minute call with 30 mutes, 50 layer changes and a phone turning makes only the join's and the publishes' `Signaling.update`s in `dataChannel` mode (at most 4; about 100 today).
+- **Integration, on the real SFU** (`example/integration_test/media_state_test.dart`, two or three rooms in one process like `stats_test.dart`):
+  - mute-to-event latency (p50 and p95 over 50 toggles), compared with `signaling` mode on the dev server;
+  - a late joiner gets a snapshot;
+  - a re-session on each side (`debugSimulateConnectionFailure`);
+  - **an idle channel survives 5 minutes** (the SFU garbage-collects media tracks after 30 s without packets; whether it does the same to DataChannels is undocumented, and the heartbeat is the guard);
+  - a subscription made before the channel is published;
+  - the SFU's `a=max-message-size`;
+  - with a third session: a `canReply` reply is not forwarded to other subscribers.
+
+  Then cross-device, in `cross_device_test.dart`'s pairs.
+- **Scale,** on a separate SFU app, with sessions that carry only DataChannels (no media). At N = 10, 25 and 50: join time to the last snapshot, `datachannels/new` errors and any 429s, state latency under a change storm, the channel count per peer connection, and the app's egress in the Cloudflare dashboard before and after (to answer the billing question).
+
+#### Open questions
+
+1. **SFU limits:** DataChannel subscriptions per session, and subscribers per channel. None is documented. Does the "up to 64 tracks per API request" limit also apply to `dataChannels` in one request? The client batches 32, below either.
+2. **Billing:** Cloudflare bills SFU egress at $0.05/GB after 1 TB a month ([cloudflare-sfu.md](cloudflare-sfu.md#pricing-for-context)), but the pricing page doesn't say whether DataChannel traffic counts as egress. The numbers above assume it does; they are small either way.
+3. **Idle channels:** is a DataChannel that carries nothing subject to the 30 s inactivity garbage collection that media tracks are? If not, the heartbeat could be slower.
+4. **Subscribe before publish:** what does the SFU answer, and does a pending subscription open by itself once the channel is published?
+5. **`canReply` fan-out:** does the SFU forward a reply only to the publisher? The authenticity argument assumes yes, and the package ignores replies anyway.
+6. **The track list:** move it in a later version (Can the track list move?), once phase 1 has measurements?
+7. **Connection quality:** share the local rating (§7.1) as an optional v1 field (`"quality"`), now that the rate isn't a problem? It would let apps tell "their uplink" from "my downlink".
+8. **Session ownership for apps whose signaling isn't verified by a server:** should the broker contract offer a lookup (session → user) so that such apps can check the `sessionId`s in presence? It would be an optional broker endpoint; the reference brokers' session store already has the data.
+9. **When to switch the default** to `dataChannel`. Proposed acceptance: the integration test passes on every platform in M13's list, the scale test passes at N = 25, and the latency is no worse than signaling's on the dev server.
+
+**Estimate:** M (1–2 developer-weeks), mostly tests: a codec, a per-participant state machine, the overlay in the Room, the capability rule and `minAnnounceInterval`. The channel plumbing exists already (`room.data`, §9).
+
 ## 10. Screen share by platform
 
 | | Full display | Single window | Covered window | Minimized window | Cursor | System audio |
