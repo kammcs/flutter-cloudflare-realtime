@@ -13,7 +13,19 @@ import 'sample_caller_image.dart';
 import 'system_call_demo.dart';
 import 'ws_signaling.dart';
 
+/// Whether to time `flutter_webrtc`'s platform calls and the event loop's
+/// gaps, from `--dart-define=CF_REALTIME_CALL_TIMING=true`: a debug aid
+/// that prints each gap over 250 ms with the calls behind it, and each call
+/// slower than 100 ms (`CloudflareRealtime.debugPlatformCallTiming`).
+const callTiming = bool.fromEnvironment('CF_REALTIME_CALL_TIMING');
+
 void main() {
+  if (callTiming) {
+    // Before any other binding, so that its messenger times the calls.
+    PlatformCallTimingBinding.ensureInitialized();
+    CloudflareRealtime.debugPlatformCallTiming =
+        const PlatformCallTimingOptions();
+  }
   runApp(ExampleApp(hub: InMemorySignalingHub()));
 }
 

@@ -31,10 +31,10 @@ const ListEquality<MediaDevice> _listEquality = ListEquality<MediaDevice>();
 /// **The list enumerates when it is first used:** reading [ready], [devices]
 /// (or a kind's list) or one of the change streams, or calling [refresh].
 /// Until then it costs nothing, and ignores device changes. A
-/// [MicrophoneSource] on macOS with no preferred device captures from the
-/// system default without the list (`docs/design.md` §4.5, Capture before
-/// listing on macOS), because the first enumeration in a process blocks a
-/// Mac's UI thread for seconds.
+/// [MicrophoneSource] on macOS captures from its preferred device (by ID),
+/// or else the system default, without the list (`docs/design.md` §4.5,
+/// Capture before listing on macOS), because the first enumeration in a
+/// process blocks a Mac's UI thread for seconds.
 class MediaDeviceList {
   /// Creates the list. It enumerates devices through [backend] when first
   /// used.

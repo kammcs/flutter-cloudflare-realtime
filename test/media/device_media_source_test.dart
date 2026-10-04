@@ -631,12 +631,55 @@ void main() {
       await mic.dispose();
     });
 
-    test('a preferred device lists the devices first', () async {
+    test('a preferred device is captured by its ID without listing the '
+        'devices', () async {
       final mic = MicrophoneSource(backend: mac, preferredDevice: mic2);
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 0);
       await mic.startBroadcasting();
-      expect(mac.enumerateCalls, 1);
+      expect(mac.enumerateCalls, 0);
       expect(requested(mac.userMediaCalls.single), mic2.deviceId);
       expect(mic.track!.device, mic2);
+      expect(mic.activeDevice, mic2);
+      await pumpEventQueue();
+      expect(mac.enumerateCalls, 0, reason: 'no refresh after the capture');
+
+      // Choosing another one before the list is used: still no list.
+      await mic.setPreferredDevice(mic1);
+      expect(requested(mac.userMediaCalls.last), mic1.deviceId);
+      expect(mic.track!.device, mic1);
+      expect(mac.enumerateCalls, 0);
+      await mic.dispose();
+    });
+
+    test('a preferred device that fails lists the devices and falls back '
+        'to the others', () async {
+      const gone = MediaDevice(
+        deviceId: 'gone',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Unplugged Microphone',
+      );
+      mac.failingDeviceIds.add(gone.deviceId);
+      final mic = MicrophoneSource(backend: mac, preferredDevice: gone);
+      final errors = <MediaException>[];
+      mic.errors.listen(errors.add);
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 1);
+      expect(mac.userMediaCalls.map(requested), [gone.deviceId, 'default']);
+      expect(mic.track!.device, macDefault);
+      expect(errors, isEmpty);
+      await mic.dispose();
+    });
+
+    test('a preferred device with no ID lists the devices first', () async {
+      const unnamed = MediaDevice(
+        deviceId: '',
+        kind: MediaDeviceKind.audioInput,
+        label: 'Microphone',
+      );
+      final mic = MicrophoneSource(backend: mac, preferredDevice: unnamed);
+      await mic.startBroadcasting();
+      expect(mac.enumerateCalls, 1);
       await mic.dispose();
     });
 

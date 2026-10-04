@@ -20,7 +20,12 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 
 | Symbol | Kind | Notes |
 |---|---|---|
-| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)`; static `prewarm()` (macOS: the first peer connection ahead of the join, design.md §4.2) |
+| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)`; static `prewarm()` (macOS: the first peer connection ahead of the join, design.md §4.2); static `debugPlatformCallTiming` and `debugPlatformCallTimingEvents` (a debug aid: platform calls and event-loop gaps, design.md §4.2) |
+| `PlatformCallTimingOptions` | final class | Options for `debugPlatformCallTiming` |
+| `PlatformCallTimingBinding` | final class | `WidgetsFlutterBinding` whose messenger times platform calls; `wrapMessenger` for an app's own binding |
+| `PlatformCall` | final class | One timed call: channel, method, argument keys, times |
+| `PlatformCallTimingEvent` | sealed class | `PlatformCallAnsweredEvent`, `EventLoopGapEvent` |
+| `flutterWebrtcMethodChannel` | constant | `FlutterWebRTC.Method` |
 | `BrokerClientFactory`, `SfuSessionConnector` **(testing)** | typedefs | Test seams for `CloudflareRealtime` |
 | `Room` | class | The call. Includes `debugSimulateConnectionFailure()` (see below) |
 | `Participant` | sealed class | `LocalParticipant`, `RemoteParticipant` |

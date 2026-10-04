@@ -817,13 +817,15 @@ void main() {
       await alice.leave();
     });
 
-    test('a chosen microphone lists the devices first', () async {
+    test('publishes a chosen microphone without listing the devices', () async {
       final alice = await h.join('alice');
-      await alice.localParticipant.publishMicrophone(device: mic1);
-      expect(h.media.enumerateCalls, 1);
+      final mic = await alice.localParticipant.publishMicrophone(device: mic1);
+      await _settle();
+      expect(h.media.enumerateCalls, 0);
       expect((h.media.userMediaCalls.single['audio'] as Map)['optional'], [
         {'sourceId': mic1.deviceId},
       ]);
+      expect((mic.mediaSource as MicrophoneSource).activeDevice, mic1);
       await alice.leave();
     });
   });
