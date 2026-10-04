@@ -638,17 +638,19 @@ final class SystemCallsHandlerTests: XCTestCase {
     XCTAssertEqual(received.first?["reason"] as? String, "answeredElsewhere")
     XCTAssertTrue(calls.registry.isEmpty)
     XCTAssertEqual(calls.placeholdersReported, 0, "the call itself was the report")
-    XCTAssertTrue(calls.wasCancelled(UUID(uuidString: id)!))
+    XCTAssertEqual(calls.endedReason(UUID(uuidString: id)!), .answeredElsewhere)
 
-    // The same cancel again: reported (iOS requires it) and ignored.
+    // The same cancel again: reported (iOS requires it) under the call's
+    // own UUID, and ignored.
     push(calls, ["id": id, "ended": "answeredElsewhere"])
     XCTAssertEqual(received.count, 1)
-    XCTAssertEqual(calls.placeholdersReported, 1)
+    XCTAssertEqual(calls.repeatReports, 1)
     // The call's own push, late or pushed again: it doesn't ring.
     push(calls, ["id": id, "handle": "ada"])
     XCTAssertEqual(received.count, 1, "no `reported` event")
     XCTAssertTrue(calls.registry.isEmpty)
-    XCTAssertEqual(calls.placeholdersReported, 2)
+    XCTAssertEqual(calls.repeatReports, 2)
+    XCTAssertEqual(calls.placeholdersReported, 0, "no stand-in call")
     try waitForCallKitIdle()
   }
 
@@ -673,7 +675,7 @@ final class SystemCallsHandlerTests: XCTestCase {
     XCTAssertTrue(calls.registry.isEmpty)
     XCTAssertTrue(calls.events.buffer.isEmpty, "no `reported` event: nothing rings")
     XCTAssertEqual(calls.placeholdersReported, 1)
-    XCTAssertTrue(calls.wasCancelled(UUID(uuidString: id)!))
+    XCTAssertEqual(calls.endedReason(UUID(uuidString: id)!), .remoteEnded)
     // An unknown reason, and a cancel without an ID: the same.
     push(calls, ["id": UUID().uuidString, "ended": "hungUp"])
     push(calls, ["ended": "remoteEnded"])
@@ -707,7 +709,7 @@ final class SystemCallsHandlerTests: XCTestCase {
     }
     XCTAssertEqual(calls.registry.calls.first?.state, .active, "still in the call")
     XCTAssertTrue(received.isEmpty)
-    XCTAssertFalse(calls.wasCancelled(UUID(uuidString: id)!))
+    XCTAssertNil(calls.endedReason(UUID(uuidString: id)!))
 
     push(calls, ["id": id, "ended": "remoteEnded"])
     XCTAssertTrue(calls.registry.isEmpty)
@@ -715,6 +717,103 @@ final class SystemCallsHandlerTests: XCTestCase {
     XCTAssertEqual(received.first?["event"] as? String, "ended")
     XCTAssertEqual(received.first?["reason"] as? String, "remoteEnded")
     XCTAssertEqual(calls.placeholdersReported, 0)
+  }
+
+  /// The app ended the ring itself (its own timeout), and the server's
+  /// cancel came at once: reported again under the call's own UUID, which
+  /// CallKit still refuses (`callUUIDAlreadyExists`), so nothing shows and
+  /// no event follows.
+  func testCancelPushRightAfterTheAppEndedTheRingIsRefused() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    try reportRinging(calls)
+    XCTAssertEqual(invoke(calls, "end", ["id": id, "reason": "unanswered"]) as? Bool, true)
+    XCTAssertEqual(received.map { $0["event"] as? String }, ["ended"])
+    XCTAssertEqual(calls.endedReason(UUID(uuidString: id)!), .unanswered)
+
+    push(calls, ["id": id, "ended": "unanswered"])
+    XCTAssertEqual(received.count, 1, "no new call, no event")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 0, "no stand-in call")
+    XCTAssertEqual(calls.repeatReports, 1)
+    XCTAssertEqual(calls.repeatReportsRefused, 1, "CallKit still remembers the UUID")
+    try waitForCallKitIdle()
+  }
+
+  /// The field report's case: the cancel came seconds after the app's own
+  /// timeout. CallKit has forgotten the UUID by then (on the Simulator it
+  /// refuses a UUID it ended by `reportCall(endedAt:)` for under 2 s, and
+  /// accepts one ended by an end action at once), so the repeat report is
+  /// a call again, ended at once: no ring, no event, but it can show for
+  /// an instant, as a stand-in would (docs/design.md §4.8, Pushes for
+  /// calls that ended). This records that limit.
+  func testCancelPushLongAfterTheAppEndedTheRingEndsAtOnce() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    try reportRinging(calls)
+    XCTAssertEqual(invoke(calls, "end", ["id": id, "reason": "unanswered"]) as? Bool, true)
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+
+    push(calls, ["id": id, "ended": "unanswered"])
+    XCTAssertEqual(received.count, 1, "no new call, no event")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 0)
+    XCTAssertEqual(calls.repeatReports, 1)
+    XCTAssertEqual(calls.repeatReportsRefused, 0, "CallKit forgot the UUID (Simulator)")
+    try waitForCallKitIdle()
+  }
+
+  /// Any end, whoever ended it: the app's `local` end (an end action) here.
+  /// The call's push arriving afterwards doesn't ring again (reported and
+  /// ended at once: CallKit accepts a UUID an end action ended).
+  func testRingPushAfterALocalEndDoesNotRing() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    var received: [[String: Any]] = []
+    let owner = NSObject()
+    calls.events.listen(owner) { received.append($0 as! [String: Any]) }
+    defer { calls.events.cancel(owner) }
+    try reportRinging(calls)
+    // `true`, or `false` when CallKit already ended it itself (the
+    // Simulator has no UI to host a ringing call): ended either way.
+    _ = invoke(calls, "end", ["id": id, "reason": "local"])
+    try waitFor { calls.registry.isEmpty }
+    XCTAssertNotNil(calls.endedReason(UUID(uuidString: id)!))
+    let before = received.count
+
+    push(calls, ["id": id, "handle": "ada", "displayName": "Ada", "room": "r1"])
+    XCTAssertEqual(received.count, before, "no `reported` event: it doesn't ring")
+    XCTAssertTrue(calls.registry.isEmpty)
+    XCTAssertEqual(calls.placeholdersReported, 0)
+    XCTAssertEqual(calls.repeatReports, 1)
+    XCTAssertEqual((invoke(calls, "activeCalls") as? [Any])?.count, 0)
+    try waitForCallKitIdle()
+  }
+
+  /// A pushed call CallKit ended for the app (any end raises `ended`) is
+  /// remembered too, as is one ended because CallKit no longer had it.
+  func testEveryEndIsRemembered() throws {
+    let calls = make()
+    XCTAssertEqual(invoke(calls, "configure", config) as? Bool, true)
+    push(calls, ["id": id, "handle": "ada"])
+    if !calls.registry.isEmpty {
+      XCTAssertEqual(invoke(calls, "end", ["id": id, "reason": "remoteEnded"]) as? Bool, true)
+    }
+    XCTAssertNotNil(calls.endedReason(UUID(uuidString: id)!))
+    calls.events.listen(self) { _ in }
+    defer { calls.events.cancel(self) }
+    push(calls, ["id": id, "handle": "ada"])
+    XCTAssertTrue(calls.registry.isEmpty, "the second push doesn't ring")
+    XCTAssertEqual(calls.placeholdersReported, 0)
+    try waitForCallKitIdle()
   }
 
   func testPushedCallIsReportedAndBuffered() {
@@ -777,6 +876,169 @@ final class SystemCallsHandlerTests: XCTestCase {
       RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }
     XCTAssertTrue(condition(), "timed out")
+  }
+}
+
+/// A binary messenger that keeps the handlers set on it and what is sent,
+/// standing in for an engine's (plugin registration without an engine).
+private final class RecordingMessenger: NSObject, FlutterBinaryMessenger {
+  var handlers: [String: FlutterBinaryMessageHandler] = [:]
+  var sent: [(channel: String, message: Data?)] = []
+
+  func send(onChannel channel: String, message: Data?) {
+    sent.append((channel, message))
+  }
+
+  func send(onChannel channel: String, message: Data?, binaryReply callback: FlutterBinaryReply?)
+  {
+    sent.append((channel, message))
+    callback?(nil)
+  }
+
+  func setMessageHandlerOnChannel(
+    _ channel: String, binaryMessageHandler handler: FlutterBinaryMessageHandler?
+  ) -> FlutterBinaryMessengerConnection {
+    handlers[channel] = handler
+    return FlutterBinaryMessengerConnection(handlers.count)
+  }
+
+  func cleanUpConnection(_ connection: FlutterBinaryMessengerConnection) {}
+}
+
+/// The launch hook (`CloudflareRealtimePlugin.handleLaunch()`, docs/design.md
+/// §4.8, Launch): the provider and the PushKit registry exist from
+/// `didFinishLaunching`, before any engine registers the plugin. On a
+/// private UserDefaults suite, as the handler tests.
+final class LaunchHookTests: XCTestCase {
+  private var defaults: UserDefaults!
+  private var suite: String!
+  private var made: [SystemCalls] = []
+  private let eventsChannel = "dev.kammcs.cloudflare_realtime/system_calls_events"
+
+  override func setUp() {
+    super.setUp()
+    suite = "LaunchHookTests.\(UUID().uuidString)"
+    defaults = UserDefaults(suiteName: suite)
+  }
+
+  override func tearDown() {
+    for calls in made {
+      calls.provider?.invalidate()
+      calls.pushRegistry?.desiredPushTypes = []
+    }
+    made = []
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    defaults.removePersistentDomain(forName: suite)
+    super.tearDown()
+  }
+
+  private func make() -> SystemCalls {
+    let calls = SystemCalls(defaults: defaults, audio: nil)
+    made.append(calls)
+    return calls
+  }
+
+  /// What an earlier launch left: `configure` and `VoipPush.register()`.
+  private func persist(config: Bool = true, voip: Bool = true) {
+    if config {
+      defaults.set(["supportsVideo": true, "maximumCalls": 1], forKey: SystemCalls.configKey)
+    }
+    if voip { defaults.set(true, forKey: SystemCalls.voipKey) }
+  }
+
+  func testLaunchRestoresBeforeAnyEngine() {
+    persist()
+    let calls = make()
+    XCTAssertNil(calls.provider)
+    XCTAssertNil(calls.pushRegistry)
+    CloudflareRealtimePlugin.launch(calls)
+    XCTAssertNotNil(calls.provider)
+    XCTAssertEqual(calls.provider?.configuration.maximumCallsPerCallGroup, 1)
+    XCTAssertNotNil(calls.pushRegistry)
+    XCTAssertEqual(calls.pushRegistry?.desiredPushTypes, [.voIP])
+  }
+
+  func testLaunchTwiceThenRegistrationCreatesOneOfEach() throws {
+    persist()
+    let calls = make()
+    CloudflareRealtimePlugin.launch(calls)
+    let provider = try XCTUnwrap(calls.provider)
+    let registry = try XCTUnwrap(calls.pushRegistry)
+    CloudflareRealtimePlugin.launch(calls)
+    // Two engines register the plugin later.
+    CloudflareRealtimePlugin.registerSystemCalls(calls, messenger: RecordingMessenger())
+    CloudflareRealtimePlugin.registerSystemCalls(calls, messenger: RecordingMessenger())
+    XCTAssertTrue(calls.provider === provider)
+    XCTAssertTrue(calls.pushRegistry === registry)
+  }
+
+  func testLaunchWithoutPersistedStateDoesNothing() {
+    let calls = make()
+    CloudflareRealtimePlugin.launch(calls)
+    XCTAssertNil(calls.provider)
+    XCTAssertNil(calls.pushRegistry)
+    CloudflareRealtimePlugin.registerSystemCalls(calls, messenger: RecordingMessenger())
+    XCTAssertNil(calls.provider, "registration doesn't configure either")
+    XCTAssertNil(calls.pushRegistry)
+  }
+
+  /// Registered for pushes, never configured: the registry, and the
+  /// provider only with the first push (the defaults).
+  func testOptInWithoutConfiguration() {
+    persist(config: false)
+    let calls = make()
+    CloudflareRealtimePlugin.launch(calls)
+    XCTAssertNil(calls.provider)
+    XCTAssertNotNil(calls.pushRegistry)
+  }
+
+  /// A push handled at launch, before any engine: its events wait for
+  /// the first engine that registers the plugin and listens.
+  func testPushBeforeAnyEngineReachesTheFirstEngine() throws {
+    persist()
+    let calls = make()
+    CloudflareRealtimePlugin.launch(calls)
+    let id = UUID().uuidString.lowercased()
+    let done = expectation(description: "push completion")
+    calls.reportPush(["id": id, "handle": "ada", "room": "r1"]) { done.fulfill() }
+    wait(for: [done], timeout: 10)
+    XCTAssertEqual(calls.events.buffer.first?["event"] as? String, "reported")
+
+    let messenger = RecordingMessenger()
+    CloudflareRealtimePlugin.registerSystemCalls(calls, messenger: messenger)
+    let codec = FlutterStandardMethodCodec.sharedInstance()
+    let listen = try XCTUnwrap(messenger.handlers[eventsChannel])
+    listen(codec.encode(FlutterMethodCall(methodName: "listen", arguments: nil))) { _ in }
+    let events = messenger.sent.filter { $0.channel == eventsChannel }.compactMap {
+      $0.message.flatMap { codec.decodeEnvelope($0) as? [String: Any] }
+    }
+    XCTAssertEqual(events.first?["event"] as? String, "reported")
+    XCTAssertEqual((events.first?["call"] as? [String: Any])?["id"] as? String, id)
+    XCTAssertTrue(calls.events.buffer.isEmpty, "delivered, not kept")
+    listen(codec.encode(FlutterMethodCall(methodName: "cancel", arguments: nil))) { _ in }
+    if !calls.registry.isEmpty {
+      let end = FlutterMethodCall(methodName: "end", arguments: ["id": id, "reason": "failed"])
+      calls.handle(end, result: { _ in })
+    }
+  }
+
+  /// The public hook on the process's `SystemCalls`: the example's
+  /// AppDelegate already called it, and plugin registration followed, so
+  /// calling it again changes nothing, from any thread.
+  func testHandleLaunchIsIdempotentOnTheSharedInstance() {
+    let shared = SystemCalls.shared
+    let provider = shared.provider
+    let registry = shared.pushRegistry
+    CloudflareRealtimePlugin.handleLaunch()
+    let done = expectation(description: "from another thread")
+    DispatchQueue.global().async {
+      CloudflareRealtimePlugin.handleLaunch()
+      // Queued after the hook's own block on the main queue.
+      DispatchQueue.main.async { done.fulfill() }
+    }
+    wait(for: [done], timeout: 10)
+    XCTAssertTrue(shared.provider === provider)
+    XCTAssertTrue(shared.pushRegistry === registry)
   }
 }
 

@@ -6,8 +6,9 @@ import UIKit
 /// interruptions, the proximity sensor and keeping the screen on (§4.7),
 /// here; the camera paused
 /// by the system (`CallBackground`, §4.7); system calls with CallKit and
-/// PushKit (`SystemCalls`, §4.8); and the screen share's Broadcast Upload
-/// Extension support (`ScreenBroadcast`, §10).
+/// PushKit (`SystemCalls`, §4.8), with `handleLaunch()` for the app's
+/// launch; and the screen share's Broadcast Upload Extension support
+/// (`ScreenBroadcast`, §10).
 ///
 /// Call audio routing:
 ///
@@ -56,16 +57,7 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       binaryMessenger: registrar.messenger()
     ).setStreamHandler(background)
     // One for the process: every engine shares the calls and their events.
-    let systemCalls = SystemCalls.shared
-    systemCalls.restore()
-    FlutterMethodChannel(
-      name: "dev.kammcs.cloudflare_realtime/system_calls",
-      binaryMessenger: registrar.messenger()
-    ).setMethodCallHandler { call, result in systemCalls.handle(call, result: result) }
-    FlutterEventChannel(
-      name: "dev.kammcs.cloudflare_realtime/system_calls_events",
-      binaryMessenger: registrar.messenger()
-    ).setStreamHandler(SystemCallEventStream(systemCalls.events))
+    registerSystemCalls(SystemCalls.shared, messenger: registrar.messenger())
     let methods = FlutterMethodChannel(
       name: "dev.kammcs.cloudflare_realtime/call_audio",
       binaryMessenger: registrar.messenger())
@@ -76,6 +68,62 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
     events.setStreamHandler(instance)
     // So the engine calls detachFromEngine(for:) (the screen's hold).
     registrar.publish(instance)
+  }
+
+  /// System calls' channels on one engine's [messenger]. [systemCalls] is
+  /// restored first (nothing to do when `handleLaunch()` already did it).
+  static func registerSystemCalls(
+    _ systemCalls: SystemCalls, messenger: FlutterBinaryMessenger
+  ) {
+    systemCalls.restore()
+    FlutterMethodChannel(
+      name: "dev.kammcs.cloudflare_realtime/system_calls",
+      binaryMessenger: messenger
+    ).setMethodCallHandler { call, result in systemCalls.handle(call, result: result) }
+    FlutterEventChannel(
+      name: "dev.kammcs.cloudflare_realtime/system_calls_events",
+      binaryMessenger: messenger
+    ).setStreamHandler(SystemCallEventStream(systemCalls.events))
+  }
+
+  // MARK: Launch
+
+  /// Restores system calls at app launch: the CallKit provider from the
+  /// last `SystemCalls.configure()`, and the PushKit registry if the app
+  /// registered for VoIP pushes (`VoipPush.register()`). Call it from
+  /// `application(_:didFinishLaunchingWithOptions:)`:
+  ///
+  /// ```swift
+  /// import cloudflare_realtime
+  ///
+  /// CloudflareRealtimePlugin.handleLaunch()
+  /// ```
+  ///
+  /// Apple asks for the PushKit registry to exist by the end of
+  /// `didFinishLaunching`: a VoIP push that launched the app must be
+  /// reported to CallKit, or iOS terminates the app and, after repeated
+  /// failures, stops delivering its VoIP pushes. Plugin registration
+  /// restores them too, but a Flutter engine may register its plugins
+  /// later (a UIScene app's implicit engine, an engine started on demand,
+  /// add-to-app). Without this call they are restored when the first
+  /// engine registers the plugin, as before.
+  ///
+  /// Safe to call more than once, and before any Flutter engine exists:
+  /// what a push raises meanwhile waits for Dart to listen. Meant for the
+  /// main thread; from another thread it runs on the main queue, later.
+  /// Does nothing until the app has configured system calls or registered
+  /// for VoIP pushes once (docs/design.md §4.8, Launch).
+  @objc public static func handleLaunch() {
+    if Thread.isMainThread {
+      launch(SystemCalls.shared)
+    } else {
+      DispatchQueue.main.async { launch(SystemCalls.shared) }
+    }
+  }
+
+  /// `handleLaunch()` on [systemCalls] (for tests).
+  static func launch(_ systemCalls: SystemCalls) {
+    systemCalls.restore()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

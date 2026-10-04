@@ -91,6 +91,26 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
 - **The Push Notifications capability** (Xcode: Signing & Capabilities, + Capability; this adds the `aps-environment` entitlement). Your provisioning profile must include it. Without it, no VoIP token arrives.
 - **An APNs key or certificate for your server:** a token-based key (`.p8`, from Certificates, Identifiers & Profiles, Keys, with APNs enabled), or a VoIP Services certificate. Keep it on your server, never in the app or the repository.
 - **The token:** `await SystemCalls.instance.voipPush.register()` (remembered across launches) and `tokenChanges`. Send the token to your server. iOS only.
+- **The launch hook:** call `CloudflareRealtimePlugin.handleLaunch()` in `application(_:didFinishLaunchingWithOptions:)`, before `super`:
+
+  ```swift
+  import Flutter
+  import UIKit
+  import cloudflare_realtime
+
+  @main
+  @objc class AppDelegate: FlutterAppDelegate {
+    override func application(
+      _ application: UIApplication,
+      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+      CloudflareRealtimePlugin.handleLaunch()
+      return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+  }
+  ```
+
+  It restores the CallKit provider (from the last `configure`) and the PushKit registry (after `register()`), so a push that launches a killed app is reported to CallKit at once. Apple asks for the registry to exist by the end of `didFinishLaunching`. Without the hook, the package restores both when a Flutter engine registers its plugins. That can be later: in a UIScene app (Flutter's current iOS template), with an engine you start yourself, or in add-to-app; if the push isn't reported in time, iOS terminates the app and, after repeated failures, stops delivering its VoIP pushes. The hook works with Swift Package Manager and CocoaPods, does nothing until the app has called `configure` or `register()` once, and is safe to call again. From Objective-C: `@import cloudflare_realtime;` and `[CloudflareRealtimePlugin handleLaunch];`.
 - **The push:** HTTP/2 to `api.push.apple.com` (`api.sandbox.push.apple.com` for development builds), `/3/device/<token>`, with the headers `apns-push-type: voip`, `apns-topic: <bundle id>.voip`, `apns-priority: 10` and `apns-expiration: 0`. The package reads these keys at the top level of the JSON payload:
 
   ```json
@@ -119,7 +139,8 @@ See [design.md §10](https://github.com/kammcs/flutter-cloudflare-realtime/blob/
 
   - **`ended`** is a `SystemCallEndReason` name: `remoteEnded` (the caller hung up), `answeredElsewhere`, `declinedElsewhere`, `unanswered` (the ring timed out) or `failed`. Any other value (`local` and `declined` included: they happen on this device) is logged and taken as `remoteEnded`. `handle` isn't needed; `ended` never reaches `payload`.
   - **A call the app has** ends with that reason: `SystemCallEndedEvent`, with `SystemCall.endReason` set, as when your code calls `call.end(reason)`. Before Dart runs, the event waits for it, after the call's `SystemCallAddedEvent`.
-  - **A call the app doesn't have** (the cancel woke a killed app, or came twice) doesn't ring: iOS still requires a report, so the package reports a stand-in and ends it at once with the reason. No event, and `calls` stays empty. It may flash for an instant, and may show in Recents. The package also remembers the cancelled ID, so the call's own push arriving after its cancel (APNs doesn't keep the order) doesn't ring either.
+  - **A call that already ended on this device,** whoever ended it and with any reason (your own ring timeout with `end(SystemCallEndReason.unanswered)`, the user declining, a hang-up, an earlier cancel), stays ended, for a cancel and for the call's own push alike: no ring and no event. The package remembers the last 64 calls that ended, while the app runs. iOS still requires a report, so the package reports the call's own ID again. CallKit refuses it while it remembers the call, and then nothing shows; but it forgets within a second or two (at once after a decline or a local end), and then the report is a call again that the package ends at once: it can flash for an instant and may show in Recents. To avoid that, don't send a cancel to the device that ended the call, and let your server's expiry end an unanswered ring rather than a shorter local timer: a cancel for a call that still rings just ends it.
+  - **A call the app never had** (the cancel woke a killed app) doesn't ring: the package reports a stand-in and ends it at once with the reason. No event, and `calls` stays empty. It may flash for an instant, and may show in Recents. The package also remembers the cancelled ID, so the call's own push arriving after its cancel (APNs doesn't keep the order) doesn't ring either.
   - **A call this device already took** (answered, or outgoing) ends only for `remoteEnded` or `failed`. `answeredElsewhere`, `declinedElsewhere` and `unanswered` are ignored for it, so a cancel your server sends to all of the user's devices doesn't end the call on the one that answered.
   - **On Android** there are no VoIP pushes: your FCM handler ends the call itself, with the same reasons: `SystemCalls.instance.call(id)?.end(SystemCallEndReason.answeredElsewhere)`.
 - **Push only for calls.** iOS terminates an app that receives a VoIP push and doesn't report a call. After repeated failures, iOS stops delivering VoIP pushes to it. A push without `id` or `handle` still rings for an instant and is ended as failed. A ringing push for a call your signaling already reported is ignored; a cancel push for it ends it (above).
