@@ -31,6 +31,11 @@
 //    package's ring activity isn't exported (docs/design.md §4.8, The ring
 //    activity and the lock screen). With the driver, adb's shell sends the
 //    same intent and tries to start the ring activity (refused).
+// 3c. Android: the caller's picture (docs/design.md §4.8, The caller's
+//    picture): without one, the notification's person icon is the
+//    monogram; with a local PNG, the picture; with a web URI or a missing
+//    file, the monogram again. Each opens the ring screen (the
+//    notification's tap); with the driver, it saves a screenshot of it.
 // 4. Android, with the driver: Telecom ending a ringing call, through the
 //    example's companion InCallService (debug builds; the driver allows
 //    its app op): a reject, as a watch's Decline, is `declined`; a
@@ -59,7 +64,8 @@
 // and on desktops and the web. The test never prints the settings.
 
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, File, Platform;
+import 'dart:ui' as ui;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/testing.dart';
@@ -504,6 +510,62 @@ void main() {
     );
   }, skip: !android);
 
+  testWidgets("the ring screen's caller picture and monogram (Android)", (
+    tester,
+  ) async {
+    await configure();
+    final picture = await _solidPng(_green);
+
+    /// Rings, opens the ring screen (the notification's tap), and returns
+    /// the centre of the notification's caller picture.
+    Future<int> ring(String name, Uri? image) async {
+      final call = await calls.reportIncomingCall(
+        handle: const CallHandle('integration-test'),
+        displayName: name,
+        callerImage: image,
+      );
+      await _eventually(
+        () async => (await _callNotifications()).isNotEmpty,
+        'the incoming call notification is posted',
+      );
+      final icon = (await _callNotifications()).single['callerIcon'] as int?;
+      _log('$name: caller picture centre ${icon?.toRadixString(16)}');
+      expect(icon, isNotNull, reason: 'the picture, else the monogram');
+      expect(await _notificationAction('show'), isTrue);
+      await _eventually(
+        () async => (await _appTasks()).contains(_ringActivity),
+        'the ring screen opens',
+      );
+      if (_driven == '1') {
+        // The driver saves a screenshot (SCREENSHOT_DIR).
+        _log('SCREENSHOT NOW ${name.toLowerCase().replaceAll(' ', '-')}');
+        await Future<void>.delayed(const Duration(seconds: 4));
+      }
+      await call.end(SystemCallEndReason.unanswered);
+      await call.whenEnded.timeout(_timeout);
+      await _eventually(
+        () async => !(await _appTasks()).contains(_ringActivity),
+        'the ring screen goes with the call',
+      );
+      return icon!;
+    }
+
+    bool green(int argb) =>
+        (argb >> 16 & 0xff) < 60 &&
+        (argb >> 8 & 0xff) > 180 &&
+        (argb & 0xff) < 120;
+
+    // Without a picture: the monogram, on a palette colour or white ink.
+    expect(green(await ring('Monogram test', null)), isFalse);
+    // A local file: the picture itself.
+    expect(green(await ring('Picture test', picture)), isTrue);
+    // A web URI is never fetched; nor is a missing file shown: the monogram.
+    final web = Uri.parse('https://example.com/ada.png');
+    expect(green(await ring('Web picture test', web)), isFalse);
+    final missing = picture.resolve('missing.png');
+    expect(green(await ring('Missing picture test', missing)), isFalse);
+  }, skip: !android);
+
   testWidgets(
     'a ringing call Telecom ends: declined only for a reject (Android)',
     (tester) async {
@@ -597,6 +659,22 @@ final RegExp _uuid = RegExp(
 );
 
 void _log(String message) => debugPrint('[system_call_test] $message');
+
+const _green = Color(0xFF00C853);
+
+/// A 96 × 96 PNG of [color] in the app's temporary directory (its own
+/// `code_cache` on Android), as a `file:` URI: the caller's picture an app
+/// downloaded.
+Future<Uri> _solidPng(Color color) async {
+  final recorder = ui.PictureRecorder();
+  Canvas(recorder).drawColor(color, BlendMode.src);
+  final image = await recorder.endRecording().toImage(96, 96);
+  final png = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose();
+  final file = File('${Directory.systemTemp.path}/caller_picture_test.png');
+  await file.writeAsBytes(png!.buffer.asUint8List(), flush: true);
+  return file.uri;
+}
 
 /// Asks the driver script to print Telecom's state and the services.
 Future<void> _checkTelecom(String when) async {

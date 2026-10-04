@@ -11,6 +11,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -114,7 +117,9 @@ class MainActivity : FlutterActivity() {
     }
 
     // The app's call notifications (category call), as the system shows
-    // them.
+    // them. `callerIcon`: the centre pixel (ARGB) of the caller's picture
+    // (the CallStyle person's icon; the large icon before Android 12), or
+    // null without one.
     private fun callNotifications(): List<Map<String, Any?>> {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return manager.activeNotifications
@@ -128,12 +133,28 @@ class MainActivity : FlutterActivity() {
                     "answer" to (callIntent(it.notification, "answer") != null),
                     "decline" to (callIntent(it.notification, "decline") != null),
                     "hangUp" to (callIntent(it.notification, "hangUp") != null),
+                    "callerIcon" to callerIconCentre(it.notification),
                 )
             }
     }
 
+    @Suppress("DEPRECATION")
+    private fun callerIconCentre(notification: Notification): Long? {
+        val icon: Icon? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON) as? android.app.Person)?.icon
+        } else {
+            notification.getLargeIcon()
+        }
+        val drawable = icon?.loadDrawable(this) ?: return null
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, 64, 64)
+        drawable.draw(Canvas(bitmap))
+        return bitmap.getPixel(32, 32).toLong() and 0xFFFFFFFFL
+    }
+
     // Presses Answer, Decline or Hang up in the call notification, as the
-    // user would (the same PendingIntents).
+    // user would (the same PendingIntents), or taps it ("show": its content
+    // intent, which opens the package's ring screen while it rings).
     private fun sendCallNotificationAction(action: String): Boolean {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = manager.activeNotifications
@@ -158,6 +179,7 @@ class MainActivity : FlutterActivity() {
     // actions are in the order the package adds them.
     @Suppress("DEPRECATION")
     private fun callIntent(notification: Notification, action: String): PendingIntent? {
+        if (action == "show") return notification.contentIntent
         val key = when (action) {
             "answer" -> "android.answerIntent"
             "decline" -> "android.declineIntent"

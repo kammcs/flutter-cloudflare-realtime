@@ -53,6 +53,11 @@ android {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
         }
+        // JVM unit tests of the pure Kotlin (no device): from example/android,
+        // `./gradlew :cloudflare_realtime:testDebugUnitTest`.
+        getByName("test") {
+            java.srcDirs("src/test/kotlin")
+        }
     }
 
     defaultConfig {
@@ -65,6 +70,7 @@ dependencies {
     // (Apache-2.0) and the coroutines its API is built on.
     implementation("androidx.core:core-telecom:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // The type-safe `kotlin { }` accessor isn't generated for a plugin applied

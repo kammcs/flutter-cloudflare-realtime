@@ -5,7 +5,9 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Outline
 import android.os.Build
 import android.os.Bundle
 import android.text.TextUtils
@@ -14,9 +16,11 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -34,9 +38,10 @@ import android.widget.TextView
  * process-wide (an FCM handler's engine reported the call; Dart learns of
  * the answer from the registry's events, buffered until it listens).
  *
- * - **Ringing:** the caller and Answer / Decline. Shown over the keyguard,
- *   and turning the screen on, only while the call exists (set here, in
- *   code, and cleared when it ends).
+ * - **Ringing:** the caller (their picture, else a monogram: [CallerAvatar])
+ *   and Answer / Decline. Shown over the keyguard, and turning the screen
+ *   on, only while the call exists (set here, in code, and cleared when it
+ *   ends).
  * - **Answer** answers the call (the call's foreground service keeps its
  *   audio running while locked, as a phone call does), then asks for the
  *   keyguard to be dismissed. Only once it is gone (or the device isn't
@@ -62,7 +67,11 @@ class IncomingCallActivity : Activity() {
     private var wasRinging = false
 
     private lateinit var status: TextView
+    private lateinit var avatar: ImageView
     private lateinit var name: TextView
+
+    /** What [avatar] shows: the image, or the name its monogram is of. */
+    private var avatarOf: Any? = null
     private lateinit var secondary: Button
     private lateinit var primary: Button
 
@@ -234,8 +243,9 @@ class IncomingCallActivity : Activity() {
 
     private fun render() {
         val entry = current() ?: return
-        val caller = entry.displayName?.takeIf { it.isNotEmpty() } ?: entry.handle
+        val caller = entry.callerName
         name.text = caller
+        renderAvatar(entry.callerImage, caller)
         if (entry.ringing) {
             status.setText(
                 if (entry.video) R.string.cloudflare_realtime_call_incoming_video else R.string.cloudflare_realtime_call_incoming,
@@ -259,6 +269,20 @@ class IncomingCallActivity : Activity() {
         title = "${status.text}: $caller"
     }
 
+    /** The caller's image when the app gave one that decoded, else their monogram. */
+    private fun renderAvatar(image: Bitmap?, caller: String) {
+        val shows: Any = image ?: caller
+        if (avatarOf == shows) return
+        avatarOf = shows
+        if (image != null) {
+            avatar.setImageBitmap(image)
+            avatar.contentDescription = getString(R.string.cloudflare_realtime_call_caller_photo, caller)
+        } else {
+            avatar.setImageDrawable(CallerAvatar.monogram(this, caller))
+            avatar.contentDescription = getString(R.string.cloudflare_realtime_call_caller_initials, caller)
+        }
+    }
+
     private fun buildViews() {
         val density = resources.displayMetrics.density
         fun dp(value: Int) = (value * density).toInt()
@@ -273,6 +297,16 @@ class IncomingCallActivity : Activity() {
             gravity = Gravity.CENTER
             textSize = 18f
             themeColor(android.R.attr.textColorSecondary)?.let(::setTextColor)
+        }
+        // A circle: the image cropped to it (the monogram draws its own).
+        avatar = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            clipToOutline = true
         }
         name = TextView(this).apply {
             gravity = Gravity.CENTER
@@ -312,6 +346,10 @@ class IncomingCallActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(24), dp(64), dp(24), dp(48))
             addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(
+                avatar,
+                LinearLayout.LayoutParams(dp(CallerAvatar.SIZE_DP), dp(CallerAvatar.SIZE_DP)).apply { topMargin = dp(32) },
+            )
             addView(name, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(View(this@IncomingCallActivity), LinearLayout.LayoutParams(0, 0, 1f))
             addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

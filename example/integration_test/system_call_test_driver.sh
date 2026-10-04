@@ -30,6 +30,10 @@
 #     --dart-define=CF_REALTIME_BROKER_TOKEN=<dev token> \
 #     --dart-define=CF_REALTIME_BROKER_USER=it-android
 #
+# At "SCREENSHOT NOW <name>" (the ring screen with the caller's monogram or
+# picture) it saves `adb exec-out screencap -p` as <name>.png in
+# SCREENSHOT_DIR, when that is set.
+#
 # ADB overrides the adb binary. The extra arguments go to `flutter test`
 # unchanged and are never printed.
 set -uo pipefail
@@ -63,6 +67,7 @@ background=0
 foreground=0
 companion=0
 injected=0
+screenshots=0
 while kill -0 "$TEST" 2>/dev/null; do
   if [ "$(count 'BACKGROUND NOW')" -gt "$background" ]; then
     background=$((background + 1))
@@ -91,6 +96,15 @@ while kill -0 "$TEST" 2>/dev/null; do
       -n "$PACKAGE/dev.kammcs.cloudflare_realtime.IncomingCallActivity" \
       -a dev.kammcs.cloudflare_realtime.action.ANSWER_CALL \
       --es dev.kammcs.cloudflare_realtime.extra.CALL_ID "$id" 2>&1
+  fi
+  if [ "$(count 'SCREENSHOT NOW')" -gt "$screenshots" ]; then
+    screenshots=$((screenshots + 1))
+    name=$(grep -o 'SCREENSHOT NOW [a-z0-9-]*' "$LOG" | sed -n "${screenshots}p" | awk '{print $3}')
+    if [ -n "${SCREENSHOT_DIR:-}" ] && [ -n "$name" ]; then
+      sleep 1 # the ring screen's first frame
+      "$ADB" exec-out screencap -p >"$SCREENSHOT_DIR/$name.png"
+      echo "--- driver: screenshot $SCREENSHOT_DIR/$name.png"
+    fi
   fi
   if [ "$(count 'CHECK TELECOM')" -gt "$checks" ]; then
     checks=$((checks + 1))

@@ -16,12 +16,16 @@ import 'system_call_types.dart';
 //   MethodChannel  dev.kammcs.cloudflare_realtime/system_calls
 //   EventChannel   dev.kammcs.cloudflare_realtime/system_calls_events
 //
-// A call map (both ways; Dart sends only the first six keys):
+// A call map (both ways; Dart sends only the first six keys, plus
+// callerImage when the app gave one):
 //   {id: String (a UUID, lowercase), handle: String,
 //    handleType: "generic" | "phoneNumber" | "emailAddress",
 //    displayName: String?, video: bool, outgoing: bool,
 //    state: "ringing" | "dialing" | "connecting" | "active" | "held" | "ended",
 //    muted: bool, payload: Map<String, Object?>?}
+// callerImage: String, a local file:// or content:// URI (incoming calls,
+//   Dart to native only). Android decodes it for the ring screen and the
+//   notification; iOS ignores it (CallKit shows no app images).
 // A route map: {id: String, kind: "speaker" | "earpiece" | "wiredHeadset" |
 //   "bluetooth" | "usb" | "other", name: String} (as on call_audio).
 //
@@ -83,6 +87,7 @@ class SystemCallInfo {
     this.state = SystemCallState.ringing,
     this.muted = false,
     this.payload = const {},
+    this.callerImage,
   });
 
   /// The call's UUID.
@@ -109,6 +114,10 @@ class SystemCallInfo {
   /// What the VoIP push carried beyond the call's fields (iOS).
   final Map<String, Object?> payload;
 
+  /// The caller's picture, a local `file:` or `content:` URI (incoming
+  /// calls; Android shows it). Sent, never read back from the native side.
+  final Uri? callerImage;
+
   /// The map sent to the native code for a new call.
   Map<String, Object?> toMap() => {
     'id': id,
@@ -117,6 +126,7 @@ class SystemCallInfo {
     'displayName': displayName,
     'video': video,
     'outgoing': outgoing,
+    'callerImage': ?callerImage?.toString(),
   };
 
   @override

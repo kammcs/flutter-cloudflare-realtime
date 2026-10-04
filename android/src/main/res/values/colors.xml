@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The ring screen's monogram (IncomingCallActivity, docs/design.md §4.8):
+     a caller without a picture gets one of these colours, the same one for
+     the same name, behind white initials. Each has at least 5:1 contrast
+     with white. Apps can override the array by defining one with the same
+     name; keep the contrast with white text. -->
+<resources>
+    <array name="cloudflare_realtime_monogram_colors">
+        <item>#FFC62828</item>
+        <item>#FFAD1457</item>
+        <item>#FF6A1B9A</item>
+        <item>#FF4527A0</item>
+        <item>#FF283593</item>
+        <item>#FF1565C0</item>
+        <item>#FF00695C</item>
+        <item>#FF2E7D32</item>
+        <item>#FFBF360C</item>
+        <item>#FF37474F</item>
+    </array>
+</resources>
