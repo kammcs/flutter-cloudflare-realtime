@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fakes.dart';
@@ -547,6 +550,140 @@ void main() {
         await camera.dispose();
       },
     );
+  });
+
+  group('capture timeout', () {
+    test('the default is 30 s', () {
+      expect(
+        MicrophoneSource(backend: backend).captureTimeout,
+        const Duration(seconds: 30),
+      );
+      expect(
+        CameraSource(backend: backend).captureTimeout,
+        DeviceMediaSource.defaultCaptureTimeout,
+      );
+    });
+
+    test('a getUserMedia that never answers fails the source with a typed '
+        'error, and a late track is released', () {
+      fakeAsync((async) {
+        // Created in the fake zone, so its streams run on the fake clock.
+        final backend = FakeMediaBackend(
+          devices: [cam1, cam2, mic1, mic2, speaker1],
+        );
+        final mic = MicrophoneSource(backend: backend);
+        final errors = <MediaException>[];
+        mic.errors.listen(errors.add);
+        final gate = backend.userMediaGate = Completer<void>();
+        bool? started;
+        mic.startBroadcasting().then((ok) => started = ok);
+
+        async.elapse(const Duration(seconds: 29));
+        expect(started, isNull);
+        async.elapse(const Duration(seconds: 1));
+        expect(started, isFalse);
+        expect(mic.isEnabled, isFalse);
+        expect(mic.isBroadcasting, isFalse);
+        expect(mic.track, isNull);
+        expect(
+          errors.single,
+          isA<MediaCaptureException>().having(
+            (e) => e.cause,
+            'cause',
+            isA<TimeoutException>(),
+          ),
+        );
+        // The other microphone wasn't tried: the platform is stuck.
+        expect(backend.userMediaCalls, hasLength(1));
+
+        // The capture completes late: its track is stopped, nothing keeps it.
+        gate.complete();
+        async.flushMicrotasks();
+        final late = backend.streams.single;
+        expect(late.disposed, isTrue);
+        expect(late.tracks.single.stopped, isTrue);
+        expect(mic.track, isNull);
+
+        // The source works again, and tries another device first.
+        bool? again;
+        mic.startBroadcasting().then((ok) => again = ok);
+        async.flushMicrotasks();
+        expect(again, isTrue);
+        expect(mic.track!.device, mic2);
+        mic.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
+    test('a null timeout waits', () {
+      fakeAsync((async) {
+        // Created in the fake zone, so its streams run on the fake clock.
+        final backend = FakeMediaBackend(
+          devices: [cam1, cam2, mic1, mic2, speaker1],
+        );
+        final camera = CameraSource(backend: backend, captureTimeout: null);
+        final gate = backend.userMediaGate = Completer<void>();
+        bool? started;
+        camera.enable().then((ok) => started = ok);
+        async.elapse(const Duration(minutes: 5));
+        expect(started, isNull);
+        gate.complete();
+        async.flushMicrotasks();
+        expect(started, isTrue);
+        camera.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
+    test('dispose while the capture hangs finishes once it times out, and '
+        'the late track is released', () async {
+      final camera = CameraSource(
+        backend: backend,
+        captureTimeout: const Duration(milliseconds: 20),
+      );
+      final gate = backend.userMediaGate = Completer<void>();
+      unawaited(camera.enable());
+      await pumpEventQueue();
+      expect(backend.userMediaCalls, hasLength(1));
+      // Completes (after the timeout) although getUserMedia never answered.
+      await camera.dispose();
+      expect(camera.track, isNull);
+      gate.complete();
+      await pumpEventQueue();
+      expect(backend.streams.single.disposed, isTrue);
+      expect(backend.streams.single.track.stopped, isTrue);
+    });
+
+    test('an enumeration that never answers does not block the capture', () {
+      fakeAsync((async) {
+        // Created in the fake zone, so its streams run on the fake clock.
+        final backend = FakeMediaBackend(
+          devices: [cam1, cam2, mic1, mic2, speaker1],
+        );
+        final gate = backend.enumerateGate = Completer<void>();
+        final mic = MicrophoneSource(backend: backend);
+        final errors = <MediaException>[];
+        mic.errors.listen(errors.add);
+        bool? started;
+        mic.startBroadcasting().then((ok) => started = ok);
+        async.elapse(
+          MediaDeviceList.enumerationTimeout - const Duration(milliseconds: 1),
+        );
+        expect(started, isNull, reason: 'waits for the first list');
+        async.elapse(const Duration(milliseconds: 1));
+        // Fails soft: no list, no error; the platform picks the device.
+        expect(started, isTrue);
+        expect(errors, isEmpty);
+        expect(mic.track, isNotNull);
+        final audio = backend.userMediaCalls.single['audio'] as Map;
+        expect(requestedDeviceId(Map<String, dynamic>.from(audio)), isNull);
+        // The refresh after that capture fills the list.
+        expect(mic.deviceList.devices, isNotEmpty);
+        gate.complete();
+        mic.dispose();
+        async.flushMicrotasks();
+      });
+    });
   });
 
   group('dispose', () {

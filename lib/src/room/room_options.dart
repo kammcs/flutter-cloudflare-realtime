@@ -1,8 +1,10 @@
+/// @docImport '../media/media_errors.dart';
 /// @docImport 'room.dart';
 library;
 
 import 'package:flutter/foundation.dart';
 
+import '../media/device_media_source.dart';
 import '../quality/active_speaker_config.dart';
 import '../quality/connection_quality.dart';
 import '../quality/layer_pausing.dart';
@@ -208,6 +210,7 @@ final class RoomOptions {
     this.activeSpeaker = const ActiveSpeakerOptions(),
     this.stats = const RoomStatsOptions(),
     this.screenShareStallTimeout = const Duration(seconds: 8),
+    this.captureTimeout = DeviceMediaSource.defaultCaptureTimeout,
     this.speakerphone,
     this.connectEarly = true,
     this.foregroundService = true,
@@ -289,6 +292,18 @@ final class RoomOptions {
   /// `getStats()` while a share captures. Default 8 s; `null` turns the
   /// check off.
   final Duration? screenShareStallTimeout;
+
+  /// How long the camera or microphone capture of
+  /// [LocalParticipant.publishCamera] and
+  /// [LocalParticipant.publishMicrophone] may take to start
+  /// ([DeviceMediaSource.captureTimeout]). The publish then throws a
+  /// [MediaCaptureException] (its `cause` a `TimeoutException`) instead of
+  /// waiting forever on a platform that doesn't answer, and the room stays
+  /// usable for another publish (`docs/design.md` §4.3, Bounded publish).
+  /// Default 30 s, which includes a permission prompt shown during the
+  /// capture; `null` waits for as long as it takes. The negotiation that
+  /// follows is bounded by [SfuSessionOptions.negotiationTimeout].
+  final Duration? captureTimeout;
 
   /// Where call audio plays on phones when no headset is connected
   /// (`docs/design.md` §4.6). `null` (the default) follows the call, the

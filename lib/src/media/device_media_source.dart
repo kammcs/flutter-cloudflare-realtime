@@ -41,6 +41,11 @@ import 'release.dart';
 ///
 /// Remembering the preference across app runs is up to the app: persist
 /// [preferredDevice] and pass it back as `preferredDevice`.
+///
+/// **A capture can't hang forever:** a `getUserMedia` that doesn't answer
+/// within [captureTimeout] fails the source with a [MediaCaptureException]
+/// whose `cause` is a [TimeoutException], and a track it delivers later is
+/// released (`docs/design.md` §4.5, Bounded capture).
 abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// Initializes device handling. For subclasses.
   DeviceMediaSource({
@@ -52,6 +57,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     required MediaBackend backend,
     MediaDeviceList? deviceList,
     MediaDevice? preferredDevice,
+    this.captureTimeout = defaultCaptureTimeout,
   }) : _backend = backend,
        _wantedOptions = options,
        _ownsDeviceList = deviceList == null,
@@ -65,6 +71,24 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
 
   /// The kind of device this source captures from.
   final MediaDeviceKind deviceKind;
+
+  /// The default [captureTimeout]: 30 s.
+  static const defaultCaptureTimeout = Duration(seconds: 30);
+
+  /// How long one `getUserMedia` may take before the capture fails; null
+  /// waits for as long as it takes.
+  ///
+  /// It normally answers in well under a second; this bounds a platform
+  /// that never answers (`docs/design.md` §4.5, Bounded capture). The
+  /// capture then fails with a [MediaCaptureException] (its `cause` a
+  /// [TimeoutException]) without trying the other devices, the device is
+  /// tried last next time, and a track that arrives later is stopped.
+  ///
+  /// A permission prompt the platform shows inside `getUserMedia` (the
+  /// first capture on iOS, macOS and Android, and the browser's prompt)
+  /// counts too: ask for the permission before capturing, or pass a longer
+  /// timeout or null, if a prompt may stay open longer.
+  final Duration? captureTimeout;
 
   final MediaBackend _backend;
   final MediaDeviceList _deviceList;
@@ -247,9 +271,28 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
       }
       final MediaStream stream;
       try {
-        stream = await _backend.getUserMedia(
+        stream = await _getUserMedia(
           buildConstraints(_wantedOptions, device, _backend.platform),
         );
+      } on _CaptureTimedOut catch (timedOut) {
+        // A platform that doesn't answer won't answer for the next device
+        // either: stop here. The device goes last for the next attempt.
+        if (device != null && !_deprioritized.any(device.sameDeviceAs)) {
+          _deprioritized.add(device);
+        }
+        if (!isEnabled || isDisposed) return;
+        await releaseOld();
+        fail(
+          MediaCaptureException(
+            'The ${deviceKind.wireName} capture did not start within '
+            '${timedOut.timeout.inMilliseconds} ms.',
+            cause: TimeoutException(
+              'getUserMedia did not complete',
+              timedOut.timeout,
+            ),
+          ),
+        );
+        return;
       } catch (error) {
         if (isPermissionError(error)) {
           await releaseOld();
@@ -308,6 +351,25 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
         failures: List.unmodifiable(failures),
         cause: failures.isEmpty ? null : failures.last.$2,
       ),
+    );
+  }
+
+  /// `getUserMedia` within [captureTimeout]. A stream that arrives after
+  /// the timeout is released.
+  Future<MediaStream> _getUserMedia(Map<String, dynamic> constraints) {
+    final request = _backend.getUserMedia(constraints);
+    final timeout = captureTimeout;
+    if (timeout == null) return request;
+    return request.timeout(
+      timeout,
+      onTimeout: () {
+        debugPrint(
+          'cloudflare_realtime: getUserMedia (${deviceKind.wireName}) did '
+          'not complete within ${timeout.inMilliseconds} ms',
+        );
+        unawaited(request.then(releaseStream, onError: (Object _) {}));
+        throw _CaptureTimedOut(timeout);
+      },
     );
   }
 
@@ -402,6 +464,7 @@ class CameraSource extends DeviceMediaSource<CameraOptions> {
     super.options = const CameraOptions(),
     super.preferredDevice,
     super.mutePolicy = MutePolicy.releaseCapture,
+    super.captureTimeout,
   }) : super(
          kind: TrackKind.video,
          source: TrackSource.camera,
@@ -478,6 +541,7 @@ class MicrophoneSource extends DeviceMediaSource<MicrophoneOptions> {
     super.options = const MicrophoneOptions(),
     super.preferredDevice,
     super.mutePolicy = MutePolicy.keepCapture,
+    super.captureTimeout,
   }) : super(
          kind: TrackKind.audio,
          source: TrackSource.microphone,
@@ -490,4 +554,11 @@ class MicrophoneSource extends DeviceMediaSource<MicrophoneOptions> {
     MediaDevice? device,
     MediaPlatform platform,
   ) => microphoneConstraints(options, platform: platform, device: device);
+}
+
+/// A `getUserMedia` that didn't answer within [timeout].
+class _CaptureTimedOut implements Exception {
+  const _CaptureTimedOut(this.timeout);
+
+  final Duration timeout;
 }

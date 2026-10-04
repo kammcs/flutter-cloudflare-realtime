@@ -187,18 +187,31 @@ class FakeMediaBackend implements MediaBackend {
   /// Called after each successful getUserMedia.
   void Function()? afterUserMedia;
 
+  /// When set, the next getUserMedia waits for it (a platform that doesn't
+  /// answer), then captures as usual: a late completion.
+  Completer<void>? userMediaGate;
+
+  /// When set, the next enumerateDevices waits for it, then answers.
+  Completer<void>? enumerateGate;
+
   @override
   Stream<void> get deviceChanges => _changes.stream;
 
   @override
   Future<List<MediaDevice>> enumerateDevices() async {
     enumerateCalls++;
+    final gate = enumerateGate;
+    enumerateGate = null;
+    if (gate != null) await gate.future;
     return List.of(_devices);
   }
 
   @override
   Future<MediaStream> getUserMedia(Map<String, dynamic> constraints) async {
     userMediaCalls.add(constraints);
+    final gate = userMediaGate;
+    userMediaGate = null;
+    if (gate != null) await gate.future;
     final error = userMediaError;
     if (error != null) throw error;
     final isAudio = constraints['audio'] != false;

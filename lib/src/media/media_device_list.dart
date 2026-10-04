@@ -103,17 +103,30 @@ class MediaDeviceList {
     MediaDeviceKind kind,
   ) => List.unmodifiable(all.where((d) => d.kind == kind));
 
+  /// How long one enumeration may take: 10 s. One that takes longer
+  /// counts as failed, softly: the list is left unchanged and no error is
+  /// reported, so [ready] and the captures that wait on it never hang on a
+  /// platform that doesn't answer, and a capture without a list lets the
+  /// platform pick the device (`docs/design.md` §4.5, Bounded capture). Its
+  /// late result is dropped; the next enumeration (after a capture, or a
+  /// device change) reads the devices again. A Mac's first enumeration in
+  /// a process can take about 9 s (AVFoundation building its device list).
+  static const enumerationTimeout = Duration(seconds: 10);
+
   /// Re-enumerates devices now.
   ///
   /// Concurrent calls share one enumeration, plus one more if a call arrived
-  /// while it was running. Enumeration errors are logged and leave the list
+  /// while it was running. Enumeration errors (and an enumeration that
+  /// takes longer than [enumerationTimeout]) are logged and leave the list
   /// unchanged.
   Future<void> refresh() => _disposed ? Future.value() : _enumerator.run();
 
   Future<void> _enumerate() async {
     if (_disposed) return;
     try {
-      final devices = await _backend.enumerateDevices();
+      final devices = await _backend.enumerateDevices().timeout(
+        enumerationTimeout,
+      );
       if (_disposed) return;
       _devices.set(List.unmodifiable(devices));
     } catch (error) {

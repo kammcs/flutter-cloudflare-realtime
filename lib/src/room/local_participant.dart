@@ -183,6 +183,7 @@ class LocalParticipant implements Participant {
       deviceList: _room._devices,
       options: options,
       preferredDevice: device,
+      captureTimeout: _room.options.captureTimeout,
     );
     if (!muted) await _startCapture(camera, camera.startBroadcasting);
     final effective =
@@ -246,6 +247,7 @@ class LocalParticipant implements Participant {
       deviceList: _room._devices,
       options: options,
       preferredDevice: device,
+      captureTimeout: _room.options.captureTimeout,
     );
     if (!muted) await _startCapture(microphone, microphone.startBroadcasting);
     return _publish(
