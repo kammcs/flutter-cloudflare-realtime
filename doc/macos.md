@@ -54,3 +54,11 @@ The example app shows how to point the user to the setting (`example/lib/screen_
 ## Audio
 
 Desktops have no call audio routes (`Room.canSelectAudioRoute` is `false`). Choose the speaker or headset with `Room.setAudioOutputDevice` and a device from the room's device list, and the microphone with `CameraSource` / `MicrophoneSource.setPreferredDevice` (or the `device:` argument of `publishMicrophone`).
+
+## The first call is slow
+
+The first call after the app starts can take 20–40 s on some Macs before your microphone is heard, while a browser on the same Mac joins in a few seconds. Most of it is the audio stack starting, in WebRTC-SDK's audio device module, AVFoundation and Core Audio: initializing the module at the first peer connection (up to 6 s measured) and AVFoundation's first device list (up to 9 s), both once per app process, and above all Apple's voice processing (echo cancellation), which starts with the first microphone publish (3–27 s measured). It is worst on a loaded Mac and with many audio devices (virtual devices such as BlackHole, aggregate and multi-output devices, a Continuity iPhone). Choosing a microphone other than the system default adds 9–11 s, because the module restarts its voice processing for the new input. The module starts the voice processing again whenever it restarts recording. [design.md §4.2](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#42-sfusession) has the measurements.
+
+The package keeps the app responsive meanwhile: it doesn't call into the plugin in ways that would block the main thread while the voice processing starts. The first peer connection and the first device list still block it for a few seconds each; show the call screen (with its hang-up button) before joining, so the user sees progress.
+
+If you put a time limit on joining or publishing, allow at least 30 s on macOS.

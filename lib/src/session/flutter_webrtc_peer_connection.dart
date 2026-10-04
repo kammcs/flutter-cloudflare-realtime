@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../broker/models/common.dart';
+import '../util/native_negotiation.dart';
 import 'peer_connection.dart';
 import 'publish_options.dart';
 
@@ -178,20 +179,24 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   }
 
   @override
-  Future<SessionDescription> createOffer() async =>
-      _fromRtc(await _pc.createOffer(_noReceiveConstraints));
+  Future<SessionDescription> createOffer() async => _fromRtc(
+    await NativeNegotiation.run(() => _pc.createOffer(_noReceiveConstraints)),
+  );
 
   @override
-  Future<SessionDescription> createAnswer() async =>
-      _fromRtc(await _pc.createAnswer(_noReceiveConstraints));
+  Future<SessionDescription> createAnswer() async => _fromRtc(
+    await NativeNegotiation.run(() => _pc.createAnswer(_noReceiveConstraints)),
+  );
 
   @override
   Future<void> setLocalDescription(SessionDescription description) =>
-      _pc.setLocalDescription(_toRtc(description));
+      NativeNegotiation.run(() => _pc.setLocalDescription(_toRtc(description)));
 
   @override
   Future<void> setRemoteDescription(SessionDescription description) =>
-      _pc.setRemoteDescription(_toRtc(description));
+      NativeNegotiation.run(
+        () => _pc.setRemoteDescription(_toRtc(description)),
+      );
 
   @override
   Future<SessionDescription?> localDescription() async {
@@ -241,7 +246,12 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   }
 
   @override
-  Future<List<webrtc.StatsReport>> getStats() => _pc.getStats();
+  Future<List<webrtc.StatsReport>> getStats() async {
+    // Not while a description is applied: the plugin answers getStats on
+    // the platform thread, which would wait for it (NativeNegotiation).
+    await NativeNegotiation.whenIdle();
+    return _pc.getStats();
+  }
 
   @override
   Future<PeerDataChannel> createDataChannel(
@@ -286,6 +296,7 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
   /// `data-channel` report. See `docs/design.md` §9.
   Future<bool> _isDataChannelOpenInStats(int id) async {
     if (_closed) return false;
+    await NativeNegotiation.whenIdle();
     for (final report in await _pc.getStats()) {
       if (report.type != 'data-channel') continue;
       final values = report.values;
@@ -464,6 +475,8 @@ class _FlutterWebrtcTransceiver implements PeerTransceiver {
 
   @override
   Future<bool> hasSentMedia() async {
+    // See FlutterWebrtcPeerConnection.getStats.
+    await NativeNegotiation.whenIdle();
     for (final report in await _t.sender.getStats()) {
       if (report.type != 'outbound-rtp') continue;
       final bytes = report.values['bytesSent'];

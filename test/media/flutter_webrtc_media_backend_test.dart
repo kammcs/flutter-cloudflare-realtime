@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
@@ -499,6 +500,31 @@ void main() {
         reselector.selected('b');
         async.elapse(const Duration(minutes: 1));
         expect(selected, ['a', 'b', 'b', 'b', 'b']);
+      });
+    });
+
+    test('waits until no description is being applied', () {
+      fakeAsync((async) {
+        final selected = <String>[];
+        var idle = Completer<void>();
+        final reselector = MacInputReselector(
+          (id) async => selected.add(id),
+          whenIdle: () => idle.future,
+        )..selected('mic');
+        async.elapse(const Duration(seconds: 3));
+        expect(selected, isEmpty, reason: 'the module is busy');
+        idle.complete();
+        async.flushMicrotasks();
+        expect(selected, ['mic', 'mic']);
+
+        // A newer choice cancels the selections still waiting.
+        idle = Completer<void>();
+        reselector.selected('a');
+        async.elapse(const Duration(seconds: 2));
+        reselector.selected('default');
+        idle.complete();
+        async.elapse(const Duration(minutes: 1));
+        expect(selected, ['mic', 'mic']);
       });
     });
 

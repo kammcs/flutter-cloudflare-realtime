@@ -136,6 +136,34 @@ void main() {
       });
     });
 
+    test('re-scans only while the OS reports no geometry for the source', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(
+          backend: backend,
+          sourceWatchInterval: const Duration(seconds: 3),
+          geometryWatchInterval: const Duration(milliseconds: 500),
+        );
+        desktop.geometries['window-1'] = const ScreenGeometry(
+          bounds: Rect.fromLTWH(0, 0, 800, 600),
+          scaleFactor: 2,
+        );
+        share.start(source: window1);
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 30));
+        expect(desktop.updateSourcesCalls, 0, reason: 'the window exists');
+
+        // Closed (or minimized on Windows): re-scan, which reports removals.
+        desktop.geometries.remove('window-1');
+        async.elapse(const Duration(seconds: 3));
+        expect(desktop.updateSourcesCalls, 1);
+        desktop.removed.add(window1);
+        async.flushMicrotasks();
+        expect(share.isEnabled, isFalse);
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
     group('sourceGeometry', () {
       const listed = ScreenGeometry(
         bounds: Rect.fromLTWH(100, 100, 800, 600),

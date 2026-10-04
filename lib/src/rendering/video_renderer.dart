@@ -50,11 +50,16 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
 
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
 
+  /// Whether the renderer has ever been given a stream (and so may have
+  /// frames in flight).
+  bool _hadStream = false;
+
   @override
   Future<void> initialize() => _renderer.initialize();
 
   @override
   Future<void> setStream(MediaStream? stream) async {
+    if (stream != null) _hadStream = true;
     _renderer.srcObject = stream;
   }
 
@@ -78,10 +83,23 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
   @override
   Future<void> dispose() async {
     try {
-      _renderer.srcObject = null;
+      // Awaited: once the plugin has answered, the track no longer hands
+      // frames to the native renderer.
+      await _renderer.setSrcObject(stream: null);
     } catch (_) {
-      // Not initialized: nothing to detach.
+      // Not initialized (or already disposed): nothing to detach.
     }
+    // flutter_webrtc's Darwin renderer queues a block on the main queue
+    // for each frame, which reads the renderer through a weak reference
+    // without a nil check: a block that runs after the renderer is
+    // released crashes the app. Let the blocks of the last frames run
+    // first (docs/design.md §4.3,
+    // Releasing a native renderer).
+    if (_hadStream) await Future<void>.delayed(_releaseDelay);
     await _renderer.dispose();
   }
+
+  /// How long [dispose] waits between detaching the stream and releasing
+  /// the native renderer.
+  static const _releaseDelay = Duration(milliseconds: 250);
 }
