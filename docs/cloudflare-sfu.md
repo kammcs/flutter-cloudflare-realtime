@@ -1,6 +1,6 @@
 # Cloudflare Realtime SFU: what this package builds on
 
-- **Summary date:** 2026-09-30 (simulcast and codecs re-checked 2026-10-02).
+- **Summary date:** 2026-09-30 (simulcast and codecs re-checked 2026-10-02; limits 2026-10-04).
 - **Source of truth:** Cloudflare's docs and OpenAPI schema. Re-check them when implementing; the links are in the Sources section at the end.
 
 ## Components
@@ -139,6 +139,16 @@ DataChannel shapes are in [DataChannels](#datachannels) below.
   - Sending no offer is the simpler path, and the one Cloudflare's `echo-datachannels` example takes (source 6b): the client needs no local channel first, and the SFU opens `server-events` in-band. Sending an offer needs an `application` m-line, which a browser only adds once a channel exists.
   - `datachannels/new` doesn't have to wait for the connection: the example and `cloud-gaming` call it right after `renegotiate`, and the negotiated channels open once SCTP is up.
 - Per the schema, channel IDs are allocated per endpoint's session, and `waitForAck` and `canReply` are per subscription.
+
+## Limits
+
+From source 4c, checked 2026-10-04 for the media-state proposal ([design.md §9.1](design.md#91-media-state-over-the-sfu-proposal)):
+
+- **API requests:** 50 per second **per session**, not per app.
+- **Tracks per API request:** up to 64. The docs don't say whether this also caps the `dataChannels` in one `datachannels/new`; the client batches at most 32 either way.
+- **Tracks in a session:** no fixed upper bound; endpoint and connection capacity set the practical limit.
+- **DataChannels:** at most one subscriber with `canReply` per channel. **Nothing is documented** about the number of DataChannels per session, subscribers per channel or the message size, and the pricing page doesn't say whether DataChannel traffic counts as egress.
+- **Timeouts:** a media track with no incoming packets for 30 s is garbage-collected (the docs don't say whether this applies to DataChannels); a session or track can be reused for 30 s after connectivity is lost; transport negotiation times out after 5 s; a `waitForAck` subscription needs its first message within 30 s.
 
 ## Pricing (for context)
 
