@@ -20,6 +20,18 @@ export 'src/room/room.dart' hide joinRoom;
 export 'src/room/room_options.dart';
 export 'src/room/screen_share_presets.dart';
 
+// A debug aid: timing platform calls and event-loop gaps
+// (CloudflareRealtime.debugPlatformCallTiming; design.md §4.2).
+export 'src/diagnostics/platform_call_timing.dart'
+    show
+        EventLoopGapEvent,
+        PlatformCall,
+        PlatformCallAnsweredEvent,
+        PlatformCallTimingBinding,
+        PlatformCallTimingEvent,
+        PlatformCallTimingOptions,
+        flutterWebrtcMethodChannel;
+
 // Call audio routing on phones (design.md §4.6), and a refused output
 // device elsewhere (Room.setAudioOutputDevice, §4.3).
 export 'src/audio/audio_output_exception.dart'

@@ -1,6 +1,7 @@
 import '../broker/broker_client.dart';
 import '../broker/broker_config.dart';
 import '../broker/http_broker_client.dart';
+import '../diagnostics/platform_call_timing.dart';
 import '../media/flutter_webrtc_media_backend.dart';
 import '../media/media_backend.dart';
 import '../reconnect/app_lifecycle_source.dart';
@@ -93,17 +94,28 @@ class CloudflareRealtime {
   /// `null` for none. Default: [FlutterAppLifecycleSource].
   final AppLifecycleSource? appLifecycle;
 
-  /// Does the slow part of a join's WebRTC setup now, where it is slow:
-  /// on macOS. Elsewhere it does nothing.
+  /// Does the slow part of a join's WebRTC setup now, on macOS, so that a
+  /// later [join] doesn't. Elsewhere it does nothing.
   ///
   /// On macOS the first peer connection in an app process initializes
   /// `flutter_webrtc` and WebRTC-SDK's audio device module, which blocks
-  /// the main thread, and so the app's UI, for 4–6 s (measured on a
+  /// the main thread, and so the app's UI, for 3–8 s (measured on a
   /// MacBook Pro, macOS 27; `docs/design.md` §4.2, macOS: a slow first
   /// join). Without this, [join] does it while the user waits for the
-  /// call. Call this when a pause matters less, such as behind a launch
-  /// screen, or as a pre-call screen opens; then the join's own peer
-  /// connection takes milliseconds.
+  /// call.
+  ///
+  /// **It moves that freeze; it doesn't remove it.** The prewarm itself
+  /// freezes the UI for as long (3–9 s measured; a consuming app measured
+  /// 5.3 s and 8.9 s when it ran right after sign-in), so it only helps
+  /// where a freeze is acceptable, such as behind a launch or splash
+  /// screen. It doesn't make the call start sooner: the time moves to the
+  /// prewarm, the first microphone publish still waits for Apple's voice
+  /// processing, and a consuming app measured no gain on its joins. And it
+  /// only removes the peer connection's part of a join's freezes, not the
+  /// device list (when a camera or a device picker needs it), the camera's
+  /// start, re-selecting a microphone other than the default, or calls the
+  /// app makes; time those with [debugPlatformCallTiming]. Measure in your
+  /// app before shipping it.
   ///
   /// It creates one idle peer connection (no ICE servers, no media) and
   /// keeps it until the next [join] has created its own, because closing
@@ -112,13 +124,69 @@ class CloudflareRealtime {
   /// it again after leaving, before the next join. Calls while one is held
   /// return the same future.
   ///
-  /// The UI still freezes while it runs: it moves the pause, it doesn't
-  /// remove it. Nothing is captured or sent, and no permission is asked
-  /// for; Apple's voice processing still starts with the first microphone
-  /// publish (off the UI thread). A [join] started meanwhile waits for it
-  /// before requesting the session. Never throws: a failure is logged, and
-  /// the join creates its own peer connection.
+  /// Nothing is captured or sent, and no permission is asked for; Apple's
+  /// voice processing still starts with the first microphone publish (off
+  /// the UI thread). A [join] started meanwhile waits for it before
+  /// requesting the session. Never throws: a failure is logged, and the
+  /// join creates its own peer connection.
   static Future<void> prewarm() => PeerConnectionWarmup.warm();
+
+  /// A debug aid: times the platform calls the app makes through
+  /// `flutter_webrtc` (the package's and the app's own) and the event
+  /// loop's gaps, and names the calls behind each gap. `null`, the default,
+  /// turns it off.
+  ///
+  /// On macOS, iOS and Android, `flutter_webrtc`'s native plugin answers
+  /// most calls on the platform thread, which is also the UI thread; a call
+  /// the plugin does synchronously and slowly there freezes the app (on
+  /// macOS, the first peer connection and the first device list take
+  /// seconds; `docs/design.md` §4.2). This finds which call it is:
+  ///
+  /// ```dart
+  /// void main() {
+  ///   PlatformCallTimingBinding.ensureInitialized(); // before any other binding
+  ///   CloudflareRealtime.debugPlatformCallTiming =
+  ///       const PlatformCallTimingOptions(); // or channels: null for every channel
+  ///   runApp(const MyApp());
+  /// }
+  /// ```
+  ///
+  /// It prints each event-loop gap over the threshold (250 ms) with the
+  /// calls sent just before or during it, and each call slower than 100 ms,
+  /// with `debugPrint`; for example `cloudflare_realtime: event loop
+  /// stopped for 4213 ms (+12030..+16243 ms); sent then:
+  /// createPeerConnection(4190 ms)`. [debugPlatformCallTimingEvents] has
+  /// the same as typed events, every call included. Only method names,
+  /// argument keys and times are recorded: never argument values (SDP,
+  /// tokens) or replies.
+  ///
+  /// **Coverage:** calls are timed only when the binding's messenger is
+  /// wrapped, by [PlatformCallTimingBinding] created before any other
+  /// binding (or `PlatformCallTimingBinding.wrapMessenger` in an app's own
+  /// binding). Otherwise only the gaps are reported, and the log says so.
+  /// It sees every call sent through Flutter's default messenger, whoever
+  /// sends it, on the [PlatformCallTimingOptions.channels] chosen; not
+  /// native work the Dart side never asked for (a native timer, the video
+  /// renderer's frame callbacks), which shows as a gap with no call. A gap
+  /// is the Dart event loop running late, so the app's own synchronous Dart
+  /// work shows too. On the web `flutter_webrtc` makes no platform calls:
+  /// only the gaps are reported.
+  ///
+  /// Costs nothing while off: no timer, and a wrapped messenger only checks
+  /// this value. While on, a 20 ms periodic timer runs. Works in every
+  /// build mode; measure in profile mode where possible.
+  static PlatformCallTimingOptions? get debugPlatformCallTiming =>
+      PlatformCallTimer.options;
+
+  static set debugPlatformCallTiming(PlatformCallTimingOptions? options) =>
+      PlatformCallTimer.options = options;
+
+  /// The platform calls and event-loop gaps timed while
+  /// [debugPlatformCallTiming] is on: a [PlatformCallAnsweredEvent] for
+  /// every call that answers, and an [EventLoopGapEvent] for every gap.
+  /// A broadcast stream: events before a listener subscribes are lost.
+  static Stream<PlatformCallTimingEvent> get debugPlatformCallTimingEvents =>
+      PlatformCallTimer.events;
 
   final BrokerClientFactory _createBrokerClient;
   final SfuSessionConnector _connectSession;

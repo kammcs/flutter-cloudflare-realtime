@@ -59,19 +59,42 @@ Desktops have no call audio routes (`Room.canSelectAudioRoute` is `false`). Choo
 
 The first call after the app starts can take 20–40 s on some Macs before your microphone is heard, while a browser on the same Mac joins in a few seconds. Most of it is the audio stack starting, in WebRTC-SDK's audio device module, AVFoundation and Core Audio: initializing the module at the first peer connection (up to 6 s measured) and AVFoundation's first device list (up to 9 s), both once per app process, and above all Apple's voice processing (echo cancellation), which starts with the first microphone publish (3–27 s measured). It is worst on a loaded Mac and with many audio devices (virtual devices such as BlackHole, aggregate and multi-output devices, a Continuity iPhone). Choosing a microphone other than the system default adds 9–11 s, because the module restarts its voice processing for the new input. The module starts the voice processing again whenever it restarts recording. [design.md §4.2](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#42-sfusession) has the measurements.
 
-The package keeps the app responsive meanwhile: it doesn't call into the plugin in ways that would block the main thread while the voice processing starts, and a microphone publish with no chosen device captures from the system default without listing the devices, so the first device list doesn't freeze the join either. What still blocks the main thread, and so your UI:
+The package keeps the app responsive meanwhile: it doesn't call into the plugin in ways that would block the main thread while the voice processing starts, and a microphone publish captures from the system default, or from the microphone you pass by ID, without listing the devices, so the first device list doesn't freeze it either. The first microphone publish itself doesn't freeze the UI. What still blocks the main thread, and so your UI:
 
-- **The first peer connection, for 4–6 s**, inside `join`. Call `CloudflareRealtime.prewarm()` earlier, at a moment when a pause matters less (behind a launch screen, or as the pre-call screen opens), and the join itself doesn't freeze:
+- **The first peer connection, for 3–8 s**, inside `join`. `CloudflareRealtime.prewarm()` does it earlier, at a moment your app chooses, so that the join itself doesn't freeze for it. But it **moves the freeze; it doesn't remove it**: the prewarm freezes the UI just as long (3–9 s measured; a consuming app measured 5.3 s and 8.9 s when it ran it right after sign-in), and it doesn't make joins faster (that app measured no gain on its joins). Use it only where a freeze is acceptable, such as behind a launch or splash screen, and measure your app with and without it:
 
   ```dart
-  // Once the app has started, well before the user joins a call.
-  unawaited(CloudflareRealtime.prewarm());
+  // Behind the launch screen, well before the user joins a call.
+  await CloudflareRealtime.prewarm();
   ```
 
   It keeps one idle peer connection (nothing captured or sent, no permission asked) until the next join has its own. After leaving a room, the next join's peer connection blocks again for 2–3 s; call `prewarm()` again after leaving if another call may follow.
-- **The first device list, for 5–9 s**, when something reads it: publishing a chosen microphone (`device:`), the camera, or a device picker listing the devices. List them in your pre-call screen, if it has a picker, rather than during the join.
-- **Switching to a microphone other than the system default, for up to about 8 s** once the first publish starts sending, while the audio module rebuilds its voice processing for the new input. The default input avoids it.
+- **The first device list, for 2–9 s**, when something reads it: publishing the camera, or a device picker listing the devices. Once the first microphone publish has started sending, the list takes a fraction of a second, so publish the microphone before the camera where you can, and list the devices in your pre-call screen, if it has a picker, rather than during the join.
+- **Starting the camera, for about 1 s** (`getUserMedia`; 3–4 s if nothing has listed the cameras yet).
+- **Switching to a microphone other than the system default, for 4–12 s** once the first publish starts sending, while the audio module rebuilds its voice processing for the new input; it falls inside that first microphone publish. The default input avoids it: pass no `device:` when the user hasn't chosen another microphone.
 
 Show the call screen (with its hang-up button) before joining, so the user sees progress.
 
 If you put a time limit on joining or publishing, allow at least 30 s on macOS.
+
+## Finding what freezes the UI
+
+`flutter_webrtc` answers its platform calls on the main thread, which on macOS is also Flutter's UI thread, so a slow call freezes the app; calls your app makes through `flutter_webrtc` itself (stats, audio levels, device lists, renderers) can freeze it as well as the package's. To find which call it is, turn on the package's platform call timing, a debug aid, first thing in `main`:
+
+```dart
+void main() {
+  PlatformCallTimingBinding.ensureInitialized(); // before any other binding
+  CloudflareRealtime.debugPlatformCallTiming =
+      const PlatformCallTimingOptions(); // channels: null times every plugin
+  runApp(const MyApp());
+}
+```
+
+Run the app (a profile build measures best) from a cold start, and the console shows each event-loop gap over 250 ms with the calls sent just before or during it, and every call slower than 100 ms:
+
+```text
+cloudflare_realtime: event loop stopped for 4213 ms (+12030..+16243 ms); sent then: createPeerConnection(4190 ms)
+cloudflare_realtime: createPeerConnection took 4190 ms (+12031 ms); the event loop stopped for 4213 ms meanwhile
+```
+
+A call about as long as the gap it was sent in is the one that blocked. `CloudflareRealtime.debugPlatformCallTimingEvents` has the same as typed events. Only method names, argument keys and times are recorded, never argument values or replies. Calls are named only with `PlatformCallTimingBinding` created before any other binding (an app with its own binding class returns `PlatformCallTimingBinding.wrapMessenger(super.createBinaryMessenger())` from its `createBinaryMessenger`); without it, the gaps are still reported. A gap with no call sent came from something else on the main thread: your own Dart code, or native work no call started. Turn it off (`null`, the default) for release builds.

@@ -136,18 +136,22 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// The device to capture from without reading the device list first, or
   /// `null` when capture waits for the list.
   ///
-  /// Only a Mac's microphone, with no preferred device and none that
-  /// failed, while nothing has used the list: then the system default
-  /// ([unlistedDefaultDevice]). The first device list in a process blocks
-  /// a Mac's UI thread for 5–9 s (AVFoundation listing every capture
-  /// device), and the default needs no list (`docs/design.md` §4.5,
-  /// Capture before listing on macOS).
-  MediaDevice? _unlistedDevice() =>
-      _preferred.value == null &&
-          _deprioritized.isEmpty &&
-          !_deviceList.isStarted
-      ? unlistedDefaultDevice(deviceKind, _backend.platform)
-      : null;
+  /// Only a Mac's microphone, with no device that failed, while nothing
+  /// has used the list: the preferred device (selected by its ID), else the
+  /// system default ([unlistedDefaultDevice]). The first device list in a
+  /// process blocks a Mac's UI thread for 2–9 s (AVFoundation listing every
+  /// capture device), and selecting a microphone by ID needs no list
+  /// (`docs/design.md` §4.5, Capture before listing on macOS). If the
+  /// capture fails (a preferred device that is gone), the list is read and
+  /// the others are tried.
+  MediaDevice? _unlistedDevice() {
+    if (_deprioritized.isNotEmpty || _deviceList.isStarted) return null;
+    final fallback = unlistedDefaultDevice(deviceKind, _backend.platform);
+    if (fallback == null) return null;
+    final preferred = _preferred.value;
+    if (preferred == null) return fallback;
+    return preferred.deviceId.isEmpty ? null : preferred;
+  }
 
   /// Which way a camera should face, for [devicePriority]; `null` for
   /// sources that aren't cameras.
@@ -242,7 +246,8 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
       await _release();
       return;
     }
-    // A Mac's microphone needs no list for the default: don't start it.
+    // A Mac's microphone needs no list for the default or a chosen one:
+    // don't start it.
     final unlisted = _unlistedDevice();
     if (unlisted == null) {
       await _deviceList.ready;
@@ -262,8 +267,15 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     final device = current.device;
     if (device == null) return true; // Unknown device: nothing to compare.
     final available = _usable(_listed);
-    // No usable list (web before permission): keep what works.
-    if (available.isEmpty) return true;
+    if (available.isEmpty) {
+      // No usable list (web before permission): keep what works. A Mac's
+      // microphone captured without the list moves to a newly preferred
+      // device, still without it.
+      final unlisted = _unlistedDevice();
+      return unlisted == null ||
+          _preferred.value == null ||
+          unlisted.sameDeviceAs(device);
+    }
     if (!available.any(device.sameDeviceAs)) return false; // Unplugged.
     final preferred = _preferred.value;
     return preferred == null ||
