@@ -22,6 +22,7 @@ import '../broker/models/tracks.dart';
 import '../data/data_channel_manager.dart';
 import '../util/state_stream.dart';
 import 'flutter_webrtc_peer_connection.dart';
+import 'negotiation_guard.dart';
 import 'op_queue.dart';
 import 'peer_connection.dart';
 import 'publish_options.dart';
@@ -41,6 +42,7 @@ final class SfuSessionOptions {
     this.iceDisconnectedTimeout = const Duration(seconds: 7),
     this.remoteTrackTimeout = const Duration(seconds: 5),
     this.layerUpdateRetryTimeout = const Duration(seconds: 10),
+    this.negotiationTimeout = const Duration(seconds: 60),
   });
 
   /// ICE servers to use instead of fetching them from the broker's
@@ -73,6 +75,25 @@ final class SfuSessionOptions {
   /// error is final, and it is thrown after this timeout. [Duration.zero]
   /// fails on the first rejection.
   final Duration layerUpdateRetryTimeout;
+
+  /// How long one peer-connection step of an SDP exchange may take
+  /// (`createOffer`, `setLocalDescription`, `addTransceiver`, a
+  /// transceiver's `mid` or `replaceTrack`, a rollback, …), and creating
+  /// the peer connection in [SfuSession.connect]. Default 60 s, on every
+  /// platform. Such a step normally takes milliseconds, but the first audio
+  /// push on macOS applies its answer only once Apple's voice processing
+  /// has started (3–23 s measured, once about 27 s), and the first peer
+  /// connection there starts the audio device module (up to 6 s); the
+  /// bound leaves those room (`docs/design.md` §4.2).
+  ///
+  /// A step that doesn't complete in time fails the session with
+  /// [PeerConnectionFailureKind.negotiationTimeout] (its operation throws
+  /// an [SfuSessionFailedException]), so its operation queue never waits
+  /// forever on a stuck platform and a `Room` replaces the session, pushing
+  /// a publish that was waiting once more on the new one
+  /// (`docs/design.md` §4.2, Bounded negotiation steps). Null never times
+  /// out.
+  final Duration? negotiationTimeout;
 }
 
 /// One peer connection to the Cloudflare SFU, bound to one SFU session.
@@ -100,7 +121,11 @@ class SfuSession {
     required PeerConnection peerConnection,
     required this.options,
   }) : _broker = broker,
-       _pc = peerConnection {
+       _pc = NegotiationGuard(
+         peerConnection,
+         timeout: options.negotiationTimeout,
+       ) {
+    _pc.onTimeout = _negotiationTimedOut;
     _pushes = BatchDispatcher(
       (batch) => _enqueue(batch, _runPushBatch, requireAlive: true),
     );
@@ -134,13 +159,18 @@ class SfuSession {
   ///
   /// Throws the broker's exception if either call fails, or the platform's
   /// if the peer connection can't be created; nothing is left open then.
+  /// A peer connection not created within
+  /// [SfuSessionOptions.negotiationTimeout] throws an
+  /// [SfuSessionFailedException] with
+  /// [PeerConnectionFailureKind.negotiationTimeout] (and is closed if it
+  /// comes later).
   static Future<SfuSession> connect({
     required BrokerClient broker,
     SfuSessionOptions options = const SfuSessionOptions(),
   }) => connectSfuSession(broker: broker, options: options);
 
   final BrokerClient _broker;
-  final PeerConnection _pc;
+  final NegotiationGuard _pc;
 
   /// This session's ID. Other participants pull its tracks by it, so share
   /// it through signaling.
@@ -750,6 +780,22 @@ class SfuSession {
   }
 
   static const _stable = RTCSignalingState.RTCSignalingStateStable;
+
+  /// A negotiation step didn't complete within
+  /// [SfuSessionOptions.negotiationTimeout]: the platform is stuck (seen
+  /// once on an iPhone, in a microphone publish right after CallKit
+  /// activated the audio session; `docs/design.md` §4.2). The session fails,
+  /// so the queue moves on and a `Room` replaces it; returns the error the
+  /// step throws.
+  Object _negotiationTimedOut(String step) {
+    if (_closed) return const SfuSessionClosedException();
+    _fail(
+      const SfuPeerConnectionFailed(
+        PeerConnectionFailureKind.negotiationTimeout,
+      ),
+    );
+    return SfuSessionFailedException(_failure!);
+  }
 
   void _throwIfUnusable() {
     if (_closed) throw const SfuSessionClosedException();
@@ -1535,11 +1581,14 @@ Future<SfuSession> connectSfuSession({
               ? broker.getIceServers()
               : Future.value(configuredIceServers))
           .then(
-            (iceServers) => createPeerConnection({
-              'iceServers': iceServers,
-              'bundlePolicy': 'max-bundle',
-              'sdpSemantics': 'unified-plan',
-            }),
+            (iceServers) => _createWithin(
+              options.negotiationTimeout,
+              () => createPeerConnection({
+                'iceServers': iceServers,
+                'bundlePolicy': 'max-bundle',
+                'sdpSemantics': 'unified-plan',
+              }),
+            ),
           ),
     ).wait;
   } on ParallelWaitError<
@@ -1570,6 +1619,29 @@ Future<SfuSession> connectSfuSession({
     sessionId: session.sessionId,
     peerConnection: peerConnection,
     options: options,
+  );
+}
+
+/// Creates the peer connection within [timeout] (null: no bound). One that
+/// isn't created in time fails the connect with
+/// [PeerConnectionFailureKind.negotiationTimeout], and is closed if it
+/// arrives later (`docs/design.md` §4.2, Bounded negotiation steps).
+Future<PeerConnection> _createWithin(
+  Duration? timeout,
+  Future<PeerConnection> Function() create,
+) {
+  final creating = create();
+  if (timeout == null) return creating;
+  return creating.timeout(
+    timeout,
+    onTimeout: () {
+      unawaited(creating.then(_closeQuietly, onError: (Object _) {}));
+      throw SfuSessionFailedException(
+        const SfuPeerConnectionFailed(
+          PeerConnectionFailureKind.negotiationTimeout,
+        ),
+      );
+    },
   );
 }
 

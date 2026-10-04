@@ -71,6 +71,10 @@ class FakePeerConnectionFactory {
   /// Every connection created, in order.
   final List<FakePeerConnection> created = [];
 
+  /// When set, the next [call] waits for it (a platform that doesn't
+  /// answer), then creates the connection as usual.
+  Completer<void>? hangNextCreate;
+
   /// Sets [FakePeerConnection.autoConnect] on connections created from now
   /// on.
   bool autoConnect = false;
@@ -80,6 +84,9 @@ class FakePeerConnectionFactory {
 
   /// The [PeerConnectionFactory].
   Future<PeerConnection> call(Map<String, dynamic> configuration) async {
+    final hang = hangNextCreate;
+    hangNextCreate = null;
+    if (hang != null) await hang.future;
     final pc = FakePeerConnection(
       configuration: configuration,
       remoteMedia: remoteMedia,
@@ -152,6 +159,20 @@ class FakePeerConnection implements PeerConnection {
   /// Makes the next call to [method] (such as `createOffer`) throw [error].
   void failNext(String method, Object error) => _failures[method] = error;
 
+  final Map<String, Completer<void>> _hangs = {};
+
+  /// Makes the next call to [method] wait until the returned completer
+  /// completes, as a platform that doesn't answer; it then runs as usual (a
+  /// late completion). Supported: `addTransceiver`, `createOffer`,
+  /// `createAnswer`, `setLocalDescription`, `setRemoteDescription`,
+  /// `signalingState`, `createDataChannel` and `close`.
+  Completer<void> hangNext(String method) => _hangs[method] = Completer<void>();
+
+  Future<void> _hang(String method) async {
+    final hang = _hangs.remove(method);
+    if (hang != null) await hang.future;
+  }
+
   /// Emits a connection state change.
   void emitConnectionState(RTCPeerConnectionState state) {
     _connectionState = state;
@@ -187,7 +208,10 @@ class FakePeerConnection implements PeerConnection {
   RTCSignalingState get currentSignalingState => _signalingState;
 
   @override
-  Future<RTCSignalingState> signalingState() async => _signalingState;
+  Future<RTCSignalingState> signalingState() async {
+    await _hang('signalingState');
+    return _signalingState;
+  }
 
   @override
   Future<void> rollback() async {
@@ -240,6 +264,7 @@ class FakePeerConnection implements PeerConnection {
     MediaStreamTrack? track,
     List<SendEncoding> sendEncodings = const [],
   }) async {
+    await _hang('addTransceiver');
     _record('addTransceiver($kind)', 'addTransceiver');
     final t = FakeTransceiver._(
       this,
@@ -254,6 +279,7 @@ class FakePeerConnection implements PeerConnection {
 
   @override
   Future<SessionDescription> createOffer() async {
+    await _hang('createOffer');
     _record('createOffer', 'createOffer');
     offeredSenders.add([
       for (final t in transceivers)
@@ -264,12 +290,14 @@ class FakePeerConnection implements PeerConnection {
 
   @override
   Future<SessionDescription> createAnswer() async {
+    await _hang('createAnswer');
     _record('createAnswer', 'createAnswer');
     return SessionDescription.answer('answer-${++_answers}');
   }
 
   @override
   Future<void> setLocalDescription(SessionDescription description) async {
+    await _hang('setLocalDescription');
     _record(
       'setLocalDescription(${description.type.name})',
       'setLocalDescription',
@@ -293,6 +321,7 @@ class FakePeerConnection implements PeerConnection {
 
   @override
   Future<void> setRemoteDescription(SessionDescription description) async {
+    await _hang('setRemoteDescription');
     _record(
       'setRemoteDescription(${description.type.name})',
       'setRemoteDescription',
@@ -398,6 +427,7 @@ class FakePeerConnection implements PeerConnection {
     bool ordered = true,
     int? maxRetransmits,
   }) async {
+    await _hang('createDataChannel');
     _record('createDataChannel($label, $id)', 'createDataChannel');
     final channel = FakeDataChannel(
       label: label,
@@ -434,6 +464,7 @@ class FakePeerConnection implements PeerConnection {
 
   @override
   Future<void> close() async {
+    await _hang('close');
     log.add('close');
     closed = true;
     _connectionState = RTCPeerConnectionState.RTCPeerConnectionStateClosed;

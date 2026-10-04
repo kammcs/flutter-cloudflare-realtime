@@ -77,6 +77,14 @@ enum PeerConnectionFailureKind {
   /// negotiation is possible.
   signalingStuck,
 
+  /// A peer-connection step of an SDP exchange (`createOffer`,
+  /// `setLocalDescription`, `addTransceiver`, …), or creating the peer
+  /// connection, didn't complete within
+  /// `SfuSessionOptions.negotiationTimeout`: the platform's WebRTC stack is
+  /// stuck, so the session is given up rather than its operations waiting
+  /// forever.
+  negotiationTimeout,
+
   /// `SfuSession.debugSimulateFailure` was called: a test or demo of
   /// reconnection.
   simulated,
