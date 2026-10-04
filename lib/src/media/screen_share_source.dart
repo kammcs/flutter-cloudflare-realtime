@@ -84,7 +84,8 @@ class ScreenShareSource extends LocalMediaSource {
   /// Creates a screen share source. It captures nothing until [start].
   ///
   /// On desktop, [sourceWatchInterval] is how often the source list is
-  /// re-scanned while sharing, to notice the shared window closing, and
+  /// re-scanned while sharing, to notice the shared window closing (skipped
+  /// while the operating system reports the source's [sourceGeometry]), and
   /// [geometryWatchInterval] how often [sourceGeometry] is read again.
   ScreenShareSource({
     MediaBackend backend = const FlutterWebrtcMediaBackend(),
@@ -627,8 +628,15 @@ class ScreenShareSource extends LocalMediaSource {
         .listen(
           (_) => _endedExternally(video, ScreenShareEndReason.sourceClosed),
         );
-    // The capturer only reports removals while someone re-scans.
+    // The capturer only reports removals while someone re-scans. A re-scan
+    // is expensive: the plugin lists every window and screen and renders
+    // their thumbnails on the platform thread (2–7 s each on a loaded Mac,
+    // freezing the app). While the operating system still reports the
+    // shared source's geometry, the source exists: skip the re-scan, and
+    // re-scan only when it doesn't (gone, minimized on Windows, or no
+    // geometry on this platform).
     _watchTimer = Timer.periodic(sourceWatchInterval, (_) async {
+      if (_sourceGeometry.value != null) return;
       try {
         await capturer.updateSources(types: _allTypes);
       } catch (error) {

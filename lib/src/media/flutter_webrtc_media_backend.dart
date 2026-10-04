@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
+import '../util/native_negotiation.dart';
 import 'media_backend.dart';
 import 'media_types.dart';
 import 'screen_geometry.dart';
@@ -29,7 +30,13 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
     if (audioInputToSelect(constraints, platform) case final input?) {
       // Before the selection, so a re-selection of the previous input
       // can't land after it.
-      if (platform == MediaPlatform.macos) _macInputReselector.selected(input);
+      if (platform == MediaPlatform.macos) {
+        _macInputReselector.selected(input);
+        // The selection waits for the audio device module, which may be
+        // busy under a description being applied: don't block the
+        // platform thread on it meanwhile.
+        await NativeNegotiation.whenIdle();
+      }
       await rtc.Helper.selectAudioInput(input);
     }
     return rtc.navigator.mediaDevices.getUserMedia(constraints);
@@ -259,6 +266,12 @@ final _macInputReselector = MacInputReselector(rtc.Helper.selectAudioInput);
 /// The system default (`default`) needs nothing, and a newer selection
 /// cancels the pending ones. A failure (the device is gone) is ignored:
 /// the source moves to another device, which is then selected.
+///
+/// A re-selection first waits for [whenIdle] (by default, until no
+/// description is being applied, [NativeNegotiation]): the plugin selects
+/// on the platform thread and waits for the audio device module, which
+/// the first audio send can keep busy for many seconds on macOS. The app
+/// froze for 8 s after a join that way.
 @visibleForTesting
 class MacInputReselector {
   /// Creates a reselector that selects inputs with [select].
@@ -270,9 +283,12 @@ class MacInputReselector {
       Duration(seconds: 4),
       Duration(seconds: 8),
     ],
-  });
+    Future<void> Function() whenIdle = NativeNegotiation.whenIdle,
+  }) : _whenIdle = whenIdle;
 
   final Future<void> Function(String deviceId) _select;
+  final Future<void> Function() _whenIdle;
+  int _generation = 0;
 
   /// When to select the input again, counted from [selected].
   final List<Duration> delays;
@@ -285,21 +301,30 @@ class MacInputReselector {
   void selected(String deviceId) {
     cancel();
     if (deviceId == 'default') return;
+    final generation = _generation;
     for (final delay in delays) {
       _timers.add(
         Timer(delay, () {
-          unawaited(
-            _select(deviceId).catchError((Object _) {
-              // Gone: the source moves to another device and selects it.
-            }),
-          );
+          unawaited(_reselect(deviceId, generation));
         }),
       );
     }
   }
 
+  Future<void> _reselect(String deviceId, int generation) async {
+    try {
+      await _whenIdle();
+      // Cancelled (or another input chosen) while waiting.
+      if (generation != _generation) return;
+      await _select(deviceId);
+    } catch (_) {
+      // Gone: the source moves to another device and selects it.
+    }
+  }
+
   /// Cancels the pending selections.
   void cancel() {
+    _generation++;
     for (final timer in _timers) {
       timer.cancel();
     }
