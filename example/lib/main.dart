@@ -9,6 +9,7 @@ import 'dev_config.dart';
 import 'local_media_page.dart';
 import 'network_changes.dart';
 import 'presence_page.dart';
+import 'sample_caller_image.dart';
 import 'system_call_demo.dart';
 import 'ws_signaling.dart';
 
@@ -130,6 +131,9 @@ class _JoinPageState extends State<JoinPage> {
   /// shows in the system's UI and the lock screen (docs/design.md §4.8).
   bool _asSystemCall = false;
   int _guestCount = 0;
+
+  /// Simulated incoming calls so far: every second one has a picture.
+  int _simulatedCalls = 0;
 
   @override
   void dispose() {
@@ -271,6 +275,8 @@ class _JoinPageState extends State<JoinPage> {
   /// Reports an incoming system call in 5 s (time to lock the phone or
   /// leave the app, to see the full-screen ring), as an app's signaling or
   /// push would; answering it, here or in the system's UI, joins the room.
+  /// Every second call carries a caller picture (Android's ring screen and
+  /// notification show it); the others show the caller's monogram.
   Future<void> _simulateIncomingCall() async {
     if (_joining || !(_formKey.currentState?.validate() ?? false)) return;
     final roomId = _roomController.text.trim();
@@ -285,11 +291,15 @@ class _JoinPageState extends State<JoinPage> {
     final endBackgroundTask = await beginBackgroundTask('incoming call');
     final SystemCall call;
     try {
+      final picture = (++_simulatedCalls).isEven
+          ? await sampleCallerImage()
+          : null;
       await Future<void>.delayed(const Duration(seconds: 5));
       call = await SystemCalls.instance.reportIncomingCall(
         handle: const CallHandle('demo-caller'),
         displayName: 'Demo caller',
         payload: {'room': roomId},
+        callerImage: picture,
       );
     } on Exception catch (e) {
       _showSnack('Could not report the call: $e');

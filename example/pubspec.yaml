@@ -29,3 +29,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # The caller's picture for Simulate incoming call (lib/sample_caller_image.dart).
+    - assets/sample_caller.png

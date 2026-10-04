@@ -158,12 +158,25 @@ class SystemCalls {
   /// On Android, call it from the foreground or from a high-priority FCM
   /// message: Android lets the call's foreground service start from the
   /// background only then.
+  ///
+  /// [callerImage] is the caller's picture for Android's ring screen and the
+  /// call's notification: a **local** `file:` or `content:` URI the app can
+  /// read, such as `Uri.file(path)` for a picture the app downloaded into
+  /// its cache. The package never fetches from the network: an `http(s)`
+  /// URI is ignored (logged). The image is decoded natively off the main
+  /// thread, downsampled and cropped to a circle; when it's missing, can't
+  /// be decoded or takes over a second, or without one, the ring screen
+  /// shows the caller's monogram (their initials on a colour derived from
+  /// the name). Build the URI yourself rather than taking it from a push.
+  /// iOS ignores it: CallKit shows a picture only for a Contacts match,
+  /// never one from the app.
   Future<SystemCall> reportIncomingCall({
     String? id,
     required CallHandle handle,
     String? displayName,
     bool video = false,
     Map<String, Object?> payload = const {},
+    Uri? callerImage,
   }) => _newCall(
     id: id,
     handle: handle,
@@ -171,6 +184,7 @@ class SystemCalls {
     video: video,
     outgoing: false,
     payload: payload,
+    callerImage: callerImage,
   );
 
   /// Tells the system the user starts a call (it shows in the system's UI
@@ -199,6 +213,7 @@ class SystemCalls {
     required bool video,
     required bool outgoing,
     Map<String, Object?> payload = const {},
+    Uri? callerImage,
   }) async {
     final backend = _requireConfigured();
     final callId = (id ?? generateTrackName()).toLowerCase();
@@ -216,6 +231,7 @@ class SystemCalls {
       outgoing: outgoing,
       state: outgoing ? SystemCallState.dialing : SystemCallState.ringing,
       payload: payload,
+      callerImage: callerImage,
     );
     final call = SystemCall._(this, info);
     _calls[callId] = call;

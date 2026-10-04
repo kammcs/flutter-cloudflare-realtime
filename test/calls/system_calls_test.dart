@@ -214,6 +214,24 @@ void main() {
         'video': true,
         'outgoing': true,
       });
+      // The caller's picture, only when given: a URI string.
+      final pictured = SystemCallInfo(
+        id: _id,
+        handle: _ada,
+        callerImage: Uri.file('/data/user/0/app/cache/ada.png'),
+      );
+      expect(
+        pictured.toMap()['callerImage'],
+        'file:///data/user/0/app/cache/ada.png',
+      );
+      expect(const SystemCallInfo(id: _id, handle: _ada).toMap(), {
+        'id': _id,
+        'handle': 'ada',
+        'handleType': 'generic',
+        'displayName': null,
+        'video': false,
+        'outgoing': false,
+      });
       expect(const SystemCallsOptions(ringtoneSound: 'ring.caf').toMap(), {
         'supportsVideo': true,
         'maximumCalls': 1,
@@ -289,7 +307,11 @@ void main() {
         expect(await backend.configure(const SystemCallsOptions()), isTrue);
         await expectLater(
           backend.reportIncomingCall(
-            const SystemCallInfo(id: _id, handle: _ada),
+            SystemCallInfo(
+              id: _id,
+              handle: _ada,
+              callerImage: Uri.parse('content://app.files/caller/ada.jpg'),
+            ),
           ),
           throwsA(
             isA<SystemCallException>()
@@ -340,6 +362,11 @@ void main() {
         Map<Object?, Object?> args(String method) =>
             seen.firstWhere((c) => c.method == method).arguments as Map;
         expect(args('configure')['supportsVideo'], isTrue);
+        expect(
+          args('reportIncomingCall')['callerImage'],
+          'content://app.files/caller/ada.jpg',
+        );
+        expect(args('startOutgoingCall'), isNot(contains('callerImage')));
         expect(args('startOutgoingCall')['outgoing'], isTrue);
         expect(args('end'), {'id': _id, 'reason': 'declined'});
         expect(args('setHeld'), {'id': _id, 'onHold': true});
@@ -373,6 +400,22 @@ void main() {
   group('SystemCalls', () {
     test('reporting needs configure first', () async {
       expect(() => calls().reportIncomingCall(handle: _ada), throwsStateError);
+    });
+
+    test("an incoming call's picture reaches the native side", () async {
+      await calls().configure();
+      final picture = Uri.file('/data/user/0/app/cache/ada.png');
+      await calls().reportIncomingCall(
+        id: _id,
+        handle: _ada,
+        callerImage: picture,
+      );
+      expect(system.active[_id]!.callerImage, picture);
+      expect(system.active[_id]!.toMap()['callerImage'], picture.toString());
+      // Without one, no key: the native side shows the monogram.
+      await calls().reportIncomingCall(id: _id2, handle: _ada);
+      expect(system.active[_id2]!.callerImage, isNull);
+      expect(system.active[_id2]!.toMap(), isNot(contains('callerImage')));
     });
 
     test('an incoming call: ringing, answered from the system, held, muted, '

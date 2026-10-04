@@ -8,6 +8,8 @@ import android.app.Person
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.RingtoneManager
@@ -209,8 +211,13 @@ internal object SystemCallRegistry {
             outgoing = outgoing,
         )
         calls[id] = entry
+        // The caller's picture (incoming calls; docs/design.md §4.8, The
+        // caller's picture): a local URI, decoded before Telecom gets the
+        // call, so the ring screen and the notification show it from the
+        // start. Waited for at most CallerAvatar's timeout.
+        val callerImage = if (outgoing) null else call.argument<String>("callerImage")
         val attributes = CallAttributesCompat(
-            displayName = entry.displayName?.takeIf { it.isNotEmpty() } ?: entry.handle,
+            displayName = entry.callerName,
             address = addressOf(entry),
             direction = if (outgoing) {
                 CallAttributesCompat.DIRECTION_OUTGOING
@@ -223,6 +230,7 @@ internal object SystemCallRegistry {
         var replied = false
         entry.job = scope.launch {
             try {
+                if (callerImage != null) entry.callerImage = CallerAvatar.load(app, callerImage)
                 telecom.addCall(
                     attributes,
                     onAnswer = { onSystemAnswer(entry) },
@@ -521,7 +529,7 @@ internal object SystemCallRegistry {
         val call = added.firstOrNull { !it.outgoing && it.state == "ringing" } ?: added.lastOrNull() ?: return null
         val incoming = !call.outgoing && call.state == "ringing"
         val channel = if (incoming) incomingChannel(context) else CallService.channel(context)
-        val name = call.displayName?.takeIf { it.isNotEmpty() } ?: call.handle
+        val name = call.callerName
         val builder = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.cloudflare_realtime_call)
             .setCategory(Notification.CATEGORY_CALL)
@@ -544,11 +552,16 @@ internal object SystemCallRegistry {
         } else {
             appIntent(context, call.id)?.let { builder.setContentIntent(it) }
         }
+        // The caller's picture, or their monogram (CallerAvatar): the
+        // person's icon in CallStyle, the large icon before Android 12.
+        val icon = call.notificationIcon ?: CallerAvatar.notificationIcon(context, call.callerImage, name)
+            .also { call.notificationIcon = it }
         val person = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            Person.Builder().setName(name).setImportant(true).build()
+            Person.Builder().setName(name).setImportant(true).setIcon(Icon.createWithBitmap(icon)).build()
         } else {
             null
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) builder.setLargeIcon(icon)
         if (incoming) {
             builder.setFullScreenIntent(ringIntent(context, ACTION_SHOW, call.id), true)
             val answer = ringIntent(context, ACTION_ANSWER, call.id)
@@ -730,6 +743,16 @@ internal class SystemCallEntry(
     /** An incoming call that rings now. */
     val ringing: Boolean
         get() = !outgoing && state == "ringing"
+
+    /** The display name, else the handle: what the system and the ring screen show. */
+    val callerName: String
+        get() = displayName?.takeIf { it.isNotEmpty() } ?: handle
+
+    /** The app's picture of the caller, decoded (incoming calls), or `null`. */
+    var callerImage: Bitmap? = null
+
+    /** The notification's picture: [callerImage] or the monogram, made once. */
+    var notificationIcon: Bitmap? = null
     var muted = false
     var added = false
     var ended = false
