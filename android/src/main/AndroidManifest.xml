@@ -28,7 +28,8 @@
          MANAGE_OWN_CALLS, which Core-Telecom's manifest merges with its
          ConnectionService), and an incoming call's notification opens the
          app full screen (Android 14+ grants it by default only to calling
-         and alarm apps; README). -->
+         and alarm apps; README). The full-screen intent opens the package's
+         IncomingCallActivity below, not the app. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
@@ -38,6 +39,22 @@
             android:exported="false"
             android:foregroundServiceType="microphone|camera|phoneCall"
             android:stopWithTask="true" />
+        <!-- A system call's ring (docs/design.md §4.8, The ring activity
+             and the lock screen): the notification's full-screen intent,
+             its content intent while ringing and its Answer open this
+             activity, never the app's launch activity. It is the only
+             screen shown over the lock screen (set in code, while a call
+             exists), opens the app only after the keyguard is dismissed,
+             and isn't exported, so no other app can start it (or answer a
+             call through it). Its own task, out of Recents. -->
+        <activity
+            android:name="dev.kammcs.cloudflare_realtime.IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity="${applicationId}.cloudflare_realtime.incoming_call"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@style/CloudflareRealtime.IncomingCall" />
         <!-- Decline and Hang up in a system call's notification. -->
         <receiver
             android:name="dev.kammcs.cloudflare_realtime.SystemCallActionReceiver"

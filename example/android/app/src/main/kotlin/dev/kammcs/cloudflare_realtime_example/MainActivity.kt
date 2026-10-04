@@ -6,8 +6,10 @@ import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -86,6 +88,20 @@ class MainActivity : FlutterActivity() {
                     "sendCallNotificationAction" -> result.success(
                         sendCallNotificationAction(call.argument<String>("action") ?: ""),
                     )
+                    // The intent another app could send to this (exported)
+                    // launch activity: the package's Answer action and call
+                    // ID. The package must not act on it (docs/design.md §4.8).
+                    "sendForgedAnswerIntent" -> {
+                        startActivity(
+                            Intent(this, MainActivity::class.java)
+                                .setAction("dev.kammcs.cloudflare_realtime.action.ANSWER_CALL")
+                                .putExtra("dev.kammcs.cloudflare_realtime.extra.CALL_ID", call.argument<String>("id"))
+                                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                        )
+                        result.success(true)
+                    }
+                    "ringActivityInfo" -> result.success(ringActivityInfo())
+                    "appTasks" -> result.success(appTasks())
                     // Telecom ending a ringing call, through a companion
                     // InCallService (debug builds, with the driver's app op).
                     "companionSeesRingingCall" -> result.success(TestCallCompanion.seesRingingCall())
@@ -157,6 +173,26 @@ class MainActivity : FlutterActivity() {
             else -> null
         }
     }
+
+    // How the package's ring activity is declared, as merged into the app.
+    private fun ringActivityInfo(): Map<String, Any?> {
+        val info = packageManager.getActivityInfo(
+            ComponentName(this, "dev.kammcs.cloudflare_realtime.IncomingCallActivity"),
+            0,
+        )
+        return mapOf(
+            "exported" to info.exported,
+            "excludeFromRecents" to (info.flags and ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS != 0),
+            "singleInstance" to (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE),
+            "taskAffinity" to info.taskAffinity,
+        )
+    }
+
+    // The top activity of each of the app's tasks.
+    private fun appTasks(): List<String?> =
+        (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).appTasks.map {
+            it.taskInfo.topActivity?.className
+        }
 
     // Takes the audio focus as a separate client (its own request), like a
     // media player or an assistant would: the call loses the focus.

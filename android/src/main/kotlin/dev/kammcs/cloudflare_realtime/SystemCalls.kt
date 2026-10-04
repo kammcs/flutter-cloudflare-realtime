@@ -1,6 +1,5 @@
 package dev.kammcs.cloudflare_realtime
 
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -18,7 +17,6 @@ import android.os.Handler
 import android.os.Looper
 import android.telecom.DisconnectCause
 import android.util.Log
-import android.view.WindowManager
 import androidx.core.telecom.CallAttributesCompat
 import androidx.core.telecom.CallControlResult
 import androidx.core.telecom.CallControlScope
@@ -28,7 +26,6 @@ import androidx.core.telecom.CallsManager
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import java.lang.ref.WeakReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +48,12 @@ import kotlinx.coroutines.launch
  * relays every change to Dart as an event, once per real change, whether
  * the app or the system started it.
  *
+ * The ring's full-screen intent, its content intent and its Answer open the
+ * package's own [IncomingCallActivity] (not exported), never the app's
+ * launch activity: only that minimal screen shows over the lock screen, and
+ * the app is opened only once the keyguard is gone (docs/design.md §4.8,
+ * The ring activity and the lock screen).
+ *
  * Everything runs on the main thread.
  */
 internal object SystemCallRegistry {
@@ -59,6 +62,9 @@ internal object SystemCallRegistry {
     /** Incoming calls ring on their own channel (high importance, a ringtone). */
     private const val INCOMING_CHANNEL_ID = "cloudflare_realtime_incoming_call"
 
+    // The ring activity's actions. They only ever reach IncomingCallActivity,
+    // which isn't exported: no other app can send them, and the app's own
+    // (exported) launch activity doesn't act on them.
     internal const val ACTION_ANSWER = "dev.kammcs.cloudflare_realtime.action.ANSWER_CALL"
     internal const val ACTION_SHOW = "dev.kammcs.cloudflare_realtime.action.SHOW_CALL"
     internal const val ACTION_DECLINE = "dev.kammcs.cloudflare_realtime.action.DECLINE_CALL"
@@ -80,7 +86,9 @@ internal object SystemCallRegistry {
 
     private val main = Handler(Looper.getMainLooper())
     private val endpointsPending = mutableSetOf<String>()
-    private var lockScreenActivity: WeakReference<Activity>? = null
+
+    /** Told after every change of the calls (the ring activity follows them). */
+    private val observers = mutableListOf<() -> Unit>()
 
     fun init(context: Context) {
         if (::app.isInitialized) return
@@ -91,6 +99,17 @@ internal object SystemCallRegistry {
     /** Whether a call is in Telecom now: [CallService] runs with `phoneCall`. */
     val hasCalls: Boolean
         get() = calls.values.any { it.added }
+
+    /** The call with [id], while it exists. */
+    fun entry(id: String): SystemCallEntry? = calls[id.lowercase()]
+
+    fun observe(observer: () -> Unit) {
+        observers += observer
+    }
+
+    fun unobserve(observer: () -> Unit) {
+        observers.remove(observer)
+    }
 
     // --- Events ------------------------------------------------------------
 
@@ -274,7 +293,7 @@ internal object SystemCallRegistry {
         }
     }
 
-    private fun answer(entry: SystemCallEntry, done: (Boolean) -> Unit) {
+    internal fun answer(entry: SystemCallEntry, done: (Boolean) -> Unit) {
         val control = entry.control
         if (control == null || entry.outgoing || entry.state != "ringing") return done(false)
         scope.launch {
@@ -284,7 +303,7 @@ internal object SystemCallRegistry {
         }
     }
 
-    private fun end(entry: SystemCallEntry, reason: String, done: (Boolean) -> Unit) {
+    internal fun end(entry: SystemCallEntry, reason: String, done: (Boolean) -> Unit) {
         val control = entry.control
         if (entry.ended) return done(false)
         entry.endingReason = reason
@@ -462,7 +481,6 @@ internal object SystemCallRegistry {
             // The system's mute belongs to the call: don't leave the
             // microphone muted for whatever comes next.
             if (audio.isMicrophoneMute) audio.isMicrophoneMute = false
-            clearLockScreen()
         }
         callsChanged()
     }
@@ -480,6 +498,7 @@ internal object SystemCallRegistry {
                 }
             }
         }
+        for (observer in observers.toList()) observer()
     }
 
     // --- The notification and its actions ----------------------------------
@@ -488,6 +507,13 @@ internal object SystemCallRegistry {
      * The call's notification while a call is in Telecom, else `null`: an
      * incoming one (full screen, Answer and Decline, ringing) while a call
      * rings, else the newest call's ongoing one (Hang up).
+     *
+     * While ringing, the full-screen intent, the content intent and Answer
+     * open [IncomingCallActivity]; Decline and Hang up are broadcasts to
+     * [SystemCallActionReceiver]. Both are explicit, immutable and not
+     * exported. The ongoing call's content intent is the app's plain launch
+     * intent: tapped on the lock screen, the system asks for the unlock
+     * first, because the app's activity doesn't show over it.
      */
     fun buildNotification(context: Context): Notification? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
@@ -513,20 +539,24 @@ internal object SystemCallRegistry {
                     },
                 ),
             )
-        activityIntent(context, ACTION_SHOW, call.id)?.let { builder.setContentIntent(it) }
+        if (incoming) {
+            builder.setContentIntent(ringIntent(context, ACTION_SHOW, call.id))
+        } else {
+            appIntent(context, call.id)?.let { builder.setContentIntent(it) }
+        }
         val person = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             Person.Builder().setName(name).setImportant(true).build()
         } else {
             null
         }
         if (incoming) {
-            activityIntent(context, ACTION_SHOW, call.id)?.let { builder.setFullScreenIntent(it, true) }
-            val answer = activityIntent(context, ACTION_ANSWER, call.id)
+            builder.setFullScreenIntent(ringIntent(context, ACTION_SHOW, call.id), true)
+            val answer = ringIntent(context, ACTION_ANSWER, call.id)
             val decline = broadcastIntent(context, ACTION_DECLINE, call.id)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && answer != null && person != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && person != null) {
                 builder.setStyle(Notification.CallStyle.forIncomingCall(person, decline, answer).setIsVideo(call.video))
             } else {
-                answer?.let { builder.addAction(action(context, R.string.cloudflare_realtime_call_answer, it)) }
+                builder.addAction(action(context, R.string.cloudflare_realtime_call_answer, answer))
                 builder.addAction(action(context, R.string.cloudflare_realtime_call_decline, decline))
             }
         } else {
@@ -580,20 +610,38 @@ internal object SystemCallRegistry {
     }
 
     /**
-     * The app's launch activity with [action]: Answer must open an activity
-     * (Android 12+ forbids notification trampolines), which also brings the
-     * app to the foreground for its microphone.
+     * The package's [IncomingCallActivity] with [action] ([ACTION_SHOW] or
+     * [ACTION_ANSWER]): an explicit intent to an activity that isn't
+     * exported. Answer must open an activity (Android 12+ forbids
+     * notification trampolines); this one answers, shows over the lock
+     * screen only itself, and opens the app once the keyguard is gone.
      */
-    private fun activityIntent(context: Context, action: String, id: String): PendingIntent? {
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
-        val intent = Intent(launch)
-            .setAction(action)
-            .putExtra(EXTRA_CALL_ID, id)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        return PendingIntent.getActivity(
+    private fun ringIntent(context: Context, action: String, id: String): PendingIntent =
+        PendingIntent.getActivity(
             context,
             requestCode(action, id),
-            intent,
+            Intent(context, IncomingCallActivity::class.java)
+                .setAction(action)
+                .putExtra(EXTRA_CALL_ID, id)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+    /**
+     * The app's launch intent, plain: no call action, no extras, and no
+     * lock-screen flags. [IncomingCallActivity] starts it once the keyguard
+     * is gone, and the ongoing call's notification opens it.
+     */
+    internal fun launchIntent(context: Context): Intent? =
+        context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    private fun appIntent(context: Context, id: String): PendingIntent? {
+        val launch = launchIntent(context) ?: return null
+        return PendingIntent.getActivity(
+            context,
+            requestCode("open", id),
+            launch,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
     }
@@ -615,51 +663,6 @@ internal object SystemCallRegistry {
         when (intent.action) {
             ACTION_DECLINE -> end(entry, "declined") {}
             ACTION_HANG_UP -> end(entry, "local") {}
-        }
-    }
-
-    /**
-     * The activity was started (or brought back) by the notification:
-     * Answer answers the call; Answer and the full-screen intent show the
-     * activity over the lock screen until the last call ends.
-     */
-    fun onActivityIntent(activity: Activity, intent: Intent?): Boolean {
-        val action = intent?.action
-        if (action != ACTION_ANSWER && action != ACTION_SHOW) return false
-        val entry = intent.getStringExtra(EXTRA_CALL_ID)?.let { calls[it] }
-        // Handled once: not again when the activity is recreated.
-        intent.action = Intent.ACTION_MAIN
-        intent.removeExtra(EXTRA_CALL_ID)
-        if (entry == null) return true
-        showOverLockScreen(activity)
-        if (action == ACTION_ANSWER) answer(entry) {}
-        return true
-    }
-
-    private fun showOverLockScreen(activity: Activity) {
-        lockScreenActivity = WeakReference(activity)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            activity.setShowWhenLocked(true)
-            activity.setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            activity.window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
-            )
-        }
-    }
-
-    private fun clearLockScreen() {
-        val activity = lockScreenActivity?.get() ?: return
-        lockScreenActivity = null
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            activity.setShowWhenLocked(false)
-            activity.setTurnScreenOn(false)
-        } else {
-            @Suppress("DEPRECATION")
-            activity.window.clearFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
-            )
         }
     }
 
@@ -723,6 +726,10 @@ internal class SystemCallEntry(
 ) {
     /** `ringing`, `dialing`, `connecting`, `active` or `held`. */
     var state = if (outgoing) "dialing" else "ringing"
+
+    /** An incoming call that rings now. */
+    val ringing: Boolean
+        get() = !outgoing && state == "ringing"
     var muted = false
     var added = false
     var ended = false
