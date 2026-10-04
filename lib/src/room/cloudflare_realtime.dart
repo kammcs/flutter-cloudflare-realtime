@@ -6,6 +6,7 @@ import '../media/media_backend.dart';
 import '../reconnect/app_lifecycle_source.dart';
 import '../reconnect/network_change_source.dart';
 import '../rendering/renderable_track.dart';
+import '../session/peer_connection_warmup.dart';
 import '../session/sfu_session.dart';
 import '../signaling/signaling.dart';
 import 'room.dart';
@@ -91,6 +92,33 @@ class CloudflareRealtime {
   /// Background and foreground events for the rooms' reconnection, or
   /// `null` for none. Default: [FlutterAppLifecycleSource].
   final AppLifecycleSource? appLifecycle;
+
+  /// Does the slow part of a join's WebRTC setup now, where it is slow:
+  /// on macOS. Elsewhere it does nothing.
+  ///
+  /// On macOS the first peer connection in an app process initializes
+  /// `flutter_webrtc` and WebRTC-SDK's audio device module, which blocks
+  /// the main thread, and so the app's UI, for 4–6 s (measured on a
+  /// MacBook Pro, macOS 27; `docs/design.md` §4.2, macOS: a slow first
+  /// join). Without this, [join] does it while the user waits for the
+  /// call. Call this when a pause matters less, such as behind a launch
+  /// screen, or as a pre-call screen opens; then the join's own peer
+  /// connection takes milliseconds.
+  ///
+  /// It creates one idle peer connection (no ICE servers, no media) and
+  /// keeps it until the next [join] has created its own, because closing
+  /// the last peer connection undoes part of the setup: after a room is
+  /// left, the next join's peer connection blocks again, for 2–3 s. So call
+  /// it again after leaving, before the next join. Calls while one is held
+  /// return the same future.
+  ///
+  /// The UI still freezes while it runs: it moves the pause, it doesn't
+  /// remove it. Nothing is captured or sent, and no permission is asked
+  /// for; Apple's voice processing still starts with the first microphone
+  /// publish (off the UI thread). A [join] started meanwhile waits for it
+  /// before requesting the session. Never throws: a failure is logged, and
+  /// the join creates its own peer connection.
+  static Future<void> prewarm() => PeerConnectionWarmup.warm();
 
   final BrokerClientFactory _createBrokerClient;
   final SfuSessionConnector _connectSession;

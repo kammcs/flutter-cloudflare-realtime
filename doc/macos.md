@@ -59,6 +59,19 @@ Desktops have no call audio routes (`Room.canSelectAudioRoute` is `false`). Choo
 
 The first call after the app starts can take 20–40 s on some Macs before your microphone is heard, while a browser on the same Mac joins in a few seconds. Most of it is the audio stack starting, in WebRTC-SDK's audio device module, AVFoundation and Core Audio: initializing the module at the first peer connection (up to 6 s measured) and AVFoundation's first device list (up to 9 s), both once per app process, and above all Apple's voice processing (echo cancellation), which starts with the first microphone publish (3–27 s measured). It is worst on a loaded Mac and with many audio devices (virtual devices such as BlackHole, aggregate and multi-output devices, a Continuity iPhone). Choosing a microphone other than the system default adds 9–11 s, because the module restarts its voice processing for the new input. The module starts the voice processing again whenever it restarts recording. [design.md §4.2](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#42-sfusession) has the measurements.
 
-The package keeps the app responsive meanwhile: it doesn't call into the plugin in ways that would block the main thread while the voice processing starts. The first peer connection and the first device list still block it for a few seconds each; show the call screen (with its hang-up button) before joining, so the user sees progress.
+The package keeps the app responsive meanwhile: it doesn't call into the plugin in ways that would block the main thread while the voice processing starts, and a microphone publish with no chosen device captures from the system default without listing the devices, so the first device list doesn't freeze the join either. What still blocks the main thread, and so your UI:
+
+- **The first peer connection, for 4–6 s**, inside `join`. Call `CloudflareRealtime.prewarm()` earlier, at a moment when a pause matters less (behind a launch screen, or as the pre-call screen opens), and the join itself doesn't freeze:
+
+  ```dart
+  // Once the app has started, well before the user joins a call.
+  unawaited(CloudflareRealtime.prewarm());
+  ```
+
+  It keeps one idle peer connection (nothing captured or sent, no permission asked) until the next join has its own. After leaving a room, the next join's peer connection blocks again for 2–3 s; call `prewarm()` again after leaving if another call may follow.
+- **The first device list, for 5–9 s**, when something reads it: publishing a chosen microphone (`device:`), the camera, or a device picker listing the devices. List them in your pre-call screen, if it has a picker, rather than during the join.
+- **Switching to a microphone other than the system default, for up to about 8 s** once the first publish starts sending, while the audio module rebuilds its voice processing for the new input. The default input avoids it.
+
+Show the call screen (with its hang-up button) before joining, so the user sees progress.
 
 If you put a time limit on joining or publishing, allow at least 30 s on macOS.

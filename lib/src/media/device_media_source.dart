@@ -65,8 +65,11 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
        _preferred = StateStream(preferredDevice, distinct: true) {
     _activeDevice = StateStream(_computeActiveDevice(), distinct: true);
     _deviceSubscription = _deviceList
-        .devicesOfKindChanges(deviceKind)
+        .watchDevicesOfKind(deviceKind)
         .listen(_onDevicesChanged);
+    // The list is read up front, as it always was, unless this source can
+    // capture without it (a Mac's microphone).
+    if (_unlistedDevice() == null) unawaited(_deviceList.ready);
   }
 
   /// The kind of device this source captures from.
@@ -104,8 +107,12 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   /// The shared device list this source reads from.
   MediaDeviceList get deviceList => _deviceList;
 
-  /// The devices of [deviceKind], now.
+  /// The devices of [deviceKind], now. Reading it starts the device list's
+  /// first enumeration, if nothing has ([MediaDeviceList]).
   List<MediaDevice> get devices => _deviceList.devicesOfKind(deviceKind);
+
+  // The same, without starting the list.
+  List<MediaDevice> get _listed => _deviceList.currentDevicesOfKind(deviceKind);
 
   /// [devices], replaying the current list to each new listener, then each
   /// change.
@@ -114,12 +121,33 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
 
   /// [devices] in the order capture tries them. See
   /// [prioritizeDevices].
-  List<MediaDevice> get devicePriority => prioritizeDevices(
-    devices,
+  List<MediaDevice> get devicePriority {
+    unawaited(_deviceList.ready);
+    return _priority();
+  }
+
+  List<MediaDevice> _priority() => prioritizeDevices(
+    _listed,
     preferred: _preferred.value,
     deprioritized: _deprioritized,
     facing: preferredFacing,
   );
+
+  /// The device to capture from without reading the device list first, or
+  /// `null` when capture waits for the list.
+  ///
+  /// Only a Mac's microphone, with no preferred device and none that
+  /// failed, while nothing has used the list: then the system default
+  /// ([unlistedDefaultDevice]). The first device list in a process blocks
+  /// a Mac's UI thread for 5–9 s (AVFoundation listing every capture
+  /// device), and the default needs no list (`docs/design.md` §4.5,
+  /// Capture before listing on macOS).
+  MediaDevice? _unlistedDevice() =>
+      _preferred.value == null &&
+          _deprioritized.isEmpty &&
+          !_deviceList.isStarted
+      ? unlistedDefaultDevice(deviceKind, _backend.platform)
+      : null;
 
   /// Which way a camera should face, for [devicePriority]; `null` for
   /// sources that aren't cameras.
@@ -188,8 +216,15 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
 
   MediaDevice? _computeActiveDevice() {
     final captured = track?.device;
-    if (captured != null) return captured;
-    final priority = devicePriority;
+    if (captured != null) {
+      // Captured before the list was read: the listed entry has the label.
+      if (captured.label.isNotEmpty) return captured;
+      for (final device in _listed) {
+        if (device.sameDeviceAs(captured)) return device;
+      }
+      return captured;
+    }
+    final priority = _priority();
     return priority.isEmpty ? null : priority.first;
   }
 
@@ -207,14 +242,18 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
       await _release();
       return;
     }
-    await _deviceList.ready;
-    if (!isEnabled) return; // The next run releases.
+    // A Mac's microphone needs no list for the default: don't start it.
+    final unlisted = _unlistedDevice();
+    if (unlisted == null) {
+      await _deviceList.ready;
+      if (!isEnabled) return; // The next run releases.
+    }
     final current = track;
     if (current != null && _canKeep(current)) {
       _updateActiveDevice();
       return;
     }
-    await _capture(current);
+    await _capture(current, unlisted: unlisted);
   }
 
   /// Whether the running capture [current] still matches what's wanted.
@@ -222,7 +261,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     if (_trackEnded || _capturedOptions != _wantedOptions) return false;
     final device = current.device;
     if (device == null) return true; // Unknown device: nothing to compare.
-    final available = _usable(devices);
+    final available = _usable(_listed);
     // No usable list (web before permission): keep what works.
     if (available.isEmpty) return true;
     if (!available.any(device.sameDeviceAs)) return false; // Unplugged.
@@ -236,12 +275,22 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
   static List<MediaDevice> _usable(List<MediaDevice> devices) =>
       devices.where((d) => d.deviceId.isNotEmpty).toList();
 
-  Future<void> _capture(CapturedTrack? old) async {
+  /// Captures from the first device in priority order that works, or
+  /// from [unlisted] without reading the list first; if [unlisted] fails,
+  /// the list is read and the other devices are tried.
+  Future<void> _capture(CapturedTrack? old, {MediaDevice? unlisted}) async {
     final oldEnded = _trackEnded;
     _trackEnded = false;
-    final usable = _usable(devicePriority);
-    // No device IDs yet (web before permission): let the platform choose.
-    final candidates = usable.isEmpty ? <MediaDevice?>[null] : usable;
+    List<MediaDevice?> listedCandidates() {
+      final usable = _usable(_priority());
+      // No device IDs yet (web before permission): let the platform choose.
+      return usable.isEmpty ? <MediaDevice?>[null] : usable;
+    }
+
+    final candidates = unlisted != null
+        ? <MediaDevice?>[unlisted]
+        : listedCandidates();
+    var listRead = unlisted == null;
     final failures = <(MediaDevice?, Object)>[];
     var oldReleased = old == null;
 
@@ -253,7 +302,20 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
       await releaseStream(old!.stream);
     }
 
-    for (final device in candidates) {
+    for (var index = 0; ; index++) {
+      if (index == candidates.length) {
+        if (listRead) break;
+        // The default failed without a list: read it, and try the others.
+        listRead = true;
+        await _deviceList.ready;
+        candidates.addAll(
+          listedCandidates().where(
+            (d) => d != null && !candidates.any((c) => c!.sameDeviceAs(d)),
+          ),
+        );
+        if (index == candidates.length) break;
+      }
+      final device = candidates[index];
       if (!isEnabled) return; // Disabled meanwhile: the next run releases.
       final sameAsOld =
           old != null &&
@@ -335,8 +397,9 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
         await releaseStream(old!.stream);
       }
       if (device == null || captured.device?.label.isEmpty != false) {
-        // Labels and IDs appear once permission is granted.
-        unawaited(_deviceList.refresh());
+        // Labels and IDs appear once permission is granted. A list nothing
+        // has used yet stays unread (a Mac's microphone, above).
+        unawaited(_deviceList.refreshIfStarted());
       }
       return;
     }
@@ -386,7 +449,7 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     } catch (_) {
       // Not implemented on this platform.
     }
-    final known = devices;
+    final known = _listed;
     if (settingsId != null) {
       for (final device in known) {
         if (device.deviceId == settingsId) return device;
@@ -562,3 +625,27 @@ class _CaptureTimedOut implements Exception {
 
   final Duration timeout;
 }
+
+/// The system default device of [kind] on [platform] that a source can
+/// capture from without listing the devices first, or `null` where
+/// capture reads the list first.
+///
+/// macOS microphones only: libwebrtc's audio device module lists the
+/// system default first, as `default`, and selecting it
+/// (`Helper.selectAudioInput`) needs no device list from Dart. Elsewhere
+/// the list is needed: Windows opens the first device it lists unless
+/// told which (`docs/design.md` §4.5), browsers give labels only through
+/// the list, and phones pick cameras by facing. A Mac's camera lists the
+/// cameras inside `getUserMedia` anyway.
+@visibleForTesting
+MediaDevice? unlistedDefaultDevice(
+  MediaDeviceKind kind,
+  MediaPlatform platform,
+) => platform == MediaPlatform.macos && kind == MediaDeviceKind.audioInput
+    ? const MediaDevice(
+        deviceId: 'default',
+        kind: MediaDeviceKind.audioInput,
+        label: '',
+        isDefault: true,
+      )
+    : null;

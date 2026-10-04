@@ -20,7 +20,7 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 
 | Symbol | Kind | Notes |
 |---|---|---|
-| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)` |
+| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)`; static `prewarm()` (macOS: the first peer connection ahead of the join, design.md §4.2) |
 | `BrokerClientFactory`, `SfuSessionConnector` **(testing)** | typedefs | Test seams for `CloudflareRealtime` |
 | `Room` | class | The call. Includes `debugSimulateConnectionFailure()` (see below) |
 | `Participant` | sealed class | `LocalParticipant`, `RemoteParticipant` |
