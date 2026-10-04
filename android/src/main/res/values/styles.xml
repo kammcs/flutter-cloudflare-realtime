@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The theme of the package's ring screen (IncomingCallActivity,
+     docs/design.md §4.8). Apps can override it by defining a style with the
+     same name. Android 10+ follows the system's dark mode (values-v29). -->
+<resources>
+    <style name="CloudflareRealtime.IncomingCall" parent="@android:style/Theme.DeviceDefault.NoActionBar" />
+</resources>

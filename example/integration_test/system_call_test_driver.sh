@@ -11,6 +11,12 @@
 #   and its types, 0x4 phoneCall, 0x80 microphone);
 # - the global microphone mute (`dumpsys audio`).
 #
+# At "INJECT NOW <call id>" it plays another app (docs/design.md §4.8, The
+# ring activity and the lock screen): from adb's shell it sends the
+# package's Answer action with the call's ID to the app's exported launch
+# activity, and tries to start the package's ring activity, which isn't
+# exported (refused). The test then checks that the call still rings.
+#
 # It also allows the app op MANAGE_ONGOING_CALLS (before the test, and again
 # at "COMPANION NOW"), so Telecom binds the example's companion
 # InCallService (debug builds), which ends a ringing call from Telecom's
@@ -56,6 +62,7 @@ checks=0
 background=0
 foreground=0
 companion=0
+injected=0
 while kill -0 "$TEST" 2>/dev/null; do
   if [ "$(count 'BACKGROUND NOW')" -gt "$background" ]; then
     background=$((background + 1))
@@ -71,6 +78,19 @@ while kill -0 "$TEST" 2>/dev/null; do
     companion=1
     echo "--- driver: let the test's companion InCallService see the calls"
     "$ADB" shell appops set "$PACKAGE" MANAGE_ONGOING_CALLS allow
+  fi
+  if [ "$injected" -eq 0 ] && [ "$(count 'INJECT NOW')" -gt 0 ]; then
+    injected=1
+    id=$(grep -o 'INJECT NOW [0-9a-f-]*' "$LOG" | head -n 1 | awk '{print $3}')
+    echo "--- driver: a forged Answer to the app's launch activity (adb shell)"
+    "$ADB" shell am start -n "$PACKAGE/.MainActivity" \
+      -a dev.kammcs.cloudflare_realtime.action.ANSWER_CALL \
+      --es dev.kammcs.cloudflare_realtime.extra.CALL_ID "$id" 2>&1
+    echo "--- driver: the package's ring activity from adb's shell (must be refused)"
+    "$ADB" shell am start \
+      -n "$PACKAGE/dev.kammcs.cloudflare_realtime.IncomingCallActivity" \
+      -a dev.kammcs.cloudflare_realtime.action.ANSWER_CALL \
+      --es dev.kammcs.cloudflare_realtime.extra.CALL_ID "$id" 2>&1
   fi
   if [ "$(count 'CHECK TELECOM')" -gt "$checks" ]; then
     checks=$((checks + 1))

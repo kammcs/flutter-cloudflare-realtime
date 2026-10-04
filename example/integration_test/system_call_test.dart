@@ -23,7 +23,14 @@
 // 3. Android: the call notification (the incoming one has a full-screen
 //    intent, Answer and Decline; the ongoing one Hang up), pressed through
 //    its own PendingIntents as a tap would: Answer answers (through the
-//    app's activity), Hang up and Decline end the call.
+//    package's ring activity, which then opens the app: the phone isn't
+//    locked) and leaves no ring activity behind; Hang up and Decline end
+//    the call.
+// 3b. Android: a forged Answer (the package's action and the call's ID)
+//    sent to the app's exported launch activity answers nothing, and the
+//    package's ring activity isn't exported (docs/design.md §4.8, The ring
+//    activity and the lock screen). With the driver, adb's shell sends the
+//    same intent and tries to start the ring activity (refused).
 // 4. Android, with the driver: Telecom ending a ringing call, through the
 //    example's companion InCallService (debug builds; the driver allows
 //    its app op): a reject, as a watch's Decline, is `declined`; a
@@ -35,9 +42,9 @@
 //
 // Where the platforms differ, so do the expectations: the native
 // `endpoints` method is Android's (null on iOS), and the foreground service
-// is Android's. Answering from the lock screen, the notification's Answer
-// and Decline, the system's own mute button, and a real phone call holding
-// the call need a person (docs/checkpoint.md).
+// is Android's. Answering from the lock screen (the ring activity, the
+// unlock prompt), the system's own mute button, and a real phone call
+// holding the call need a person (docs/checkpoint.md).
 //
 // On Android, system_call_test_driver.sh runs it and prints what Telecom
 // and the service look like at each "CHECK TELECOM" in the log:
@@ -67,6 +74,8 @@ import 'broker_settings.dart';
 const _timeout = Duration(seconds: 30);
 const _callService = 'dev.kammcs.cloudflare_realtime.CallService';
 const _support = MethodChannel('example/test_support');
+const _ringActivity = 'dev.kammcs.cloudflare_realtime.IncomingCallActivity';
+const _hostActivity = 'dev.kammcs.cloudflare_realtime_example.MainActivity';
 const _native = MethodChannel('dev.kammcs.cloudflare_realtime/system_calls');
 // Set by system_call_test_driver.sh, which presses Home and comes back.
 const _driven = String.fromEnvironment('CF_REALTIME_SYSTEM_CALL_DRIVER');
@@ -404,6 +413,13 @@ void main() {
       "the notification's Answer answers",
     );
     expect(events.whereType<SystemCallAnsweredEvent>(), hasLength(1));
+    // The ring activity answered it and, the phone being unlocked, opened
+    // the app and went: no task of its own is left.
+    await _eventually(() async {
+      final tasks = await _appTasks();
+      return !tasks.contains(_ringActivity) && tasks.contains(_hostActivity);
+    }, 'the ring activity hands off to the app and goes');
+    _log('tasks after Answer: ${await _appTasks()}');
     await _eventually(() async {
       final shown = await _callNotifications();
       return shown.length == 1 && shown.single['hangUp'] == true;
@@ -435,6 +451,57 @@ void main() {
       'the call service stops',
     );
     expect(await _callNotifications(), isEmpty);
+  }, skip: !android);
+
+  testWidgets('a forged Answer intent answers nothing (Android)', (
+    tester,
+  ) async {
+    await configure();
+    final ring = await _support.invokeMapMethod<String, Object?>(
+      'ringActivityInfo',
+    );
+    _log('ring activity: $ring');
+    expect(ring!['exported'], isFalse, reason: 'only the package starts it');
+    expect(ring['excludeFromRecents'], isTrue);
+    expect(ring['singleInstance'], isTrue);
+
+    final call = await calls.reportIncomingCall(
+      handle: const CallHandle('integration-test'),
+      displayName: 'Forged intent test',
+    );
+    await _eventually(
+      () async => (await _callNotifications()).isNotEmpty,
+      'the incoming call notification is posted',
+    );
+    // What another app could send: the package's Answer action and the
+    // call's ID, to the app's launch activity (exported, by necessity).
+    expect(
+      await _support.invokeMethod<bool>('sendForgedAnswerIntent', {
+        'id': call.id,
+      }),
+      isTrue,
+    );
+    if (_driven == '1') {
+      // The driver sends it from adb's shell too, and tries the ring
+      // activity directly.
+      _log('INJECT NOW ${call.id}');
+    }
+    await Future<void>.delayed(const Duration(seconds: 5));
+    expect(
+      call.state,
+      SystemCallState.ringing,
+      reason: 'a forged intent must not answer the call',
+    );
+    _log('still ringing after the forged intents');
+    await call.end(SystemCallEndReason.unanswered);
+    expect(
+      await call.whenEnded.timeout(_timeout),
+      SystemCallEndReason.unanswered,
+    );
+    await _eventually(
+      () async => (await _callNotifications()).isEmpty,
+      'the notification goes with the call',
+    );
   }, skip: !android);
 
   testWidgets(
@@ -552,6 +619,10 @@ Future<bool?> _notificationAction(String action) => _support.invokeMethod<bool>(
   'sendCallNotificationAction',
   {'action': action},
 );
+
+/// The top activity of each of the app's tasks (Android).
+Future<List<String?>> _appTasks() async =>
+    await _support.invokeListMethod<String?>('appTasks') ?? [];
 
 Future<List<String>> _foregroundServices() async =>
     await _support.invokeListMethod<String>('foregroundServices') ?? [];

@@ -20,7 +20,6 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.PluginRegistry
 
 /**
  * Call audio routing on Android (docs/design.md §4.6), interruptions, the
@@ -77,9 +76,6 @@ class CloudflareRealtimePlugin :
     private lateinit var systemMethods: MethodChannel
     private lateinit var systemEvents: EventChannel
     private val systemCalls = SystemCallsChannel()
-    private val newIntentListener = PluginRegistry.NewIntentListener { intent ->
-        activityBinding?.let { SystemCallRegistry.onActivityIntent(it.activity, intent) } ?: false
-    }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         audio = binding.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -126,8 +122,13 @@ class CloudflareRealtimePlugin :
         systemCalls.dispose()
     }
 
-    // --- Activity (the screen share's permission request; a system call's
-    // Answer and full-screen intents) ----------------------------------
+    // --- Activity (the screen share's permission request, keeping the
+    // screen on) ---------------------------------------------------------
+    //
+    // A system call's ring, Answer and full-screen intent go to the
+    // package's own IncomingCallActivity, never to this (the app's)
+    // activity: the plugin doesn't act on call intents here, and never
+    // shows the app's activity over the lock screen (docs/design.md §4.8).
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
@@ -135,8 +136,6 @@ class CloudflareRealtimePlugin :
         applyKeepScreenOn(binding.activity)
         binding.addRequestPermissionsResultListener(screen)
         screen.activity = binding.activity
-        binding.addOnNewIntentListener(newIntentListener)
-        SystemCallRegistry.onActivityIntent(binding.activity, binding.activity.intent)
     }
 
     override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
@@ -151,7 +150,6 @@ class CloudflareRealtimePlugin :
         }
         setScreenFlag = false
         activityBinding?.removeRequestPermissionsResultListener(screen)
-        activityBinding?.removeOnNewIntentListener(newIntentListener)
         activityBinding = null
         screen.activity = null
     }
