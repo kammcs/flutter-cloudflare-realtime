@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import cloudflare_realtime
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -9,6 +10,9 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // CallKit's provider and the PushKit registry from launch, before the
+    // implicit engine registers the plugins (doc/ios.md, VoIP pushes).
+    CloudflareRealtimePlugin.handleLaunch()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

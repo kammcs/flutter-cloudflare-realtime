@@ -25,10 +25,13 @@ import UIKit
 ///   completion runs, as iOS requires; a malformed push is reported and
 ///   ended at once as `failed`. A cancel push (the `ended` key) ends the
 ///   call it names; for a call the package doesn't have, it is reported
-///   and ended at once, with no event.
+///   and ended at once, with no event. A push for a call that already
+///   ended here (whoever ended it) doesn't ring and raises no event.
 /// - **Persisted:** the last configuration (so the provider exists at
 ///   launch, before Dart) and the VoIP opt-in (so pushes are handled from
-///   launch).
+///   launch). `restore()` brings them back: from `didFinishLaunching` when
+///   the app calls `CloudflareRealtimePlugin.handleLaunch()`, and at plugin
+///   registration.
 final class SystemCalls: NSObject {
   static let shared = SystemCalls(defaults: .standard, audio: .shared)
 
@@ -43,20 +46,29 @@ final class SystemCalls: NSObject {
   private let controller = CXCallController()
   private var supportsHolding = true
   private var supportsDtmf = false
-  private var pushRegistry: PKPushRegistry?
+  private(set) var pushRegistry: PKPushRegistry?
   /// Whether CallKit activated the audio session (between `didActivate`
   /// and `didDeactivate`).
   private(set) var audioActivated = false
   /// End reasons the app asked for, until the end action is performed.
   private var endReasons: [UUID: SystemCallEndReason] = [:]
-  /// The calls cancel pushes ended (with their reasons), the oldest
-  /// dropped beyond `cancelledLimit`: the call's own push arriving later
-  /// (APNs doesn't keep the order, a server may push again) doesn't ring.
-  private var cancelled: [UUID: SystemCallEndReason] = [:]
-  private var cancelledOrder: [UUID] = []
-  static let cancelledLimit = 64
+  /// The calls that ended lately (with their reasons), the oldest dropped
+  /// beyond `endedLimit`: every call that ended here, whoever ended it
+  /// (the app, with any reason; the system's UI; CallKit; a cancel push),
+  /// and the IDs of cancel pushes for calls the package didn't have. A
+  /// push for one of them doesn't ring and raises no event: a cancel
+  /// after the app ended the ring itself (its own timeout), or the call's
+  /// own push after its cancel (APNs doesn't keep the order, a server may
+  /// push again).
+  private var recentlyEnded: [UUID: SystemCallEndReason] = [:]
+  private var recentlyEndedOrder: [UUID] = []
+  static let endedLimit = 64
   /// Placeholders reported for pushes that don't ring (for tests).
   private(set) var placeholdersReported = 0
+  /// Pushes for calls that already ended here, reported again under the
+  /// call's own UUID, and how many of those CallKit refused (for tests).
+  private(set) var repeatReports = 0
+  private(set) var repeatReportsRefused = 0
 
   /// `audio` is `nil` in tests that must not touch WebRTC's session.
   init(defaults: UserDefaults, audio: SystemCallAudio?) {
@@ -65,9 +77,11 @@ final class SystemCalls: NSObject {
     super.init()
   }
 
-  /// At plugin registration: restores the provider and the VoIP registry
-  /// from the last launch, so a push that launched the app is handled
-  /// before Dart runs.
+  /// At launch (`CloudflareRealtimePlugin.handleLaunch()`) and at plugin
+  /// registration: restores the provider and the VoIP registry from the
+  /// last launch, so a push that launched the app is handled before Dart
+  /// runs. Idempotent: each is created once, the first time it is found
+  /// persisted. Needs no engine: events wait in `events` until one listens.
   func restore() {
     if provider == nil, let config = defaults.dictionary(forKey: Self.configKey) {
       configure(config)
@@ -307,6 +321,7 @@ final class SystemCalls: NSObject {
           // CallKit no longer has it: it is over here too, without an
           // event (Dart ends it when the request isn't accepted).
           self.registry.remove(call.uuid)
+          self.rememberEnded(call.uuid, reason)
           self.updateAudio()
           result(false)
         } else {
@@ -344,6 +359,7 @@ final class SystemCalls: NSObject {
   private func ended(_ uuid: UUID, _ reason: SystemCallEndReason) {
     endReasons[uuid] = nil
     guard registry.remove(uuid) != nil else { return }
+    rememberEnded(uuid, reason)
     updateAudio()
     events.send(["event": "ended", "id": uuid.uuidString.lowercased(), "reason": reason.rawValue])
   }
@@ -400,11 +416,12 @@ final class SystemCalls: NSObject {
       reportEnded(call, reason: .failed, provider: provider, completion: completion)
       return
     }
-    if let reason = cancelled[call.uuid] {
-      // Its cancel came first (APNs doesn't keep the order), or the server
-      // pushed it again: the call is over, so it doesn't ring.
-      NSLog("cloudflare_realtime: a VoIP push for a call already cancelled; ended at once")
-      reportEnded(call, reason: reason, provider: provider, completion: completion)
+    if !registry.contains(call.uuid), let reason = recentlyEnded[call.uuid] {
+      // It ended here already (the app or the user ended it, or its cancel
+      // came first: APNs doesn't keep the order), or the server pushed it
+      // again: the call is over, so it doesn't ring.
+      NSLog("cloudflare_realtime: a VoIP push for a call that already ended; not rung")
+      reportRepeat(call, reason: reason, provider: provider, completion: completion)
       return
     }
     if registry.contains(call.uuid) {
@@ -430,15 +447,25 @@ final class SystemCalls: NSObject {
   }
 
   /// A cancel push for [call]: ends it with [reason] and the `ended` event,
-  /// as when the app ends it for that reason. A call the package doesn't
-  /// have (the cancel launched the app, or came twice) is reported and
-  /// ended at once, with no event.
+  /// as when the app ends it for that reason. A call that already ended
+  /// here (the app ended the ring itself, or the cancel came twice) is
+  /// reported again under its own UUID (`reportRepeat`), with no event. A
+  /// call the package
+  /// never had (the cancel launched the app) is reported as a placeholder
+  /// and ended at once, with no event.
   private func reportCancel(
     _ call: SystemCallRecord, reason: SystemCallEndReason, provider: CXProvider,
     completion: @escaping () -> Void
   ) {
     guard let known = registry[call.uuid] else {
-      rememberCancel(call.uuid, reason)
+      if let earlier = recentlyEnded[call.uuid] {
+        NSLog(
+          "cloudflare_realtime: a VoIP cancel push (%@) for a call that already ended (%@)",
+          reason.rawValue, earlier.rawValue)
+        reportRepeat(call, reason: earlier, provider: provider, completion: completion)
+        return
+      }
+      rememberEnded(call.uuid, reason)
       reportEnded(call, reason: reason, provider: provider, completion: completion)
       return
     }
@@ -447,7 +474,7 @@ final class SystemCalls: NSObject {
     // cancel to every device of the user, the one that answered too.
     let ringing = !known.outgoing && known.state == .ringing
     let ends = ringing || reason == .remoteEnded || reason == .failed
-    if ends { rememberCancel(call.uuid, reason) }
+    if ends { rememberEnded(call.uuid, reason) }
     // iOS still wants a report for the push; CallKit refuses the duplicate.
     provider.reportNewIncomingCall(with: call.uuid, update: callUpdate(known)) {
       [weak self] _ in
@@ -467,15 +494,46 @@ final class SystemCalls: NSObject {
     }
   }
 
-  private func rememberCancel(_ uuid: UUID, _ reason: SystemCallEndReason) {
-    if cancelled.updateValue(reason, forKey: uuid) == nil { cancelledOrder.append(uuid) }
-    while cancelledOrder.count > Self.cancelledLimit {
-      cancelled[cancelledOrder.removeFirst()] = nil
+  private func rememberEnded(_ uuid: UUID, _ reason: SystemCallEndReason) {
+    if recentlyEnded.updateValue(reason, forKey: uuid) == nil { recentlyEndedOrder.append(uuid) }
+    while recentlyEndedOrder.count > Self.endedLimit {
+      recentlyEnded[recentlyEndedOrder.removeFirst()] = nil
     }
   }
 
-  /// Whether a cancel push ended the call [uuid] (for tests).
-  func wasCancelled(_ uuid: UUID) -> Bool { cancelled[uuid] != nil }
+  /// The reason the call [uuid] ended with, if it ended lately (for tests).
+  func endedReason(_ uuid: UUID) -> SystemCallEndReason? { recentlyEnded[uuid] }
+
+  /// Satisfies PushKit for a push about a call that already ended here: the
+  /// call's own UUID is reported again, with no event. While CallKit still
+  /// remembers the UUID it refuses it (`callUUIDAlreadyExists`) and nothing
+  /// shows, as for a push about a call the package has. It forgets soon:
+  /// on the Simulator under 2 s after `reportCall(endedAt:)`, and at once
+  /// after an end action. Then the report is a call again, ended at once
+  /// with [reason], as a placeholder would be: no ring and no event, but
+  /// it can show for an instant (docs/design.md §4.8, Pushes for calls
+  /// that ended).
+  private func reportRepeat(
+    _ call: SystemCallRecord, reason: SystemCallEndReason, provider: CXProvider,
+    completion: @escaping () -> Void
+  ) {
+    repeatReports += 1
+    provider.reportNewIncomingCall(with: call.uuid, update: callUpdate(call)) {
+      [weak self] error in
+      DispatchQueue.main.async {
+        defer { completion() }
+        if let error {
+          self?.repeatReportsRefused += 1
+          NSLog(
+            "cloudflare_realtime: CallKit refused the ended call's repeat report: %@",
+            error.localizedDescription)
+        } else {
+          NSLog("cloudflare_realtime: CallKit no longer had the ended call; ended at once")
+          provider.reportCall(with: call.uuid, endedAt: nil, reason: reason.callKitReason ?? .failed)
+        }
+      }
+    }
+  }
 
   /// Satisfies PushKit for a push whose call doesn't ring: a placeholder
   /// with a new UUID (so it never meets a real call) is reported and ended
