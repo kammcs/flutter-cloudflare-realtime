@@ -20,6 +20,13 @@ export 'src/room/room.dart' hide joinRoom;
 export 'src/room/room_options.dart';
 export 'src/room/screen_share_presets.dart';
 
+// The package's logging (CloudflareRealtime.logger; design.md §4.9).
+export 'src/diagnostics/log.dart'
+    show
+        CloudflareRealtimeLogLevel,
+        CloudflareRealtimeLogRecord,
+        CloudflareRealtimeLogger;
+
 // A debug aid: timing platform calls and event-loop gaps
 // (CloudflareRealtime.debugPlatformCallTiming; design.md §4.2).
 export 'src/diagnostics/platform_call_timing.dart'

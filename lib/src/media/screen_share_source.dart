@@ -3,9 +3,9 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../diagnostics/log.dart';
 import '../signaling/participant_state.dart';
 import '../util/state_stream.dart';
 import 'constraints.dart';
@@ -411,7 +411,7 @@ class ScreenShareSource extends LocalMediaSource {
         _sourceGeometry.set(geometry);
         return geometry != null;
       } catch (error) {
-        debugPrint('cloudflare_realtime: reading the screen geometry: $error');
+        RealtimeLog.warning('reading the screen geometry failed', error: error);
         return false;
       } finally {
         _readingGeometry = false;
@@ -510,11 +510,11 @@ class ScreenShareSource extends LocalMediaSource {
       // connected; a late broadcast mustn't find it.
       await broadcast.abandon();
     } catch (error) {
-      debugPrint('cloudflare_realtime: abandoning the broadcast: $error');
+      RealtimeLog.warning('abandoning the broadcast failed', error: error);
     }
     if (isEnabled && !isDisposed) {
-      debugPrint(
-        'cloudflare_realtime: the screen broadcast did not start (the '
+      RealtimeLog.info(
+        'the screen broadcast did not start (the '
         'picker was dismissed or not answered within '
         '$timeoutAfter, or the broadcast ended at once).',
       );
@@ -544,7 +544,10 @@ class ScreenShareSource extends LocalMediaSource {
         await finished.future.timeout(_broadcastEndTimeout, onTimeout: () {});
       }
     } catch (error) {
-      debugPrint('cloudflare_realtime: waiting for the broadcast: $error');
+      RealtimeLog.warning(
+        'waiting for the broadcast to end failed',
+        error: error,
+      );
     } finally {
       unawaited(subscription.cancel());
     }
@@ -568,10 +571,7 @@ class ScreenShareSource extends LocalMediaSource {
     try {
       await capturer?.getSources(types: _allTypes);
     } catch (error) {
-      debugPrint(
-        'cloudflare_realtime: re-listing screen sources failed: '
-        '$error',
-      );
+      RealtimeLog.warning('re-listing screen sources failed', error: error);
     }
     try {
       return await _media.getDisplayMedia(constraints);
@@ -611,11 +611,11 @@ class ScreenShareSource extends LocalMediaSource {
       try {
         if (trackId != null) watching = await service.watch(trackId);
       } catch (error) {
-        debugPrint('cloudflare_realtime: watching the projection: $error');
+        RealtimeLog.warning('watching the projection failed', error: error);
       }
       if (!watching) {
-        debugPrint(
-          'cloudflare_realtime: a share stopped from the system will only '
+        RealtimeLog.info(
+          'a share stopped from the system will only '
           'show as no frames (LocalTrackStalledEvent).',
         );
       }
@@ -640,7 +640,7 @@ class ScreenShareSource extends LocalMediaSource {
       try {
         await capturer.updateSources(types: _allTypes);
       } catch (error) {
-        debugPrint('cloudflare_realtime: updateSources failed: $error');
+        RealtimeLog.warning('updateSources failed', error: error);
       }
     });
   }
@@ -695,9 +695,9 @@ class ScreenShareSource extends LocalMediaSource {
     try {
       await _service?.stopService();
     } catch (error) {
-      debugPrint(
-        'cloudflare_realtime: stopping the screen share service: '
-        '$error',
+      RealtimeLog.warning(
+        'stopping the screen share service failed',
+        error: error,
       );
     }
   }

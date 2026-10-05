@@ -1,10 +1,10 @@
 # API review for the first pub.dev release (M8)
 
-October 2026, before 0.1.0. The public API is three libraries, **220 symbols**, none exported twice:
+October 2026, before 0.1.0. The public API is three libraries, **230 symbols**, none exported twice:
 
 | Library | Symbols | For |
 |---|---|---|
-| `package:cloudflare_realtime/cloudflare_realtime.dart` | 168 | What apps use (165 after the cleanup, plus `AudioOutputException`, `AudioOutputFailure` and `ScreenGeometry`) |
+| `package:cloudflare_realtime/cloudflare_realtime.dart` | 178 | What apps use (165 after the cleanup, plus `AudioOutputException`, `AudioOutputFailure` and `ScreenGeometry`, the 7 symbols of the platform call timing, and `CloudflareRealtimeLogger`, `CloudflareRealtimeLogRecord` and `CloudflareRealtimeLogLevel` for the logging) |
 | `package:cloudflare_realtime/broker.dart` | 36 | The plumbing under `Room`: a custom `BrokerClient`, the SFU API's wire models, direct use of `SfuSession` |
 | `package:cloudflare_realtime/testing.dart` | 16 | Seams for testing an app without native WebRTC, and for single-process demos |
 
@@ -20,7 +20,10 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 
 | Symbol | Kind | Notes |
 |---|---|---|
-| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)`; static `prewarm()` (macOS: the first peer connection ahead of the join, design.md §4.2); static `debugPlatformCallTiming` and `debugPlatformCallTimingEvents` (a debug aid: platform calls and event-loop gaps, design.md §4.2) |
+| `CloudflareRealtime` | class | Entry point: `join(roomId, signaling:, participantId:, metadata:, options:)`; static `prewarm()` (macOS: the first peer connection ahead of the join, design.md §4.2); static `debugPlatformCallTiming` and `debugPlatformCallTimingEvents` (a debug aid: platform calls and event-loop gaps, design.md §4.2); static `logger`, `defaultLogger` and `debugLogFullErrors` (the package's log lines, type and code only by default, design.md §4.9) |
+| `CloudflareRealtimeLogger` | typedef | `void Function(CloudflareRealtimeLogRecord)`, for `CloudflareRealtime.logger` |
+| `CloudflareRealtimeLogRecord` | final class | One log line: `level`, `message`, `errorType`, `errorCode` (log-safe, and all that `toString` has), and `error`, `stackTrace` (not printed by default) |
+| `CloudflareRealtimeLogLevel` | enum | `debug`, `info`, `warning`, `error` |
 | `PlatformCallTimingOptions` | final class | Options for `debugPlatformCallTiming` |
 | `PlatformCallTimingBinding` | final class | `WidgetsFlutterBinding` whose messenger times platform calls; `wrapMessenger` for an app's own binding |
 | `PlatformCall` | final class | One timed call: channel, method, argument keys, times |

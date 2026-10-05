@@ -203,7 +203,7 @@ class IncomingCallActivity : Activity() {
             try {
                 startActivity(it)
             } catch (e: Exception) {
-                Log.w(TAG, "Could not open the app after answering: $e")
+                Log.w(TAG, "Could not open the app after answering: ${e.logName()}")
             }
         }
         close()

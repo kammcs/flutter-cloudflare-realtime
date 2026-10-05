@@ -184,7 +184,7 @@ final class SystemCallAudio {
           options: AVAudioSession.CategoryOptions(rawValue: options))
       }
     } catch {
-      NSLog("cloudflare_realtime: setting the call's audio category failed: %@", "\(error)")
+      NSLog("cloudflare_realtime: setting the call's audio category failed: %@", logName(error))
     }
   }
 

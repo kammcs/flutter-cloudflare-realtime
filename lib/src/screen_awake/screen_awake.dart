@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../audio/call_audio.dart';
+import '../diagnostics/log.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'screen_awake_backend.dart';
@@ -99,7 +100,7 @@ class ScreenAwake {
         onError: (Object _) {},
       );
     } catch (error) {
-      debugPrint('cloudflare_realtime: proximity state unavailable: $error');
+      RealtimeLog.warning('proximity state unavailable', error: error);
     }
     _platformChanges = _backend.changes.listen(_onPlatformChange);
   }
@@ -127,7 +128,7 @@ class ScreenAwake {
     try {
       on = await _backend.setKeepAwake(want);
     } catch (error) {
-      debugPrint('cloudflare_realtime: keeping the screen on failed: $error');
+      RealtimeLog.warning('keeping the screen on failed', error: error);
       on = false;
     }
     if (!_disposed) held.set(want && on);

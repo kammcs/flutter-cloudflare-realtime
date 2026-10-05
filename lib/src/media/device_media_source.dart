@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../diagnostics/log.dart';
 import '../signaling/participant_state.dart';
 import '../util/state_stream.dart';
 import 'constraints.dart';
@@ -438,8 +439,8 @@ abstract class DeviceMediaSource<O extends Object> extends LocalMediaSource {
     return request.timeout(
       timeout,
       onTimeout: () {
-        debugPrint(
-          'cloudflare_realtime: getUserMedia (${deviceKind.wireName}) did '
+        RealtimeLog.warning(
+          'getUserMedia (${deviceKind.wireName}) did '
           'not complete within ${timeout.inMilliseconds} ms',
         );
         unawaited(request.then(releaseStream, onError: (Object _) {}));

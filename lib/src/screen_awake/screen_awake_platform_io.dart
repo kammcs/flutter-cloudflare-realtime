@@ -2,8 +2,7 @@ import 'dart:convert' show utf8;
 import 'dart:ffi';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart';
-
+import '../diagnostics/log.dart';
 import 'screen_awake_backend.dart';
 
 /// The backend for this platform: the plugin on Android and iOS,
@@ -54,7 +53,7 @@ class WindowsScreenAwakeBackend implements ScreenAwakeBackend {
           : _esContinuous,
     );
     if (previous == 0) {
-      debugPrint('cloudflare_realtime: SetThreadExecutionState failed');
+      RealtimeLog.warning('SetThreadExecutionState failed');
       return false;
     }
     return on;
@@ -138,7 +137,7 @@ class MacOSScreenAwakeBackend implements ScreenAwakeBackend {
     try {
       return on ? _hold() : _letGo();
     } catch (error) {
-      debugPrint('cloudflare_realtime: IOPMAssertion failed: $error');
+      RealtimeLog.warning('IOPMAssertion failed', error: error);
       return false;
     }
   }
@@ -151,8 +150,9 @@ class MacOSScreenAwakeBackend implements ScreenAwakeBackend {
     try {
       final result = _create(type, _kIOPMAssertionLevelOn, name, id);
       if (result != _kIOReturnSuccess) {
-        debugPrint(
-          'cloudflare_realtime: IOPMAssertionCreateWithName failed: $result',
+        RealtimeLog.warning(
+          'IOPMAssertionCreateWithName failed',
+          errorCode: '$result',
         );
         return false;
       }

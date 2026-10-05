@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'log.dart';
+
 /// The channel `flutter_webrtc` sends its method calls on.
 const String flutterWebrtcMethodChannel = 'FlutterWebRTC.Method';
 
@@ -13,8 +15,9 @@ const String flutterWebrtcMethodChannel = 'FlutterWebRTC.Method';
 /// and the event loop. A debug aid: see that setter.
 final class PlatformCallTimingOptions {
   /// Times the calls on [channels] (by default `flutter_webrtc`'s), reports
-  /// event-loop gaps over [gapThreshold], and, with [log], prints the gaps
-  /// and the calls slower than [slowCallThreshold] with `debugPrint`.
+  /// event-loop gaps over [gapThreshold], and, with [log], logs the gaps and
+  /// the calls slower than [slowCallThreshold] (at the `debug` level of
+  /// `CloudflareRealtime.logger`, which prints them by default).
   const PlatformCallTimingOptions({
     this.channels = const {flutterWebrtcMethodChannel},
     this.gapThreshold = const Duration(milliseconds: 250),
@@ -38,8 +41,8 @@ final class PlatformCallTimingOptions {
   /// reported on the event stream whatever its duration.
   final Duration slowCallThreshold;
 
-  /// Whether to print the gaps and the slow calls with `debugPrint`.
-  /// Default `true`.
+  /// Whether to log the gaps and the slow calls through
+  /// `CloudflareRealtime.logger`. Default `true`.
   final bool log;
 }
 
@@ -294,14 +297,14 @@ abstract final class PlatformCallTimer {
     _lastTick = Duration.zero;
     _ticker = Timer.periodic(tick, (_) => _onTick());
     if (value.log) {
-      debugPrint(
-        'cloudflare_realtime: platform call timing on '
+      RealtimeLog.debug(
+        'platform call timing on '
         '(${value.channels == null ? 'every channel' : value.channels!.join(', ')}; '
         'gaps over ${value.gapThreshold.inMilliseconds} ms)',
       );
       if (!messengerWrapped) {
-        debugPrint(
-          'cloudflare_realtime: platform calls aren\'t timed, only event-loop '
+        RealtimeLog.debug(
+          'platform calls aren\'t timed, only event-loop '
           'gaps: call PlatformCallTimingBinding.ensureInitialized() first '
           'thing in main()',
         );
@@ -395,8 +398,8 @@ abstract final class PlatformCallTimer {
     );
     _events.add(event);
     if (options.log && now - call.sentAt >= options.slowCallThreshold) {
-      debugPrint(
-        'cloudflare_realtime: ${_name(call.channel, call.method)} took '
+      RealtimeLog.debug(
+        '${_name(call.channel, call.method)} took '
         '${(now - call.sentAt).inMilliseconds} ms '
         '(+${call.sentAt.inMilliseconds} ms)'
         '${longest > Duration.zero ? '; the event loop stopped for ${longest.inMilliseconds} ms meanwhile' : ''}',
@@ -449,8 +452,8 @@ abstract final class PlatformCallTimer {
                 '(${c.duration == null ? 'unanswered' : '${c.duration!.inMilliseconds} ms'})',
           )
           .join(', ');
-      debugPrint(
-        'cloudflare_realtime: event loop stopped for '
+      RealtimeLog.debug(
+        'event loop stopped for '
         '${(end - start).inMilliseconds} ms '
         '(+${start.inMilliseconds}..+${end.inMilliseconds} ms); '
         'sent then: ${sent.isEmpty ? 'no timed call' : names(sent)}'

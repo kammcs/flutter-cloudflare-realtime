@@ -4,6 +4,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 
+import '../diagnostics/log.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'audio_route.dart';
@@ -191,7 +192,7 @@ class CallAudio {
       try {
         await _backend.deactivate();
       } catch (error) {
-        debugPrint('cloudflare_realtime: leaving call mode failed: $error');
+        RealtimeLog.warning('leaving call mode failed', error: error);
       }
     }
     _carriedChoice = _userChoice ?? _carriedChoice;
@@ -205,7 +206,7 @@ class CallAudio {
     try {
       await _backend.activate();
     } catch (error) {
-      debugPrint('cloudflare_realtime: entering call mode failed: $error');
+      RealtimeLog.warning('entering call mode failed', error: error);
     }
     if (interruption.value != null) {
       await _resume();
@@ -304,7 +305,7 @@ class CallAudio {
     try {
       if (!await _backend.resume()) return false;
     } catch (error) {
-      debugPrint('cloudflare_realtime: resuming call audio failed: $error');
+      RealtimeLog.warning('resuming call audio failed', error: error);
       return false;
     }
     if (_rooms.isEmpty) return false;
@@ -327,7 +328,7 @@ class CallAudio {
       final on = await _backend.setProximityMonitoring(want);
       if (!proximity.isClosed) proximity.set(on && want);
     } catch (error) {
-      debugPrint('cloudflare_realtime: proximity sensor failed: $error');
+      RealtimeLog.warning('proximity sensor failed', error: error);
       if (!proximity.isClosed) proximity.set(false);
     }
   }
@@ -385,8 +386,11 @@ class CallAudio {
       await _updateProximity();
     } catch (error, stack) {
       // Routing must never break a call; the next change tries again.
-      debugPrint('cloudflare_realtime: call audio routing failed: $error');
-      debugPrintStack(stackTrace: stack, maxFrames: 5);
+      RealtimeLog.error(
+        'call audio routing failed',
+        error: error,
+        stackTrace: stack,
+      );
     }
   }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../diagnostics/log.dart';
 import 'flutter_webrtc_peer_connection.dart';
 import 'peer_connection.dart';
 
@@ -60,7 +61,7 @@ abstract final class PeerConnectionWarmup {
         'sdpSemantics': 'unified-plan',
       });
     } catch (error) {
-      debugPrint('cloudflare_realtime: prewarm failed: $error');
+      RealtimeLog.warning('prewarm failed', error: error);
       if (generation == _generation) _warming = null;
       return;
     }

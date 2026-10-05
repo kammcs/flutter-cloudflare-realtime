@@ -158,7 +158,7 @@ internal class ScreenCapture(private val context: Context) :
         if (error == null) {
             result.success(null)
         } else {
-            Log.w(TAG, "Screen share service failed to start: $error")
+            Log.w(TAG, "Screen share service failed to start: ${error.logName()}")
             result.error("screen_capture", "Could not start the screen share service: ${error.message}", null)
         }
     }
@@ -171,7 +171,7 @@ internal class ScreenCapture(private val context: Context) :
         try {
             context.stopService(Intent(context, ScreenCaptureService::class.java))
         } catch (e: Exception) {
-            Log.w(TAG, "Could not stop the screen share service: $e")
+            Log.w(TAG, "Could not stop the screen share service: ${e.logName()}")
         }
     }
 
@@ -182,7 +182,7 @@ internal class ScreenCapture(private val context: Context) :
         val projection = try {
             projectionOf(trackId)
         } catch (e: Exception) {
-            Log.w(TAG, "Cannot watch the screen share's MediaProjection: $e")
+            Log.w(TAG, "Cannot watch the screen share's MediaProjection: ${e.logName()}")
             null
         } ?: return false
         val callback = object : MediaProjection.Callback() {

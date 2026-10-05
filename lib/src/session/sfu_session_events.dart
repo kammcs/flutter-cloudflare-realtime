@@ -164,14 +164,14 @@ final class SfuTrackException extends SfuSessionException {
   /// had no result for the track.
   final String? errorCode;
 
-  /// The SFU's `errorDescription` for this track, if any.
+  /// The SFU's `errorDescription` for this track, if any. Not in
+  /// [toString], which stays log-safe.
   final String? errorDescription;
 
   @override
   String toString() =>
       'SfuTrackException($operation, trackName: $trackName'
-      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'}'
-      '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
+      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'})';
 }
 
 /// A request-level error returned in a 2xx response body (`errorCode` on
@@ -190,13 +190,12 @@ final class SfuRequestException extends SfuSessionException {
   /// The SFU's `errorCode`.
   final String errorCode;
 
-  /// The SFU's `errorDescription`, if any.
+  /// The SFU's `errorDescription`, if any. Not in [toString], which stays
+  /// log-safe.
   final String? errorDescription;
 
   @override
-  String toString() =>
-      'SfuRequestException($operation, errorCode: $errorCode'
-      '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
+  String toString() => 'SfuRequestException($operation, errorCode: $errorCode)';
 }
 
 /// The SFU rejected one DataChannel of a request (a per-channel error), or
@@ -220,14 +219,14 @@ final class SfuDataChannelException extends SfuSessionException {
   /// had no usable result for it.
   final String? errorCode;
 
-  /// The SFU's `errorDescription` for this channel, if any.
+  /// The SFU's `errorDescription` for this channel, if any. Not in
+  /// [toString], which stays log-safe.
   final String? errorDescription;
 
   @override
   String toString() =>
       'SfuDataChannelException($operation, name: $name'
-      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'}'
-      '${errorDescription == null ? '' : ', errorDescription: $errorDescription'})';
+      '${errorCode == null ? ', no result' : ', errorCode: $errorCode'})';
 }
 
 /// The publication, subscription or DataChannel was unpublished, closed,

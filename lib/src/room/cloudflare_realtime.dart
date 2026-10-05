@@ -1,6 +1,7 @@
 import '../broker/broker_client.dart';
 import '../broker/broker_config.dart';
 import '../broker/http_broker_client.dart';
+import '../diagnostics/log.dart';
 import '../diagnostics/platform_call_timing.dart';
 import '../media/flutter_webrtc_media_backend.dart';
 import '../media/media_backend.dart';
@@ -151,9 +152,10 @@ class CloudflareRealtime {
   /// }
   /// ```
   ///
-  /// It prints each event-loop gap over the threshold (250 ms) with the
+  /// It logs each event-loop gap over the threshold (250 ms) with the
   /// calls sent just before or during it, and each call slower than 100 ms,
-  /// with `debugPrint`; for example `cloudflare_realtime: event loop
+  /// through [logger] (which prints them by default); for example
+  /// `cloudflare_realtime: event loop
   /// stopped for 4213 ms (+12030..+16243 ms); sent then:
   /// createPeerConnection(4190 ms)`. [debugPlatformCallTimingEvents] has
   /// the same as typed events, every call included. Only method names,
@@ -187,6 +189,58 @@ class CloudflareRealtime {
   /// A broadcast stream: events before a listener subscribes are lost.
   static Stream<PlatformCallTimingEvent> get debugPlatformCallTimingEvents =>
       PlatformCallTimer.events;
+
+  /// Where the package's log lines go. Default: [defaultLogger].
+  ///
+  /// The package logs what it recovers from or works around (a failed
+  /// prewarm, a refused screen wake lock, a stuck negotiation step it gave
+  /// up on, a failed device list) and the output of the debug aids
+  /// ([debugPlatformCallTiming]). Each line is a
+  /// [CloudflareRealtimeLogRecord]: a log-safe message and the error's type
+  /// and code, with the error itself and its stack in separate fields.
+  ///
+  /// [defaultLogger] prints only the log-safe parts, so error text, which
+  /// can echo a broker's response body, never reaches the device log
+  /// (Android's is readable over adb, and crash reporters often collect
+  /// it). To send the lines elsewhere, or to drop them:
+  ///
+  /// ```dart
+  /// CloudflareRealtime.logger = (record) {
+  ///   myLog.warning(record.toString()); // type and code only
+  ///   if (kDebugMode) myLog.fine('${record.error}'); // full text, your call
+  /// };
+  /// CloudflareRealtime.logger = (_) {}; // nothing at all
+  /// ```
+  ///
+  /// The native code on Android and iOS logs to logcat and the unified log
+  /// itself (system call and audio events, error types and codes, never
+  /// payloads or tokens); this setting doesn't reach it
+  /// (`docs/design.md` §4.9). A logger that throws is skipped for that
+  /// record, which goes to [defaultLogger] instead.
+  static CloudflareRealtimeLogger get logger => RealtimeLog.logger;
+
+  static set logger(CloudflareRealtimeLogger logger) =>
+      RealtimeLog.logger = logger;
+
+  /// The default [logger]: prints [CloudflareRealtimeLogRecord.toString]
+  /// with `debugPrint`, for example `cloudflare_realtime: prewarm failed
+  /// (PlatformException, code: error)`. With [debugLogFullErrors] on, it
+  /// adds the error's text and the first frames of its stack.
+  ///
+  /// Call it from a custom [logger] to keep the console output.
+  static void defaultLogger(CloudflareRealtimeLogRecord record) =>
+      RealtimeLog.defaultLogger(record);
+
+  /// A debug aid: whether [defaultLogger] prints errors in full, with their
+  /// text and stack, rather than their type and code. Default `false`.
+  ///
+  /// An error's text can include what the broker answered (the app's own
+  /// data), so turn it on only while debugging, never in a release build
+  /// that ships. Works in every build mode. A custom [logger] gets the full
+  /// error in [CloudflareRealtimeLogRecord.error] either way.
+  static bool get debugLogFullErrors => RealtimeLog.fullErrors;
+
+  static set debugLogFullErrors(bool value) => RealtimeLog.fullErrors = value;
 
   final BrokerClientFactory _createBrokerClient;
   final SfuSessionConnector _connectSession;

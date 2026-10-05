@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
-import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 
+import '../diagnostics/log.dart';
 import 'screen_awake_backend.dart';
 
 /// The backend for browsers: the Screen Wake Lock API.
@@ -91,7 +91,7 @@ class WebScreenAwakeBackend implements ScreenAwakeBackend {
     try {
       sentinel = await web.window.navigator.wakeLock.request('screen').toDart;
     } catch (error) {
-      debugPrint('cloudflare_realtime: screen wake lock refused: $error');
+      RealtimeLog.warning('screen wake lock refused', error: error);
       return;
     }
     if (!_wanted) {

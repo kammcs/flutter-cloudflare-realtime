@@ -4,8 +4,8 @@ library;
 import 'dart:async';
 
 import 'package:collection/collection.dart';
-import 'package:flutter/foundation.dart';
 
+import '../diagnostics/log.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'flutter_webrtc_media_backend.dart';
@@ -163,7 +163,7 @@ class MediaDeviceList {
       if (_disposed) return;
       _devices.set(List.unmodifiable(devices));
     } catch (error) {
-      debugPrint('cloudflare_realtime: enumerateDevices failed: $error');
+      RealtimeLog.warning('enumerateDevices failed', error: error);
     }
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 
 import '../audio/call_audio_backend.dart' show callLifecycleSource;
+import '../diagnostics/log.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'call_background_backend.dart';
@@ -161,7 +162,7 @@ class CallBackground {
       }
       _failing = false;
     } catch (error) {
-      debugPrint('cloudflare_realtime: foreground service failed: $error');
+      RealtimeLog.warning('foreground service failed', error: error);
       if (!_failing && !_errors.isClosed) _errors.add(error);
       _failing = true;
     }

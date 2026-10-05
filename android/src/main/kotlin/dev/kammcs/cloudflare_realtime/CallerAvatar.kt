@@ -73,7 +73,7 @@ internal object CallerAvatar {
             } catch (e: Throwable) {
                 // An unreadable file, a format the platform can't decode, or
                 // a picture too large for memory: the monogram shows.
-                Log.w(TAG, "Caller image not decoded: $e")
+                Log.w(TAG, "Caller image not decoded: ${e.logName()}")
                 null
             }
         }

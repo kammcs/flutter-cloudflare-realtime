@@ -52,13 +52,13 @@ final class AudioOutputException implements Exception {
   /// The platform's error, for logs: in a browser a JavaScript
   /// `DOMException` (an untyped JS value under WebAssembly), on native
   /// platforms usually a `PlatformException` from `flutter_webrtc`. Don't
-  /// show it to users verbatim.
+  /// show it to users verbatim. [toString] has its type, not its text.
   final Object? cause;
 
   @override
   String toString() =>
-      'AudioOutputException(${reason.name}, deviceId: $deviceId)'
-      '${cause == null ? '' : ': $cause'}';
+      'AudioOutputException(${reason.name}, deviceId: $deviceId'
+      '${cause == null ? '' : ', cause: ${cause.runtimeType}'})';
 }
 
 /// The failure for a browser error named [name] (a `DOMException.name`).

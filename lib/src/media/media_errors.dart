@@ -10,18 +10,23 @@ import 'media_types.dart';
 ///
 /// `flutter_webrtc` reports most native failures as plain strings, so
 /// [cause] is often a `String`. Don't show it to users verbatim.
+///
+/// [toString] is log-safe: the class, [message] and the type of [cause],
+/// not the cause's text.
 sealed class MediaException implements Exception {
   const MediaException(this.message, {this.cause});
 
-  /// What went wrong, for logs.
+  /// What went wrong, for logs. Written by the package.
   final String message;
 
-  /// The underlying error, if any.
+  /// The underlying error, if any. Its text is the platform's and isn't in
+  /// [toString].
   final Object? cause;
 
   @override
   String toString() =>
-      '$runtimeType: $message${cause == null ? '' : ' ($cause)'}';
+      '$runtimeType: $message'
+      '${cause == null ? '' : ' (cause: ${cause.runtimeType})'}';
 }
 
 /// The user or the OS denied access to the camera, microphone or screen.

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
+import '../diagnostics/log.dart';
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
 import 'flutter_webrtc_media_backend.dart';
@@ -277,7 +278,7 @@ class ScreenSourcePicker {
     try {
       await _media.desktopCapturer!.updateSources(types: types);
     } catch (error) {
-      debugPrint('cloudflare_realtime: updateSources failed: $error');
+      RealtimeLog.warning('updateSources failed', error: error);
     }
   }
 

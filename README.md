@@ -137,6 +137,8 @@ The repository has two **reference brokers** that implement these rules, a Cloud
 
 `HttpBrokerClient` is the default client. Implement `BrokerClient` yourself for a different transport: it, the wire models and the low-level `SfuSession` are in `package:cloudflare_realtime/broker.dart`, which most apps never import.
 
+**Logging:** the package's log lines, and its exceptions' `toString()`, carry an error's type and code, never its text, which can echo your broker's responses; send the lines to your own logging, with the full error, through `CloudflareRealtime.logger` ([design.md §4.9](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#49-logging)).
+
 ## Signaling
 
 The SFU knows sessions and tracks, not people. Each participant announces a `ParticipantState` (its SFU session ID, the tracks it publishes with their mute and simulcast flags, and your metadata) and learns everyone else's through `Signaling`, a four-member interface you implement on any transport with presence:

@@ -337,7 +337,7 @@ final class SystemCalls: NSObject {
         if let error {
           NSLog(
             "cloudflare_realtime: CallKit refused %@: %@", "\(type(of: action))",
-            error.localizedDescription)
+            logName(error))
         }
         result(error == nil)
       }
@@ -403,10 +403,11 @@ final class SystemCalls: NSObject {
     let push = VoipPushCall(payload: payload)
     let call = push.call
     if let reason = push.endReason {
-      if let value = push.unknownEndReason {
+      if push.unknownEndReason != nil {
+        // Not the value: it comes from the push payload, which is the
+        // app's server's and is never logged (docs/design.md §4.9).
         NSLog(
-          "cloudflare_realtime: a VoIP cancel push with an unknown reason (%@); ended as remoteEnded",
-          "\(value)")
+          "cloudflare_realtime: a VoIP cancel push with an unknown reason; ended as remoteEnded")
       }
       reportCancel(call, reason: reason, provider: provider, completion: completion)
       return
@@ -440,7 +441,7 @@ final class SystemCalls: NSObject {
       DispatchQueue.main.async {
         defer { completion() }
         guard let self, let error else { return }
-        NSLog("cloudflare_realtime: CallKit refused a pushed call: %@", error.localizedDescription)
+        NSLog("cloudflare_realtime: CallKit refused a pushed call: %@", logName(error))
         self.ended(call.uuid, .failed)
       }
     }
@@ -526,7 +527,7 @@ final class SystemCalls: NSObject {
           self?.repeatReportsRefused += 1
           NSLog(
             "cloudflare_realtime: CallKit refused the ended call's repeat report: %@",
-            error.localizedDescription)
+            logName(error))
         } else {
           NSLog("cloudflare_realtime: CallKit no longer had the ended call; ended at once")
           provider.reportCall(with: call.uuid, endedAt: nil, reason: reason.callKitReason ?? .failed)

@@ -11,6 +11,7 @@ import 'dart:ui' show Offset, Rect;
 
 import 'package:flutter/foundation.dart';
 
+import '../diagnostics/log.dart';
 import 'media_types.dart';
 
 /// A display as the operating system reports it, keyed by the ID that
@@ -118,7 +119,7 @@ class ScreenGeometryLookup {
   void _warn(Object error) {
     if (_warned) return;
     _warned = true;
-    debugPrint('cloudflare_realtime: reading screen geometry failed: $error');
+    RealtimeLog.warning('reading screen geometry failed', error: error);
   }
 }
 
