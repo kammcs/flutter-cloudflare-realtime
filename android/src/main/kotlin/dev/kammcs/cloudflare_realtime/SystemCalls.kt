@@ -129,7 +129,7 @@ internal object SystemCallRegistry {
     }
 
     private fun emit(event: Map<String, Any?>) {
-        Log.i(TAG, "System call event $event")
+        Log.i(TAG, "System call event ${event["event"]}${event["id"]?.let { " ($it)" } ?: ""}")
         if (sinks.isEmpty()) {
             buffered += event
             return
@@ -166,7 +166,7 @@ internal object SystemCallRegistry {
         } catch (e: SystemCallError) {
             result.error(e.code, e.message, null)
         } catch (e: Exception) {
-            Log.w(TAG, "System calls: ${call.method} failed: $e")
+            Log.w(TAG, "System calls: ${call.method} failed: ${e.logName()}")
             result.error("failed", e.message, null)
         }
     }
@@ -192,7 +192,7 @@ internal object SystemCallRegistry {
             manager = calls
             result.success(true)
         } catch (e: Exception) {
-            Log.w(TAG, "System calls unavailable: $e")
+            Log.w(TAG, "System calls unavailable: ${e.logName()}")
             result.success(false)
         }
     }
@@ -274,7 +274,7 @@ internal object SystemCallRegistry {
                 }
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "System call $id failed: $e")
+                Log.w(TAG, "System call $id failed: ${e.logName()}")
                 if (replied) {
                     finish(entry, entry.endingReason ?: "failed")
                 } else {
@@ -331,7 +331,7 @@ internal object SystemCallRegistry {
             val outcome = try {
                 control.disconnect(DisconnectCause(cause))
             } catch (e: Exception) {
-                Log.w(TAG, "System call ${entry.id}: disconnect failed: $e")
+                Log.w(TAG, "System call ${entry.id}: disconnect failed: ${e.logName()}")
                 null
             }
             // Telecom no longer has it either way.
@@ -414,7 +414,7 @@ internal object SystemCallRegistry {
             DisconnectCause.ANSWERED_ELSEWHERE -> "answeredElsewhere"
             else -> "failed"
         }
-        Log.i(TAG, "System call ${entry.id}: Telecom disconnected it ($cause), ringing $ringing")
+        Log.i(TAG, "System call ${entry.id}: Telecom disconnected it (code ${cause.code}), ringing $ringing")
         entry.endingReason = entry.endingReason ?: reason
         finish(entry, entry.endingReason!!)
     }
@@ -499,7 +499,7 @@ internal object SystemCallRegistry {
             if (error != null && hasCalls) {
                 // Android refused the service (a start from the background):
                 // Telecom still needs the call's notification.
-                Log.w(TAG, "Call service not started for the system call: $error")
+                Log.w(TAG, "Call service not started for the system call: ${error.logName()}")
                 buildNotification(app)?.let {
                     (app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                         .notify(CallService.NOTIFICATION_ID, it)

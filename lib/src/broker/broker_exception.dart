@@ -18,7 +18,9 @@
 /// The class is sealed, so a `switch` over these cases is exhaustive. A
 /// custom `BrokerClient` throws them through their public constructors.
 ///
-/// Messages never include SDP, header values or tokens.
+/// [toString] is log-safe: the class, [operation], [statusCode] and
+/// [errorCode], never [errorDescription] (the response body's text, which a
+/// broker may fill with its own data), SDP, header values or tokens.
 sealed class BrokerException implements Exception {
   /// Creates a broker exception. For the subclasses' constructors.
   const BrokerException({
@@ -37,7 +39,9 @@ sealed class BrokerException implements Exception {
   /// The `errorCode` from the response body, if any.
   final String? errorCode;
 
-  /// The `errorDescription` from the response body, if any.
+  /// The `errorDescription` from the response body, if any. Left out of
+  /// [toString]: it is the broker's or the SFU's text, and may carry data
+  /// that shouldn't reach a log.
   final String? errorDescription;
 
   /// The class name used by [toString].
@@ -48,14 +52,8 @@ sealed class BrokerException implements Exception {
     final parts = <String>[operation];
     if (statusCode != null) parts.add('status: $statusCode');
     if (errorCode != null) parts.add('errorCode: $errorCode');
-    if (errorDescription != null) {
-      parts.add('errorDescription: ${_truncate(errorDescription!)}');
-    }
     return '$_kind(${parts.join(', ')})';
   }
-
-  static String _truncate(String s) =>
-      s.length <= 200 ? s : '${s.substring(0, 200)}…';
 }
 
 /// An error response that the other [BrokerException]s don't name: a

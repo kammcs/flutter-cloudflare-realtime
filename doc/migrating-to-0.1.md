@@ -136,6 +136,18 @@ Unchanged on purpose: streams of things that happen rather than of state (`Room.
 
 `e.runtimeType == BrokerException` is never true any more; use `is` or a `switch`.
 
+**`toString()` no longer includes text from outside the package** (`docs/design.md` §4.9), so that an app printing an exception doesn't log a broker's response body. The fields are unchanged; read them if you matched on the string:
+
+| Exception | No longer in `toString()` | Still there as |
+|---|---|---|
+| `BrokerException` and its subtypes | `errorDescription` | `e.errorDescription` |
+| `SfuTrackException`, `SfuRequestException`, `SfuDataChannelException` | `errorDescription` | `e.errorDescription` |
+| `MediaException` and its subtypes | the cause's text (its type is shown) | `e.cause` |
+| `AudioOutputException` | the cause's text (its type is shown) | `e.cause` |
+| `SystemCallException` | the platform's message | `e.message` |
+
+The package's own log lines changed the same way: they show an error's type and code, and `CloudflareRealtime.logger` receives the full error.
+
 ## 5. Class modifiers
 
 These classes are now `final`: they can't be extended or implemented outside the package. Build them with their constructors (they all have public ones, most of them `const`) instead of subclassing or mocking them.

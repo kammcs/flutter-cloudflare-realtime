@@ -474,7 +474,7 @@ class CloudflareRealtimePlugin :
                 .getMethod("setAudioSessionManagementEnabled", Boolean::class.javaPrimitiveType)
                 .invoke(null, false)
         } catch (e: Exception) {
-            Log.w("cloudflare_realtime", "Could not turn off flutter_webrtc's audio management: $e")
+            Log.w("cloudflare_realtime", "Could not turn off flutter_webrtc's audio management: ${e.logName()}")
         }
     }
 }

@@ -270,7 +270,7 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       }
       return true
     } catch {
-      NSLog("cloudflare_realtime: selecting audio route %@ failed: %@", id, "\(error)")
+      NSLog("cloudflare_realtime: selecting audio route %@ failed: %@", id, logName(error))
       return false
     }
   }
@@ -289,7 +289,7 @@ public class CloudflareRealtimePlugin: NSObject, FlutterPlugin, FlutterStreamHan
       try session.setActive(true)
       return true
     } catch {
-      NSLog("cloudflare_realtime: resuming the audio session failed: %@", "\(error)")
+      NSLog("cloudflare_realtime: resuming the audio session failed: %@", logName(error))
       return false
     }
   }

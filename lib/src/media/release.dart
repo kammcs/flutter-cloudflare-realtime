@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+
+import '../diagnostics/log.dart';
 
 /// Stops every track in [stream], then disposes the stream.
 ///
@@ -12,12 +13,12 @@ Future<void> releaseStream(MediaStream stream) async {
     try {
       await track.stop();
     } catch (error) {
-      debugPrint('cloudflare_realtime: stopping a track failed: $error');
+      RealtimeLog.warning('stopping a track failed', error: error);
     }
   }
   try {
     await stream.dispose();
   } catch (error) {
-    debugPrint('cloudflare_realtime: disposing a stream failed: $error');
+    RealtimeLog.warning('disposing a stream failed', error: error);
   }
 }

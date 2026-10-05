@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import '../audio/call_audio.dart';
 import '../audio/call_audio_backend.dart' show AudioInterruptionSignal;
 import '../audio/call_interruption.dart';
+import '../diagnostics/log.dart';
 import '../session/track_name.dart' show generateTrackName;
 import '../util/coalescing_runner.dart';
 import '../util/state_stream.dart';
@@ -122,7 +123,7 @@ class SystemCalls {
     try {
       ok = await _platform.configure(options);
     } catch (error) {
-      debugPrint('cloudflare_realtime: system calls unavailable: $error');
+      RealtimeLog.warning('system calls unavailable', error: error);
     }
     _supported = ok && _platform.isSystem;
     final backend = _supported || !_platform.isSystem
@@ -139,7 +140,7 @@ class SystemCalls {
         }
       }
     } catch (error) {
-      debugPrint('cloudflare_realtime: listing system calls failed: $error');
+      RealtimeLog.warning('listing system calls failed', error: error);
     }
     return _supported;
   }
@@ -389,7 +390,7 @@ class SystemCalls {
     try {
       await audio.useSystemCall(next);
     } catch (error) {
-      debugPrint('cloudflare_realtime: handing call audio over failed: $error');
+      RealtimeLog.warning('handing call audio over failed', error: error);
     }
   }
 

@@ -90,7 +90,7 @@ internal class CallBackground(private val context: Context) :
         if (error == null) {
             result.success(true)
         } else {
-            Log.w(TAG, "Call service failed to start: $error")
+            Log.w(TAG, "Call service failed to start: ${error.logName()}")
             result.error("call_background", "Could not start the call service: ${error.message}", null)
         }
     }

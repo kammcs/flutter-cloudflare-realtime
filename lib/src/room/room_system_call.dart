@@ -145,7 +145,7 @@ class _RoomSystemCall {
           : SystemCallEndReason.local;
       unawaited(
         call.end(reason).catchError((Object error) {
-          debugPrint('cloudflare_realtime: ending the system call: $error');
+          RealtimeLog.warning('ending the system call failed', error: error);
         }),
       );
     }

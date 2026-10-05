@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show
         MediaStreamTrack,
@@ -10,6 +9,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart'
         StatsReport;
 
 import '../broker/models/common.dart';
+import '../diagnostics/log.dart';
 import '../util/native_negotiation.dart';
 import 'peer_connection.dart';
 import 'publish_options.dart';
@@ -71,9 +71,8 @@ class NegotiationGuard implements PeerConnection {
         if (onLate != null) {
           unawaited(future.then(onLate, onError: (Object _) {}));
         }
-        debugPrint(
-          'cloudflare_realtime: $name did not complete within '
-          '${bound.inMilliseconds} ms',
+        RealtimeLog.warning(
+          '$name did not complete within ${bound.inMilliseconds} ms',
         );
         throw onTimeout?.call(name) ?? TimeoutException(name, bound);
       },
@@ -185,9 +184,9 @@ class NegotiationGuard implements PeerConnection {
     if (limit == null) return closing;
     return closing.timeout(
       limit,
-      onTimeout: () => debugPrint(
-        'cloudflare_realtime: closing the peer connection did not complete '
-        'within ${limit.inMilliseconds} ms',
+      onTimeout: () => RealtimeLog.warning(
+        'closing the peer connection did not complete within '
+        '${limit.inMilliseconds} ms',
       ),
     );
   }

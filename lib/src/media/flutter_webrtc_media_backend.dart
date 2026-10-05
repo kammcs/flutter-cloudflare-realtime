@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
+import '../diagnostics/log.dart';
 import '../util/native_negotiation.dart';
 import 'media_backend.dart';
 import 'media_types.dart';
@@ -195,7 +196,10 @@ class AndroidScreenCaptureService implements ScreenCaptureServiceBackend {
       await _methods.invokeMethod<bool>('prepare');
     } catch (error) {
       // The notification permission is a nicety; the share works without.
-      debugPrint('cloudflare_realtime: notification permission: $error');
+      RealtimeLog.warning(
+        'asking for the notification permission failed',
+        error: error,
+      );
     }
     // Keeps the system's choice of a single app or the entire screen.
     return await rtc.Helper.requestCapturePermission();
@@ -499,7 +503,7 @@ abstract final class _DeviceChangeHub {
         _controller?.add(null);
       };
     } catch (error) {
-      debugPrint('cloudflare_realtime: cannot watch device changes: $error');
+      RealtimeLog.warning('cannot watch device changes', error: error);
     }
   }
 

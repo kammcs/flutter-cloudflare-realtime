@@ -85,15 +85,15 @@ void main() {
     );
   });
 
-  test('toString names the reason, the device and the cause', () {
+  test('toString names the reason, the device and the cause type', () {
     expect(
       const AudioOutputException(
         AudioOutputFailure.needsUserGesture,
         deviceId: 'speaker-2',
         cause: 'NotAllowedError: no gesture',
       ).toString(),
-      'AudioOutputException(needsUserGesture, deviceId: speaker-2): '
-      'NotAllowedError: no gesture',
+      'AudioOutputException(needsUserGesture, deviceId: speaker-2, '
+      'cause: String)',
     );
     expect(
       const AudioOutputException(

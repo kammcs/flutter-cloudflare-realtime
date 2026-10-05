@@ -7,8 +7,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:clock/clock.dart';
-import 'package:flutter/foundation.dart'
-    show debugPrint, immutable, kIsWeb, mapEquals;
+import 'package:flutter/foundation.dart' show immutable, kIsWeb, mapEquals;
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_webrtc/flutter_webrtc.dart'
     show MediaStream, MediaStreamTrack, RTCPeerConnectionState, StatsReport;
@@ -23,6 +22,7 @@ import '../broker/broker_client.dart';
 import '../calls/system_call_types.dart';
 import '../calls/system_calls.dart';
 import '../data/data_channel_manager.dart';
+import '../diagnostics/log.dart';
 import '../media/constraints.dart';
 import '../media/device_media_source.dart';
 import '../media/local_media_source.dart';

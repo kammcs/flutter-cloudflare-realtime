@@ -134,7 +134,7 @@ class CallService : Service() {
             try {
                 context.stopService(Intent(context, CallService::class.java))
             } catch (e: Exception) {
-                Log.w("cloudflare_realtime", "Could not stop the call service: $e")
+                Log.w("cloudflare_realtime", "Could not stop the call service: ${e.logName()}")
             }
         }
 

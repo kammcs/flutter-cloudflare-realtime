@@ -1,7 +1,7 @@
 import 'dart:ffi';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart';
+import '../diagnostics/log.dart';
 
 /// The endpoint IDs of Windows' default communications microphone
 /// (`input`) and speaker (`output`), or `null` when this isn't Windows or
@@ -21,9 +21,9 @@ import 'package:flutter/foundation.dart';
   try {
     return _CoreAudio().readDefaults();
   } catch (error) {
-    debugPrint(
-      'cloudflare_realtime: reading the default audio devices '
-      'failed: $error',
+    RealtimeLog.warning(
+      'reading the default audio devices failed',
+      error: error,
     );
     return null;
   }

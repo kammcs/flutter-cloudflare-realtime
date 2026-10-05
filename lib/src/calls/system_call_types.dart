@@ -145,12 +145,12 @@ final class SystemCallException implements Exception {
   /// What went wrong.
   final SystemCallErrorCode code;
 
-  /// The platform's message, if any.
+  /// The platform's message, if any. Not in [toString], which has only the
+  /// [code]: the platform's text isn't the package's to log.
   final String? message;
 
   @override
-  String toString() =>
-      'SystemCallException(${code.name}${message == null ? '' : ': $message'})';
+  String toString() => 'SystemCallException(${code.name})';
 }
 
 /// How the system presents this app's calls ([SystemCalls.configure]).
