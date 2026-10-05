@@ -210,17 +210,23 @@ void main() {
       );
       await _drive(tester, camera.enable());
       await _settle(tester);
-      var stream = camera.track!.stream;
-      expect(find.text('video ${stream.id} cover mirrored'), findsOneWidget);
+      final first = camera.track!.stream;
+      expect(find.text('video ${first.id} cover mirrored'), findsOneWidget);
 
       await _drive(tester, camera.switchCamera());
       await _settle(tester);
-      stream = camera.track!.stream;
+      final stream = camera.track!.stream;
       expect(camera.track!.device, back);
       expect(find.text('video ${stream.id} cover'), findsOneWidget);
+      // The renderer moves to the new track in one call, with no detach.
+      expect(log, [
+        'initialize',
+        'setStream(${first.id})',
+        'setStream(${stream.id})',
+      ]);
 
       await tester.pumpWidget(const SizedBox());
-      await _settle(tester);
+      await _afterGrace(tester);
       await _drive(tester, camera.dispose());
     });
 
@@ -255,6 +261,8 @@ void main() {
 
         await tester.pumpWidget(const SizedBox());
         await _settle(tester);
+        expect(log.last, isNot('dispose'), reason: 'kept for a hand-over');
+        await _afterGrace(tester);
         expect(log.last, 'dispose');
         await _drive(tester, camera.dispose());
       },
@@ -287,6 +295,210 @@ void main() {
       await _settle(tester);
       expect(find.text('off'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
+      await _drive(tester, camera.dispose());
+    });
+  });
+
+  // Each native renderer call blocks the UI thread on iOS and macOS
+  // (docs/design.md §4.3, Rendering): these pin how many each user action
+  // makes.
+  group('renderer calls', () {
+    testWidgets('camera off and on keeps the renderer and attaches only the '
+        'new track', (tester) async {
+      final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      await _drive(tester, camera.enable());
+      await tester.pumpWidget(
+        _frame(ParticipantVideoView.local(camera, rendererFactory: factory)),
+      );
+      await _settle(tester);
+      final expected = ['initialize', 'setStream(${camera.track!.stream.id})'];
+      expect(log, expected);
+
+      for (var i = 0; i < 3; i++) {
+        await _drive(tester, camera.disable());
+        await _settle(tester);
+        expect(find.byIcon(Icons.videocam_off), findsOneWidget);
+        await _drive(tester, camera.enable());
+        await _settle(tester);
+        final stream = camera.track!.stream;
+        expect(find.text('video ${stream.id} cover mirrored'), findsOneWidget);
+        expected.addAll(['setStream(null)', 'setStream(${stream.id})']);
+        expect(log, expected);
+      }
+
+      await _drive(tester, camera.disable());
+      await tester.pumpWidget(const SizedBox());
+      await _settle(tester);
+      expect(log.last, 'dispose', reason: 'nothing shown: released at once');
+      await _drive(tester, camera.dispose());
+    });
+
+    testWidgets('a layout change keeps the renderer, whether the view moves '
+        '(GlobalKey) or Flutter re-creates it', (tester) async {
+      final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      await _drive(tester, camera.enable());
+      final stream = camera.track!.stream;
+      final key = GlobalKey();
+      // A gallery cell, then a stage: with the key the view moves; without
+      // it, Flutter builds a new view and the old one goes.
+      Widget layout({required bool stage, required bool keyed}) {
+        final view = ParticipantVideoView.local(
+          camera,
+          key: keyed ? key : null,
+          rendererFactory: factory,
+        );
+        return Directionality(
+          textDirection: TextDirection.ltr,
+          child: stage
+              ? Column(children: [Expanded(child: view)])
+              : Row(children: [SizedBox(width: 200, child: view)]),
+        );
+      }
+
+      await tester.pumpWidget(layout(stage: false, keyed: true));
+      await _settle(tester);
+      for (final keyed in [true, false]) {
+        for (var i = 0; i < 3; i++) {
+          for (final stage in [true, false]) {
+            await tester.pumpWidget(layout(stage: stage, keyed: keyed));
+            // In the very frame: no placeholder in between, no blink.
+            expect(find.text('video ${stream.id} cover mirrored'), findsOne);
+            await _settle(tester);
+            expect(find.text('video ${stream.id} cover mirrored'), findsOne);
+          }
+        }
+      }
+      expect(log, ['initialize', 'setStream(${stream.id})']);
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
+      expect(log, ['initialize', 'setStream(${stream.id})', 'dispose']);
+      await _drive(tester, camera.dispose());
+    });
+
+    testWidgets('a view that moves while a new view of its stream takes its '
+        'renderer gets one of its own', (tester) async {
+      final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      await _drive(tester, camera.enable());
+      final id = camera.track!.stream.id;
+      final key = GlobalKey();
+      ParticipantVideoView view({Key? key}) => ParticipantVideoView.local(
+        camera,
+        key: key,
+        rendererFactory: factory,
+      );
+      await tester.pumpWidget(
+        _frame(
+          Column(
+            children: [Expanded(child: view(key: key))],
+          ),
+        ),
+      );
+      await _settle(tester);
+      expect(log, ['initialize', 'setStream($id)']);
+
+      // In one frame: the keyed view moves under a new parent, and an
+      // unkeyed view of the same stream is built where it was.
+      await tester.pumpWidget(
+        _frame(
+          Column(
+            children: [
+              Expanded(child: view()),
+              Expanded(
+                child: Center(child: view(key: key)),
+              ),
+            ],
+          ),
+        ),
+      );
+      await _settle(tester);
+      expect(find.text('video $id cover mirrored'), findsNWidgets(2));
+      expect(log, [
+        'initialize',
+        'setStream($id)',
+        'initialize',
+        'setStream($id)',
+      ]);
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
+      expect(log.where((l) => l == 'dispose'), hasLength(2));
+      await _drive(tester, camera.dispose());
+    });
+
+    testWidgets('a view given another source moves its renderer to that '
+        "source's track in one call", (tester) async {
+      final a = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      final b = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      await _drive(tester, a.enable());
+      await _drive(tester, b.enable());
+      for (final source in [a, b]) {
+        await tester.pumpWidget(
+          _frame(ParticipantVideoView.local(source, rendererFactory: factory)),
+        );
+        await _settle(tester);
+      }
+      expect(log, [
+        'initialize',
+        'setStream(${a.track!.stream.id})',
+        'setStream(${b.track!.stream.id})',
+      ]);
+      // To a source with nothing to show, it detaches.
+      await _drive(tester, a.disable());
+      await tester.pumpWidget(
+        _frame(ParticipantVideoView.local(a, rendererFactory: factory)),
+      );
+      await _settle(tester);
+      expect(log.last, 'setStream(null)');
+      expect(find.byIcon(Icons.videocam_off), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await _settle(tester);
+      await _drive(tester, a.dispose());
+      await _drive(tester, b.dispose());
+    });
+
+    testWidgets('two views on screen at once have a renderer each; the '
+        'hand-over ends after 500 ms', (tester) async {
+      final camera = CameraSource(backend: FakeMediaBackend(devices: [cam1]));
+      await _drive(tester, camera.enable());
+      final id = camera.track!.stream.id;
+      Widget views(int count) => Directionality(
+        textDirection: TextDirection.ltr,
+        child: Column(
+          children: [
+            for (var i = 0; i < count; i++)
+              Expanded(
+                child: ParticipantVideoView.local(
+                  camera,
+                  key: ValueKey(i),
+                  rendererFactory: factory,
+                ),
+              ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(views(2));
+      await _settle(tester);
+      expect(log, [
+        'initialize',
+        'setStream($id)',
+        'initialize',
+        'setStream($id)',
+      ]);
+      log.clear();
+
+      await tester.pumpWidget(views(1));
+      await _afterGrace(tester);
+      expect(log, ['dispose'], reason: 'nobody took it over');
+      // A view that comes later gets a new renderer.
+      log.clear();
+      await tester.pumpWidget(views(2));
+      await _settle(tester);
+      expect(log, ['initialize', 'setStream($id)']);
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
       await _drive(tester, camera.dispose());
     });
   });
@@ -359,7 +571,7 @@ void main() {
           }
         }
         await tester.pumpWidget(const SizedBox());
-        await _settle(tester);
+        await _afterGrace(tester);
         await _drive(tester, camera.dispose());
       });
     }
@@ -541,6 +753,43 @@ void main() {
       await tester.pumpWidget(const SizedBox());
       await _afterGrace(tester);
       expect(cam.isSubscribed, isFalse);
+      await tearDownRoom(tester);
+    });
+
+    testWidgets('a view re-created by a layout change keeps the pull and the '
+        'renderer', (tester) async {
+      final cam = await setUpRoom(tester);
+      Widget layout({required bool stage}) {
+        final view = ParticipantVideoView.remote(
+          cam,
+          rendererFactory: factory,
+          layerReporter: _RecordingReporter(),
+        );
+        return Directionality(
+          textDirection: TextDirection.ltr,
+          child: stage
+              ? Column(children: [Expanded(child: view)])
+              : Row(children: [SizedBox(width: 200, child: view)]),
+        );
+      }
+
+      await tester.pumpWidget(layout(stage: false));
+      await _settle(tester);
+      final stream = cam.track!.stream;
+      for (var i = 0; i < 3; i++) {
+        for (final stage in [true, false]) {
+          await tester.pumpWidget(layout(stage: stage));
+          expect(find.text('video ${stream.id} cover'), findsOneWidget);
+          await _settle(tester);
+        }
+      }
+      expect(find.text('video ${stream.id} cover'), findsOneWidget);
+      expect(h.pullsOf(bob), hasLength(1));
+      expect(log, ['initialize', 'setStream(${stream.id})']);
+
+      await tester.pumpWidget(const SizedBox());
+      await _afterGrace(tester);
+      expect(log.last, 'dispose');
       await tearDownRoom(tester);
     });
 

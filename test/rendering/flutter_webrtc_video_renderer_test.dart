@@ -70,18 +70,77 @@ void main() {
     );
   });
 
-  test('releases a renderer that never showed a stream at once', () async {
+  test('releases a renderer that never showed a stream at once, with no '
+      'detach', () async {
     final renderer = FlutterWebrtcVideoRenderer();
     await renderer.initialize();
+    await renderer.setStream(null);
+    final start = clock.elapsed;
+    await renderer.dispose();
+    expect(rendererCalls(), ['videoRendererDispose']);
+    final release = calls.firstWhere((c) => c.$1 == 'videoRendererDispose');
+    expect(release.$3 - start, lessThan(const Duration(milliseconds: 200)));
+  });
+
+  // Each videoRendererSetSrcObject blocks the platform thread on Darwin
+  // (docs/design.md §4.3, Rendering).
+  test('sets nothing the native renderer already has', () async {
+    final renderer = FlutterWebrtcVideoRenderer();
+    await renderer.initialize();
+    final stream = _FakeStream();
+    await renderer.setStream(stream);
+    await renderer.setStream(stream);
+    await pumpEventQueue();
+    expect(rendererCalls(), ['videoRendererSetSrcObject']);
+
+    await renderer.setStream(null);
+    await renderer.setStream(null);
+    expect(rendererCalls(), [
+      'videoRendererSetSrcObject',
+      'videoRendererSetSrcObject',
+    ]);
+    // Detached already: dispose doesn't detach again.
     await renderer.dispose();
     expect(rendererCalls(), [
       'videoRendererSetSrcObject',
+      'videoRendererSetSrcObject',
       'videoRendererDispose',
     ]);
-    final detach = calls.firstWhere((c) => c.$1 == 'videoRendererSetSrcObject');
-    final release = calls.firstWhere((c) => c.$1 == 'videoRendererDispose');
-    expect(release.$3 - detach.$3, lessThan(const Duration(milliseconds: 200)));
   });
+
+  test(
+    'after a detach, dispose waits only for the rest of the delay',
+    () async {
+      final renderer = FlutterWebrtcVideoRenderer();
+      await renderer.initialize();
+      await renderer.setStream(_FakeStream());
+      await renderer.setStream(null);
+      final detach = calls.lastWhere(
+        (c) => c.$1 == 'videoRendererSetSrcObject',
+      );
+      await renderer.dispose();
+      final release = calls.lastWhere((c) => c.$1 == 'videoRendererDispose');
+      expect(
+        release.$3 - detach.$3,
+        greaterThanOrEqualTo(const Duration(milliseconds: 200)),
+        reason: "detached just now: the last frames' blocks may be queued",
+      );
+
+      final other = FlutterWebrtcVideoRenderer();
+      await other.initialize();
+      await other.setStream(_FakeStream());
+      await other.setStream(null);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final start = clock.elapsed;
+      await other.dispose();
+      final released = calls.lastWhere((c) => c.$1 == 'videoRendererDispose');
+      expect(
+        released.$3 - start,
+        lessThan(const Duration(milliseconds: 200)),
+        reason: 'detached long enough ago',
+      );
+    },
+  );
 
   test('releases an uninitialized renderer without native calls', () async {
     await FlutterWebrtcVideoRenderer().dispose();
