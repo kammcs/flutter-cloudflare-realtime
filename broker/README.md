@@ -32,7 +32,7 @@ broker/
 - Paths mirror the SFU API under the broker's base URL: `POST sessions/new`, `POST sessions/{id}/tracks/new`, `PUT …/tracks/update`, `PUT …/renegotiate`, `PUT …/tracks/close`, `GET sessions/{id}`, `POST …/datachannels/establish`, `POST …/datachannels/new`, `PUT …/datachannels/update`, `PUT …/datachannels/close`, and `POST generate-ice-servers` (`GET` is accepted too, for partytracks clients).
 - Every request carries the app's auth headers and `X-Realtime-Room: <roomId>`.
 - `sessions/new` may return `X-Realtime-Session-Token`; the client echoes it on later calls for that session.
-- Errors: `401` unauthenticated; `400` for a missing room header or a malformed body; `403` with `{"errorCode":"forbidden","errorDescription":"…"}` when the caller isn't in the room, doesn't own the session, or names a session from another room. Otherwise the SFU's status and body pass through unchanged (including `410` / `session_error`).
+- Errors: `401` unauthenticated; `400` for a missing room header or a malformed body; `403` with `{"errorCode":"forbidden","errorDescription":"…"}` when the caller isn't in the room, doesn't own the session, names a session from another room, or is refused by your optional DataChannel rules. Otherwise the SFU's status and body pass through unchanged (including `410` / `session_error`).
 - `generate-ice-servers` returns `{"iceServers":[…]}`: Cloudflare TURN credentials when a TURN key is configured, otherwise `stun:stun.cloudflare.com:3478` only. TURN URLs on port 53 are dropped (browsers block that port).
 
 ## Security model
@@ -42,13 +42,57 @@ The core enforces these rules on every request. Keep them if you write your own 
 1. **Authenticate the caller** with your app's credential (`authenticate` hook). No credential, no call: `401`.
 2. **Authorize the room.** The client names the room in `X-Realtime-Room`; the broker asks your `isRoomMember(caller, roomId)` hook. `403` otherwise. Never trust a room list from the client.
 3. **Bind sessions to their creator.** `sessions/new` records `{roomId, ownerId, createdAt}` in the `SessionStore`. Every call on `sessions/{id}` requires that the caller created `{id}` for the same room. With signed tokens enabled, the token proves this instead of a store read.
-4. **Restrict pulls to the same room.** The broker parses every JSON body and finds each `sessionId` it names, at any depth (`tracks[]`, `dataChannels[]`, `dataChannel`), on every route. Each one must be a session the broker created **for the caller's room**, or the request is refused with `403`. This covers `tracks/new` pulls, `tracks/update` transceiver reuse, and DataChannel subscriptions. A `remote` entry without a `sessionId` in `tracks/new` or `datachannels/new` is a `400`. The broker forwards its own re-serialization of the parsed body, so duplicate keys can't smuggle a different value past the check, and look-alike keys (`SessionId`) are refused.
+4. **Restrict pulls to the same room.** The broker parses every JSON body and finds each `sessionId` it names, at any depth (`tracks[]`, `dataChannels[]`, `dataChannel`), on every route. Each one must be a session the broker created **for the caller's room**, or the request is refused with `403`. This covers `tracks/new` pulls, `tracks/update` transceiver reuse, and DataChannel subscriptions. A `remote` entry without a `sessionId` in `tracks/new` or `datachannels/new` is a `400`. The broker forwards its own re-serialization of the parsed body, so duplicate keys can't smuggle a different value past the check, and look-alike keys are refused with `400`: any key that folds to `sessionId`, `tracks`, `dataChannels`, `dataChannel`, `location`, `dataChannelName`, `canReply` or `id` under case-insensitive matching (including Go-style Unicode folding, where `ſ` matches `s` and the Kelvin sign `K` matches `k`) without being spelled exactly so, such as `SessionId` or `ſessionId`.
 5. **Forward only what Cloudflare needs.** Upstream requests carry exactly `Authorization: Bearer <App Secret>` and, with a body, `Content-Type: application/json`. Cookies, the client's `Authorization`, `X-Realtime-*`, forwarding and hop-by-hop headers never reach Cloudflare. Responses keep only `Content-Type` (plus CORS). The core logs nothing itself; its `onError` hook only receives a route name and a sanitized message, never the App Secret, SDP, tokens or headers. For a failed upstream call it also gets the underlying error's `code` or `name` chain (`cause`, for example `TypeError: ENOTFOUND` or `TypeError: UND_ERR_CONNECT_TIMEOUT`; never the error's message, which can carry the URL) and how long the call ran (`elapsedMs`); `formatBrokerError` turns that into one log line.
 
 Also:
 - **CORS** (Flutter Web): list your web origins. A request with an `Origin` that isn't listed is refused, and without any list every browser request is refused. Native clients send no `Origin` and are unaffected. The broker never uses cookies, so it doesn't send `Access-Control-Allow-Credentials`. `X-Realtime-Session-Token` is exposed to browsers.
 - **Session IDs** in paths must be URL-safe (`[A-Za-z0-9_-]`, up to 128 characters). Bodies are limited to 1 MiB.
 - **`generate-ice-servers`** also requires authentication and room membership, so TURN credentials only go to your users.
+
+### Optional: DataChannel rules
+
+The SFU forwards a published DataChannel to every subscriber that names it, and lets anyone publish under any name. Rule 4 keeps that inside the room. If your app reserves channel names for certain participants, set `authorizeDataChannels` in `data_channels.ts` (`cloudflare-worker/src/` or `supabase/functions/realtime-broker/`). It is unset by default, which forwards every DataChannel request that passes rules 1 to 4.
+
+```ts
+authorizeDataChannels?: (
+  caller: C,                     // from your authenticate hook
+  roomId: string,                // X-Realtime-Room, already authorized
+  sessionId: string,             // the session in the path, owned by caller
+  route: "datachannels/establish" | "datachannels/new" | "datachannels/update" | "datachannels/close",
+  entries: readonly DataChannelEntry[], // { location?, dataChannelName?, sessionId?, canReply?, id? }
+) => Promise<boolean> | boolean;
+```
+
+- It runs on every `datachannels/*` request, **after** rules 1 to 4 pass, just before the request is forwarded. A request that fails authentication, room membership, session ownership or the same-room check never reaches it.
+- `entries` are the body's `dataChannel` object and `dataChannels[]` entries, copied (and frozen) from the same parsed value the broker forwards, so the hook approves exactly what Cloudflare receives. A field of the wrong type is a `400` first. `datachannels/close` entries carry only `id`; a request without a body has no entries.
+- Return `true` to forward. Anything else is `403 forbidden`. A thrown error is `500 internal_error`; its text never reaches the response or `onError`.
+- It decides on requests, not on channels that are already open: revoking a grant doesn't cut off an existing subscription.
+
+Example: channels named `pair:<userA>:<userB>` may only be published or subscribed to by those two users, and only while your app grants the pair. Decide on the name whatever the `location`, so a reserved name is reserved both ways.
+
+```ts
+// The Worker's path; the Supabase function imports "../_shared/broker-core/mod.ts".
+import type { BrokerConfig, Caller } from "../../supabase/functions/_shared/broker-core/mod.ts";
+
+const PAIR_PREFIX = "pair:";
+
+export const authorizeDataChannels: BrokerConfig<Caller>["authorizeDataChannels"] = async (
+  caller,
+  roomId,
+  _sessionId,
+  _route,
+  entries,
+) => {
+  for (const { dataChannelName } of entries) {
+    if (dataChannelName === undefined || !dataChannelName.startsWith(PAIR_PREFIX)) continue;
+    const ids = dataChannelName.slice(PAIR_PREFIX.length).split(":");
+    if (ids.length !== 2 || !ids.includes(caller.id)) return false;
+    if (!(await isPairGranted(roomId, ids[0]!, ids[1]!))) return false; // your own lookup
+  }
+  return true;
+};
+```
 
 ### Signed session tokens: when to use them
 
@@ -66,6 +110,7 @@ With the reference stores (Durable Objects, Postgres), both strongly consistent,
 1. **Authentication.** The Worker verifies a JWT from your identity provider (`sub` becomes the caller ID). The Supabase function verifies the caller's Supabase access token. Your Flutter app's broker `headers` provider sends that token as `Authorization: Bearer …`.
 2. **Room membership.** Replace the stub in `cloudflare-worker/src/room_membership.ts` or `supabase/functions/realtime-broker/room_membership.ts`. It gets the authenticated caller and the room ID and returns whether the caller may join. Fail closed.
 3. **Signaling.** The broker doesn't know who is in a room right now; your `Signaling` implementation tells peers each other's `sessionId`s.
+4. **DataChannel rules (optional).** Only if your app reserves DataChannel names: set `authorizeDataChannels` in `data_channels.ts` (see [Optional: DataChannel rules](#optional-datachannel-rules)).
 
 ## Cloudflare prerequisites
 

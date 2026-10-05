@@ -23,6 +23,8 @@ export type {
   BrokerErrorInfo,
   Caller,
   CorsConfig,
+  DataChannelEntry,
+  DataChannelRouteName,
   SessionRecord,
   SessionStore,
   SessionTokenConfig,

@@ -14,15 +14,18 @@
  *    body must be a session the broker created for the caller's room.
  * 5. Forward only what Cloudflare needs (the App Secret as `Authorization`,
  *    and `Content-Type`), and never log secrets, SDP, tokens or headers.
+ *
+ * Between rules 4 and 5, the optional `config.authorizeDataChannels` hook
+ * decides on `datachannels/*` requests from the DataChannels they name.
  */
 
-import { BadBodyError, EMPTY_BODY, type InspectedBody, inspectBody } from "./body.ts";
+import { BadBodyError, dataChannelEntries, EMPTY_BODY, type InspectedBody, inspectBody } from "./body.ts";
 import { corsResponseHeaders, isOriginAllowed, preflightResponse } from "./cors.ts";
 import { errorCause } from "./diagnostics.ts";
 import { generateIceServers, STUN_ONLY, TurnError } from "./ice.ts";
-import { matchRoute, type Route } from "./routes.ts";
+import { matchRoute, type Route, type RouteName } from "./routes.ts";
 import { MIN_SESSION_TOKEN_SECRET_LENGTH, signSessionToken, verifySessionToken } from "./session_token.ts";
-import type { BrokerConfig, Caller, SessionStore } from "./types.ts";
+import type { BrokerConfig, Caller, DataChannelEntry, DataChannelRouteName, SessionStore } from "./types.ts";
 
 /** Request header naming the room. */
 export const ROOM_HEADER = "X-Realtime-Room";
@@ -38,6 +41,17 @@ export type BrokerHandler = (request: Request) => Promise<Response>;
 
 /** Thrown when the store fails; mapped to 500. */
 class StoreError extends Error {}
+
+const DATA_CHANNEL_ROUTES: ReadonlySet<RouteName> = new Set<DataChannelRouteName>([
+  "datachannels/establish",
+  "datachannels/new",
+  "datachannels/update",
+  "datachannels/close",
+]);
+
+function isDataChannelRoute(name: RouteName): name is DataChannelRouteName {
+  return DATA_CHANNEL_ROUTES.has(name);
+}
 
 function errorBody(errorCode: string, errorDescription: string): string {
   return JSON.stringify({ errorCode, errorDescription });
@@ -195,6 +209,29 @@ export function createBrokerHandler<C extends Caller>(config: BrokerConfig<C>): 
         if (!record || record.roomId !== roomId) {
           return fail(403, "forbidden", "session is not in this room");
         }
+      }
+
+      // Optional: the app's own DataChannel rules, on the entries parsed from
+      // the same value that is forwarded below.
+      if (config.authorizeDataChannels && isDataChannelRoute(route.name)) {
+        const sessionId = route.sessionId;
+        // Every DataChannel route is a session route; fail closed if not.
+        if (sessionId === undefined) throw new Error("DataChannel route without a session");
+        let entries: readonly DataChannelEntry[];
+        try {
+          entries = dataChannelEntries(body);
+        } catch (e) {
+          if (e instanceof BadBodyError) return fail(400, "bad_request", e.message);
+          throw e;
+        }
+        let allowed: boolean;
+        try {
+          allowed = (await config.authorizeDataChannels(caller, roomId, sessionId, route.name, entries)) === true;
+        } catch {
+          report(route.name, "authorizeDataChannels failed");
+          return fail(500, "internal_error", "internal error");
+        }
+        if (!allowed) return fail(403, "forbidden", "DataChannel request not allowed");
       }
 
       // Rule 5: forward with only the headers Cloudflare needs.

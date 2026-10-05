@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSupabaseAuthenticator, type GetUser } from "../supabase/functions/realtime-broker/auth.ts";
+import { authorizeDataChannels } from "../supabase/functions/realtime-broker/data_channels.ts";
 import {
   PostgresSessionStore,
   type SessionRow,
@@ -34,6 +35,12 @@ describe("Supabase authenticator", () => {
 describe("Supabase room membership stub", () => {
   it("fails closed", async () => {
     expect(await isRoomMember({ id: "user-1" }, "room-a")).toBe(false);
+  });
+});
+
+describe("Supabase DataChannel rules", () => {
+  it("are unset by default", () => {
+    expect(authorizeDataChannels).toBeUndefined();
   });
 });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  type Caller,
   createBrokerHandler,
+  type DataChannelEntry,
+  type DataChannelRouteName,
   errorCause,
   formatBrokerError,
   InMemorySessionStore,
@@ -360,6 +363,49 @@ describe("rule 4: same-room pulls", () => {
       req("POST", `/sessions/${alice}/tracks/new`, { user: "alice", room: "room-a", body: { Tracks: [] } }),
     );
     expect(res.status).toBe(400);
+    expect(h.calls.length).toBe(4); // only the four sessions/new
+  });
+
+  it("rejects Unicode look-alikes that case-folding decoders match (ſ for s, the Kelvin sign for k)", async () => {
+    const { h, alice, carol } = await setup();
+    const before = h.calls.length;
+    const path = `/sessions/${alice}/tracks/new`;
+    for (const rawBody of [
+      `{"tracks":[{"location":"remote","ſessionId":"${carol}","trackName":"cam"}]}`,
+      `{"tracKs":[{"location":"remote","sessionId":"${carol}","trackName":"cam"}]}`,
+      `{"tracKS":[]}`,
+    ]) {
+      const res = await h.handler(req("POST", path, { user: "alice", room: "room-a", rawBody }));
+      expect(res.status, rawBody).toBe(400);
+      expect(await res.json()).toMatchObject({ errorCode: "bad_request" });
+    }
+    expect(h.calls.length).toBe(before);
+  });
+
+  it("rejects look-alike DataChannel keys (dataChannelName, canReply, id)", async () => {
+    const { h, alice, bob } = await setup();
+    const before = h.calls.length;
+    const cases: [string, string, unknown][] = [
+      ["POST", "datachannels/new", { dataChannels: [{ location: "local", DataChannelName: "chat" }] }],
+      ["POST", "datachannels/new", { dataChannels: [{ location: "local", datachannelname: "chat" }] }],
+      ["POST", "datachannels/new", {
+        dataChannels: [{ location: "local", dataChannelName: "chat", DATACHANNELNAME: "x" }],
+      }],
+      ["POST", "datachannels/new", {
+        dataChannels: [{ location: "remote", sessionId: bob, dataChannelName: "chat", CanReply: true }],
+      }],
+      ["PUT", "datachannels/update", {
+        dataChannels: [{ location: "remote", sessionId: bob, dataChannelName: "chat", canreply: true }],
+      }],
+      ["PUT", "datachannels/close", { dataChannels: [{ ID: 2 }] }],
+      ["PUT", "datachannels/close", { dataChannels: [{ Id: 2 }] }],
+      ["POST", "datachannels/establish", { dataChannel: { location: "remote", DataChannelName: "server-events" } }],
+    ];
+    for (const [method, sub, body] of cases) {
+      const res = await h.handler(req(method, `/sessions/${alice}/${sub}`, { user: "alice", room: "room-a", body }));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(h.calls.length).toBe(before);
   });
 
   it("checks and forwards the same value when keys are duplicated", async () => {
@@ -373,6 +419,290 @@ describe("rule 4: same-room pulls", () => {
     const forwarded = h.calls.at(-1)!.body!;
     expect(forwarded).not.toContain(carol);
     expect(JSON.parse(forwarded)).toEqual({ tracks: [{ location: "remote", sessionId: bob, trackName: "cam" }] });
+  });
+});
+
+describe("authorizeDataChannels", () => {
+  interface HookCall {
+    caller: Caller;
+    roomId: string;
+    sessionId: string;
+    route: DataChannelRouteName;
+    entries: readonly DataChannelEntry[];
+  }
+
+  /** A broker whose hook records its calls and answers with `decide`. */
+  async function setup(decide: (call: HookCall) => unknown = () => true) {
+    const hookCalls: HookCall[] = [];
+    const h = makeBroker({
+      authorizeDataChannels: (caller, roomId, sessionId, route, entries) => {
+        const call = { caller, roomId, sessionId, route, entries };
+        hookCalls.push(call);
+        return decide(call) as Promise<boolean> | boolean;
+      },
+    });
+    const alice = (await newSession(h, "alice", "room-a")).sessionId;
+    const bob = (await newSession(h, "bob", "room-a")).sessionId;
+    const carol = (await newSession(h, "carol", "room-b")).sessionId;
+    return { h, hookCalls, alice, bob, carol, sessionsCreated: h.calls.length };
+  }
+
+  const dc = (method: string, sessionId: string, sub: string, body?: unknown, user = "alice", room = "room-a") =>
+    req(method, `/sessions/${sessionId}/${sub}`, { user, room, ...(body === undefined ? {} : { body }) });
+
+  /** One request per DataChannel route, as the Dart client sends them. */
+  const everyRoute = (alice: string, bob: string) => [
+    {
+      route: "datachannels/establish",
+      request: dc("POST", alice, "datachannels/establish", {
+        dataChannel: { location: "remote", dataChannelName: "server-events" },
+      }),
+      entries: [{ location: "remote", dataChannelName: "server-events" }],
+    },
+    {
+      route: "datachannels/new",
+      request: dc("POST", alice, "datachannels/new", {
+        dataChannels: [
+          { location: "local", dataChannelName: "pair:alice:bob", ordered: true },
+          { location: "remote", sessionId: bob, dataChannelName: "chat", canReply: false, maxRetransmits: 0 },
+        ],
+      }),
+      entries: [
+        { location: "local", dataChannelName: "pair:alice:bob" },
+        { location: "remote", sessionId: bob, dataChannelName: "chat", canReply: false },
+      ],
+    },
+    {
+      route: "datachannels/update",
+      request: dc("PUT", alice, "datachannels/update", {
+        dataChannels: [{ location: "remote", sessionId: bob, dataChannelName: "chat", canReply: true }],
+      }),
+      entries: [{ location: "remote", sessionId: bob, dataChannelName: "chat", canReply: true }],
+    },
+    {
+      route: "datachannels/close",
+      request: dc("PUT", alice, "datachannels/close", { dataChannels: [{ id: 2 }, { id: 3 }] }),
+      entries: [{ id: 2 }, { id: 3 }],
+    },
+  ] as const;
+
+  it("leaves every DataChannel route unchanged when unset", async () => {
+    const h = makeBroker();
+    const alice = (await newSession(h, "alice", "room-a")).sessionId;
+    const bob = (await newSession(h, "bob", "room-a")).sessionId;
+    for (const { route, request } of everyRoute(alice, bob)) {
+      const sent = await request.clone().text();
+      const res = await h.handler(request);
+      expect(res.status, route).toBe(200);
+      expect(h.calls.at(-1)!.url).toBe(`${SFU}/sessions/${alice}/${route}`);
+      expect(JSON.parse(h.calls.at(-1)!.body!)).toEqual(JSON.parse(sent));
+    }
+    expect(h.calls).toHaveLength(2 + 4);
+  });
+
+  it("forwards when the hook returns true, and passes it the caller, room, session, route and entries", async () => {
+    const { h, hookCalls, alice, bob, sessionsCreated } = await setup();
+    const cases = everyRoute(alice, bob);
+    for (const { route, request } of cases) {
+      const sent = await request.clone().text();
+      const res = await h.handler(request);
+      expect(res.status, route).toBe(200);
+      expect(JSON.parse(h.calls.at(-1)!.body!)).toEqual(JSON.parse(sent));
+    }
+    expect(h.calls).toHaveLength(sessionsCreated + cases.length);
+    expect(hookCalls).toEqual(
+      cases.map(({ route, entries }) => ({
+        caller: { id: "alice" },
+        roomId: "room-a",
+        sessionId: alice,
+        route,
+        entries,
+      })),
+    );
+    for (const { entries } of hookCalls) {
+      expect(Object.isFrozen(entries)).toBe(true);
+      for (const entry of entries) expect(Object.isFrozen(entry)).toBe(true);
+    }
+  });
+
+  it("gives no entries for a request without a body", async () => {
+    const { h, hookCalls, alice } = await setup();
+    expect((await h.handler(dc("PUT", alice, "datachannels/close"))).status).toBe(200);
+    expect(hookCalls.map((c) => c.entries)).toEqual([[]]);
+  });
+
+  it("refuses with 403 forbidden, and forwards nothing, unless the hook returns true", async () => {
+    for (const answer of [false, undefined, null, 1, "true", Promise.resolve(false)]) {
+      const { h, hookCalls, alice, bob, sessionsCreated } = await setup(() => answer);
+      for (const { route, request } of everyRoute(alice, bob)) {
+        const res = await h.handler(request);
+        expect(res.status, `${route} ${String(answer)}`).toBe(403);
+        expect(await res.json()).toEqual({
+          errorCode: "forbidden",
+          errorDescription: "DataChannel request not allowed",
+        });
+      }
+      expect(hookCalls).toHaveLength(4);
+      expect(h.calls).toHaveLength(sessionsCreated);
+    }
+  });
+
+  it("returns 500 without the error's text, and forwards nothing, when the hook throws or rejects", async () => {
+    const secretText = "lookup failed for grant table at db.internal";
+    for (const decide of [
+      () => {
+        throw new Error(secretText);
+      },
+      () => Promise.reject(new Error(secretText)),
+    ]) {
+      const { h, alice, bob, sessionsCreated } = await setup(decide);
+      for (const { route, request } of everyRoute(alice, bob)) {
+        const res = await h.handler(request);
+        expect(res.status, route).toBe(500);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ errorCode: "internal_error", errorDescription: "internal error" });
+        expect(text).not.toContain("lookup failed");
+      }
+      expect(h.calls).toHaveLength(sessionsCreated);
+      expect(h.errors.map((e) => e.route)).toEqual([
+        "datachannels/establish",
+        "datachannels/new",
+        "datachannels/update",
+        "datachannels/close",
+      ]);
+      expect(h.errors.every((e) => e.message === "authorizeDataChannels failed" && e.cause === undefined)).toBe(true);
+      expect(JSON.stringify(h.errors)).not.toContain("lookup failed");
+    }
+  });
+
+  it("runs only after authentication, room membership, session ownership and same-room checks pass", async () => {
+    const { h, hookCalls, alice, bob, carol, sessionsCreated } = await setup();
+    const publish = { dataChannels: [{ location: "local", dataChannelName: "chat" }] };
+    const cases: [Request, number][] = [
+      [req("POST", `/sessions/${alice}/datachannels/new`, { room: "room-a", body: publish }), 401], // rule 1
+      [dc("POST", alice, "datachannels/new", publish, "alice", "room-b"), 403], // rule 2
+      [req("POST", `/sessions/${alice}/datachannels/new`, { user: "alice", body: publish }), 400], // rule 2: no room
+      [dc("POST", alice, "datachannels/new", publish, "bob"), 403], // rule 3: bob doesn't own alice's session
+      [dc("POST", "unknownsession", "datachannels/new", publish), 403], // rule 3: unknown session
+      [dc("POST", alice, "datachannels/new", { // rule 4: carol's session is in room-b
+        dataChannels: [{ location: "remote", sessionId: carol, dataChannelName: "chat" }],
+      }), 403],
+      [dc("PUT", alice, "datachannels/update", {
+        dataChannels: [{ location: "remote", sessionId: carol, dataChannelName: "chat", canReply: true }],
+      }), 403],
+      [dc("POST", alice, "datachannels/new", { // remote entry without a session
+        dataChannels: [{ location: "remote", dataChannelName: "chat" }],
+      }), 400],
+      [req("POST", `/sessions/${alice}/datachannels/new`, { user: "alice", room: "room-a", rawBody: "{nope" }), 400],
+      [dc("POST", alice, "datachannels/new", { dataChannels: [{ location: "local", DataChannelName: "chat" }] }), 400],
+    ];
+    for (const [request, status] of cases) {
+      expect((await h.handler(request)).status).toBe(status);
+    }
+    expect(hookCalls).toHaveLength(0);
+    expect(h.calls).toHaveLength(sessionsCreated);
+    // And a request that passes them reaches it.
+    expect((await h.handler(dc("POST", alice, "datachannels/new", {
+      dataChannels: [{ location: "remote", sessionId: bob, dataChannelName: "chat" }],
+    }))).status).toBe(200);
+    expect(hookCalls).toHaveLength(1);
+  });
+
+  it("isn't called for other routes, even when their body names DataChannels", async () => {
+    const { h, hookCalls, alice, bob } = await setup(() => false);
+    const res = await h.handler(
+      req("POST", `/sessions/${alice}/tracks/new`, {
+        user: "alice",
+        room: "room-a",
+        body: { tracks: [{ location: "remote", sessionId: bob, trackName: "cam" }] },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await h.handler(req("PUT", `/sessions/${alice}/renegotiate`, { user: "alice", room: "room-a", body: {} })))
+      .status).toBe(200);
+    expect((await h.handler(req("GET", `/sessions/${alice}`, { user: "alice", room: "room-a" }))).status).toBe(200);
+    expect(hookCalls).toHaveLength(0);
+  });
+
+  it("sees the same value that is forwarded when keys are duplicated", async () => {
+    const { h, hookCalls, alice } = await setup((call) => call.entries.every((e) => e.dataChannelName === "chat"));
+    const path = `/sessions/${alice}/datachannels/new`;
+    // The last duplicate wins in JSON.parse; the broker forwards its own serialization.
+    const reserved = `{"dataChannels":[{"location":"local","dataChannelName":"chat","dataChannelName":"pair:alice:bob"}]}`;
+    expect((await h.handler(req("POST", path, { user: "alice", room: "room-a", rawBody: reserved }))).status).toBe(403);
+    const allowed = `{"dataChannels":[{"location":"local","dataChannelName":"pair:alice:bob","dataChannelName":"chat"}]}`;
+    expect((await h.handler(req("POST", path, { user: "alice", room: "room-a", rawBody: allowed }))).status).toBe(200);
+    const forwarded = h.calls.at(-1)!.body!;
+    expect(forwarded).not.toContain("pair:");
+    expect(JSON.parse(forwarded)).toEqual({ dataChannels: [{ location: "local", dataChannelName: "chat" }] });
+    expect(hookCalls.map((c) => c.entries[0]!.dataChannelName)).toEqual(["pair:alice:bob", "chat"]);
+  });
+
+  it("covers both the dataChannel object and the dataChannels list on every route", async () => {
+    const { h, hookCalls, alice } = await setup();
+    const res = await h.handler(dc("POST", alice, "datachannels/new", {
+      dataChannel: { location: "local", dataChannelName: "a" },
+      dataChannels: [{ location: "local", dataChannelName: "b" }],
+    }));
+    expect(res.status).toBe(200);
+    expect(hookCalls[0]!.entries).toEqual([
+      { location: "local", dataChannelName: "a" },
+      { location: "local", dataChannelName: "b" },
+    ]);
+  });
+
+  it("refuses entries with fields of the wrong type with 400, before the hook", async () => {
+    const { h, hookCalls, alice, sessionsCreated } = await setup();
+    for (const body of [
+      { dataChannels: [{ location: "local", dataChannelName: 7 }] },
+      { dataChannels: [{ location: "local", dataChannelName: ["pair:alice:bob"] }] },
+      { dataChannels: [{ location: "Local", dataChannelName: "chat" }] },
+      { dataChannels: [{ location: null, dataChannelName: "chat" }] },
+      { dataChannels: [{ location: "local", dataChannelName: "chat", canReply: "yes" }] },
+      { dataChannels: [{ id: 1.5 }] },
+      { dataChannels: [{ id: "2" }] },
+      { dataChannels: ["chat"] },
+      { dataChannel: "server-events" },
+      { dataChannel: [{ location: "remote", dataChannelName: "server-events" }] },
+    ]) {
+      const res = await h.handler(dc("POST", alice, "datachannels/new", body));
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await res.json()).toMatchObject({ errorCode: "bad_request" });
+    }
+    expect(hookCalls).toHaveLength(0);
+    expect(h.calls).toHaveLength(sessionsCreated);
+  });
+
+  it("can limit a channel prefix to a granted pair (the README's example)", async () => {
+    const granted = new Set(["alice:bob"]);
+    const { h, alice, bob, sessionsCreated } = await setup(({ caller, entries }) => {
+      for (const { dataChannelName } of entries) {
+        if (dataChannelName === undefined || !dataChannelName.startsWith("pair:")) continue;
+        const ids = dataChannelName.slice("pair:".length).split(":");
+        if (ids.length !== 2 || !ids.includes(caller.id)) return false;
+        if (!granted.has([...ids].sort().join(":"))) return false;
+      }
+      return true;
+    });
+    const mallory = (await newSession(h, "carol", "room-c")).sessionId;
+    const aliceInC = (await newSession(h, "alice", "room-c")).sessionId;
+    const publish = (name: string) => ({ dataChannels: [{ location: "local", dataChannelName: name }] });
+    const subscribe = (from: string, name: string) => ({
+      dataChannels: [{ location: "remote", sessionId: from, dataChannelName: name }],
+    });
+
+    expect((await h.handler(dc("POST", alice, "datachannels/new", publish("pair:alice:bob")))).status).toBe(200);
+    expect((await h.handler(dc("POST", bob, "datachannels/new", subscribe(alice, "pair:alice:bob"), "bob"))).status)
+      .toBe(200);
+    expect((await h.handler(dc("POST", bob, "datachannels/new", subscribe(alice, "chat"), "bob"))).status).toBe(200);
+    // carol is in room-c with alice, but not in the pair: she can neither publish nor subscribe to it.
+    const carolCalls = [
+      dc("POST", mallory, "datachannels/new", publish("pair:alice:bob"), "carol", "room-c"),
+      dc("POST", mallory, "datachannels/new", subscribe(aliceInC, "pair:alice:bob"), "carol", "room-c"),
+      dc("POST", mallory, "datachannels/new", subscribe(aliceInC, "pair:carol:alice"), "carol", "room-c"),
+    ];
+    for (const r of carolCalls) expect((await h.handler(r)).status).toBe(403);
+    expect(h.calls).toHaveLength(sessionsCreated + 2 + 3);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   parsePositiveInt,
 } from "../_shared/broker-core/mod.ts";
 import { createSupabaseAuthenticator } from "./auth.ts";
+import { authorizeDataChannels } from "./data_channels.ts";
 import { PostgresSessionStore, SESSION_TABLE, type SessionTable } from "./postgres_store.ts";
 import { isRoomMember } from "./room_membership.ts";
 
@@ -65,6 +66,8 @@ const handler = createBrokerHandler({
   basePath: env("BASE_PATH") ?? "/realtime-broker",
   authenticate: createSupabaseAuthenticator((jwt) => authClient.auth.getUser(jwt)),
   isRoomMember,
+  // Optional DataChannel rules; unset by default (see data_channels.ts).
+  authorizeDataChannels,
   sessionStore: new PostgresSessionStore(table, { ttlSeconds: sessionTtlSeconds }),
   turn: turnKeyId && turnApiToken
     ? {
