@@ -14,6 +14,7 @@ import {
   parsePositiveInt,
 } from "../../supabase/functions/_shared/broker-core/mod.ts";
 import { createJwtAuthenticator } from "./auth.ts";
+import { authorizeDataChannels } from "./data_channels.ts";
 import { DurableObjectSessionStore, type SessionObjectStub } from "./durable_object_store.ts";
 import { isRoomMember } from "./room_membership.ts";
 import type { RealtimeSessionObject } from "./session_object.ts";
@@ -57,6 +58,8 @@ function buildHandler(env: Env): BrokerHandler {
       secret: env.JWT_SECRET || undefined,
     }),
     isRoomMember,
+    // Optional DataChannel rules; unset by default (see data_channels.ts).
+    authorizeDataChannels,
     sessionStore: new DurableObjectSessionStore(
       (sessionId): SessionObjectStub => env.REALTIME_SESSIONS.get(env.REALTIME_SESSIONS.idFromName(sessionId)),
       { ttlSeconds: sessionTtlSeconds },

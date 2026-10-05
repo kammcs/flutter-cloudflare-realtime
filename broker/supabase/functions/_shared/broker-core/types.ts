@@ -106,6 +106,32 @@ export interface BrokerErrorInfo {
   readonly elapsedMs?: number;
 }
 
+/** The broker routes that act on DataChannels; see {@link BrokerConfig.authorizeDataChannels}. */
+export type DataChannelRouteName =
+  | "datachannels/establish"
+  | "datachannels/new"
+  | "datachannels/update"
+  | "datachannels/close";
+
+/**
+ * One DataChannel named in a `datachannels/*` request body, as the broker
+ * parsed it: an entry of `dataChannels[]`, or the `dataChannel` object of
+ * `datachannels/establish`. Only the fields below are copied; a field the
+ * client didn't send is absent.
+ */
+export interface DataChannelEntry {
+  /** `local` publishes the channel from the caller's session; `remote` subscribes to it. */
+  readonly location?: "local" | "remote";
+  /** The channel's name. Absent in `datachannels/close`, which names channels by `id`. */
+  readonly dataChannelName?: string;
+  /** For `remote` entries: the publisher's session, already checked to be in the caller's room (rule 4). */
+  readonly sessionId?: string;
+  /** For `remote` entries: whether the subscriber may send back to the publisher. */
+  readonly canReply?: boolean;
+  /** The channel's ID on the caller's session (`datachannels/close`). */
+  readonly id?: number;
+}
+
 /** Configuration for {@link createBrokerHandler}. */
 export interface BrokerConfig<C extends Caller = Caller> {
   /** Cloudflare Realtime SFU App ID. */
@@ -128,6 +154,38 @@ export interface BrokerConfig<C extends Caller = Caller> {
 
   /** The session registry (rules 3 and 4). */
   readonly sessionStore: SessionStore;
+
+  /**
+   * Optional, app-specific: whether `caller` may make this DataChannel
+   * request. Unset by default, which allows every DataChannel request that
+   * passes rules 1 to 4.
+   *
+   * The SFU forwards a published channel to every subscriber that names it,
+   * and lets any publisher use any name. Use this hook when your app reserves
+   * channel names for certain participants (for example a channel only two
+   * users may publish or subscribe to).
+   *
+   * It runs on every request to a {@link DataChannelRouteName} route, after
+   * rules 1 to 4 have passed (the caller is authenticated and in `roomId`, it
+   * owns `sessionId`, the session in the path, and every `sessionId` in the
+   * body is in `roomId`), and just before the request is forwarded.
+   * `entries` are parsed from the same JSON value the broker forwards, so
+   * what the hook approves is exactly what Cloudflare receives; they are
+   * frozen copies. A request without a body gets no entries.
+   *
+   * Return `true` to forward the request. Anything else refuses it with
+   * `403 forbidden`, and a thrown error becomes `500 internal_error` (the
+   * error's text is never returned or reported). Either way nothing reaches
+   * the SFU. The safest rules decide on `dataChannelName` whatever the
+   * `location`: a name reserved for publishing is reserved for subscribing too.
+   */
+  readonly authorizeDataChannels?: (
+    caller: C,
+    roomId: string,
+    sessionId: string,
+    route: DataChannelRouteName,
+    entries: readonly DataChannelEntry[],
+  ) => Promise<boolean> | boolean;
 
   /**
    * Path prefix that the broker is mounted under, without a trailing slash,

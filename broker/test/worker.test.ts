@@ -1,6 +1,7 @@
 import { SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
 import { createJwtAuthenticator } from "../cloudflare-worker/src/auth.ts";
+import { authorizeDataChannels } from "../cloudflare-worker/src/data_channels.ts";
 import { DurableObjectSessionStore, type SessionObjectStub } from "../cloudflare-worker/src/durable_object_store.ts";
 import { isRoomMember } from "../cloudflare-worker/src/room_membership.ts";
 import type { SessionRecord } from "../supabase/functions/_shared/broker-core/mod.ts";
@@ -57,6 +58,12 @@ describe("Worker JWT authenticator", () => {
 describe("Worker room membership stub", () => {
   it("fails closed", async () => {
     expect(await isRoomMember({ id: "alice" }, "room-a")).toBe(false);
+  });
+});
+
+describe("Worker DataChannel rules", () => {
+  it("are unset by default", () => {
+    expect(authorizeDataChannels).toBeUndefined();
   });
 });
 
