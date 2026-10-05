@@ -98,3 +98,12 @@ cloudflare_realtime: createPeerConnection took 4190 ms (+12031 ms); the event lo
 ```
 
 A call about as long as the gap it was sent in is the one that blocked. `CloudflareRealtime.debugPlatformCallTimingEvents` has the same as typed events. Only method names, argument keys and times are recorded, never argument values or replies. Calls are named only with `PlatformCallTimingBinding` created before any other binding (an app with its own binding class returns `PlatformCallTimingBinding.wrapMessenger(super.createBinaryMessenger())` from its `createBinaryMessenger`); without it, the gaps are still reported. A gap with no call sent came from something else on the main thread: your own Dart code, or native work no call started. Turn it off (`null`, the default) for release builds.
+
+## Video views
+
+Each time a video view's native renderer starts or stops showing a track, `flutter_webrtc` blocks the main thread while libwebrtc's worker thread adds or removes the renderer: a few milliseconds when that thread is idle, but as long as it is busy otherwise (a consuming app measured 0.5–0.8 s per call after mute and camera toggles; the call is `videoRendererSetSrcObject` in the platform call timing). `ParticipantVideoView` does it only when the track really changes:
+
+- A publisher's mute, a rebuild and a layout change cost nothing: a remote view keeps its track while it is muted, and a view that Flutter re-creates for the same track takes over the renderer of the view it replaces.
+- Turning your camera off and on costs one call each way on your self-view (the capture is released and a new track captured); unpublishing and republishing a track costs one call per view each way.
+
+So give remote viewers a mute rather than an unpublish when the camera goes off for a while, and keep tiles in place (a `GlobalKey` per tile when they move between layouts). If your app drives `RTCVideoRenderer` itself, set `srcObject` only when the track changes, and never to the stream it already shows. [design.md §4.3](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md#43-room) has the measurements.

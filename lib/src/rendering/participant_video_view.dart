@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection' show HashMap;
 
 import 'package:flutter/material.dart' show Icons;
 import 'package:flutter/widgets.dart';
@@ -34,13 +35,18 @@ import 'video_renderer.dart';
 ///
 /// **Keep it in place.** The renderer is bound once per track: rebuilding
 /// the view, even as a new widget with other settings, never sets its
-/// stream again. But a view that Flutter re-creates gets a new renderer,
-/// which shows nothing until the next frame arrives, so the video blinks.
-/// Keep the widgets above it the same shape whatever else changes: for
-/// example, a `Container` whose `foregroundDecoration` (a speaking
-/// highlight) is set only some of the time adds and removes a widget above
-/// the view on each change; use a transparent decoration instead. To move
-/// a view between layouts, give it (or its tile) a `GlobalKey`.
+/// stream again, and a publisher's mute doesn't either. Each native
+/// renderer change blocks the UI thread on iOS and macOS (in
+/// `flutter_webrtc`; `docs/design.md` §4.3, Fewer renderer calls), so the
+/// view makes one only when the track changes. A view that Flutter
+/// re-creates for the same track (a layout change, a parent whose shape
+/// changed) takes over the renderer of the view it replaces, when that one
+/// goes in the same frame or up to 500 ms before. Still, keep the widgets
+/// above it the same shape whatever else changes (for example, a speaking
+/// highlight drawn with a transparent decoration while off, rather than a
+/// `Container` whose `foregroundDecoration` comes and goes), and to move a
+/// view between layouts, give it (or its tile) a `GlobalKey`. Two views of
+/// one track on screen at once have a renderer each.
 ///
 /// **Layer selection.** A remote video view reports its on-screen size and
 /// [visible] to the room ([Room.layerReporter]), keyed by
@@ -151,13 +157,72 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
   bool _muted = false;
   VideoRenderer? _renderer;
   bool _rendererReady = false;
+
+  /// The stream [_renderer] was last given: video shows only while it is
+  /// [_stream], so a renderer still on an old track never shows its frame.
+  MediaStream? _rendererStream;
   // Renderer calls run in order, one at a time.
   Future<void> _rendererOps = Future.value();
+  int _pendingOps = 0;
+
+  /// Whether [deactivate] left the renderer for another view
+  /// ([_RendererHandOver]).
+  bool _parked = false;
 
   @override
   void initState() {
     super.initState();
     _attach();
+    // A view of the same stream that Flutter removed in this frame (a
+    // layout change that re-creates the view) left its renderer: take it,
+    // and the video shows from the first frame, with no native call.
+    final initial =
+        widget.publication?.track?.stream ?? widget.localSource?.track?.stream;
+    final handedOver = initial == null ? null : _RendererHandOver.take(initial);
+    if (handedOver != null) {
+      _renderer = handedOver;
+      _rendererReady = true;
+      _rendererStream = _stream = initial;
+    }
+  }
+
+  @override
+  void deactivate() {
+    // Leave an idle renderer for a view of the same stream built in this
+    // frame (see initState). A view that only moves (a GlobalKey) takes it
+    // back in activate().
+    final renderer = _renderer;
+    final stream = _rendererStream;
+    if (renderer != null &&
+        _rendererReady &&
+        _pendingOps == 0 &&
+        stream != null &&
+        identical(stream, _stream)) {
+      _RendererHandOver.park(stream, renderer);
+      _renderer = null;
+      _rendererReady = false;
+      _parked = true;
+    }
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    if (!_parked) return;
+    _parked = false;
+    final stream = _rendererStream!;
+    final back = _RendererHandOver.take(stream);
+    if (back != null) {
+      _renderer = back;
+      _rendererReady = true;
+      return;
+    }
+    // Another view took it: get a renderer of this view's own.
+    _rendererStream = null;
+    final current = _stream;
+    _stream = null;
+    _show(current);
   }
 
   @override
@@ -179,10 +244,28 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     _detach(disposing: true);
     final renderer = _renderer;
     _renderer = null;
-    if (renderer != null) {
-      _rendererOps = _rendererOps.then((_) => _quietly(renderer.dispose));
-    }
+    if (renderer != null) _enqueue(() => _release(renderer));
     super.dispose();
+  }
+
+  /// Runs [op] after the renderer calls before it.
+  void _enqueue(Future<void> Function() op) {
+    _pendingOps++;
+    _rendererOps = _rendererOps
+        .then((_) => op())
+        .whenComplete(() => _pendingOps--);
+  }
+
+  /// Leaves [renderer], whose calls were still running when the view went,
+  /// for a view of the same stream that comes right after this one
+  /// ([_RendererHandOver]), or releases it.
+  Future<void> _release(VideoRenderer renderer) async {
+    final stream = _rendererStream;
+    if (_rendererReady && stream != null) {
+      _RendererHandOver.park(stream, renderer);
+    } else {
+      await _quietly(renderer.dispose);
+    }
   }
 
   void _attach() {
@@ -211,11 +294,17 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     _subscriptions.clear();
     _lease?.release();
     _lease = null;
-    if (disposing) {
-      // dispose() tears the renderer down, which detaches the stream.
-      _stream = null;
-    } else {
-      _show(null);
+    // dispose() hands the renderer over or tears it down.
+    _stream = null;
+    if (!disposing && _renderer != null) {
+      // A new source: its track arrives in a later microtask (the streams
+      // replay their value), and the renderer moves to it with one call.
+      // Detach only if it has none by then (each call blocks the UI thread
+      // on iOS and macOS, docs/design.md §4.3, Fewer renderer calls).
+      _enqueue(() async {
+        await Future<void>.delayed(Duration.zero);
+        await _apply(null);
+      });
     }
   }
 
@@ -238,13 +327,29 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
     _stream = stream;
     // No renderer yet and nothing to show: the placeholder is already up.
     if (stream == null && _renderer == null) return;
-    _rendererOps = _rendererOps.then((_) => _apply(stream));
+    _enqueue(() => _apply(stream));
   }
 
   Future<void> _apply(MediaStream? stream) async {
     if (!mounted || !identical(stream, _stream)) return;
+    if (_renderer == null) {
+      if (stream == null) return;
+      // A view of this stream that just went with its renderer still busy
+      // leaves it once its calls are done ([_release]): let that run
+      // first, then take the renderer over, with no native call.
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted || !identical(stream, _stream)) return;
+    }
     var renderer = _renderer;
     if (renderer == null) {
+      final handedOver = _RendererHandOver.take(stream!);
+      if (handedOver != null) {
+        _renderer = handedOver;
+        _rendererReady = true;
+        _rendererStream = stream;
+        setState(() {});
+        return;
+      }
       final created =
           (widget.rendererFactory ??
           ParticipantVideoView.defaultRendererFactory)();
@@ -262,8 +367,10 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
       }
       _rendererReady = true;
     }
+    final target = _stream;
+    _rendererStream = target;
     try {
-      await renderer.setStream(_stream);
+      await renderer.setStream(target);
     } catch (error, stackTrace) {
       _report(error, stackTrace);
     }
@@ -304,7 +411,11 @@ class _ParticipantVideoViewState extends State<ParticipantVideoView> {
   Widget build(BuildContext context) {
     final renderer = _renderer;
     final showVideo =
-        _rendererReady && renderer != null && _stream != null && !_muted;
+        _rendererReady &&
+        renderer != null &&
+        _stream != null &&
+        identical(_rendererStream, _stream) &&
+        !_muted;
     Widget child = showVideo
         ? renderer.build(
             context,
@@ -343,4 +454,48 @@ class _VideoPlaceholder extends StatelessWidget {
       child: Icon(Icons.videocam_off, color: Color(0x8AFFFFFF), size: 32),
     ),
   );
+}
+
+/// Renderers whose view went while they showed a stream, each kept for
+/// [_linger] in case Flutter creates a view of the same stream right after
+/// (a layout change that re-creates the view, a tile moved without a
+/// `GlobalKey`, a parent whose shape changed). That view takes the renderer
+/// over as it is: no native renderer is created, attached, detached or
+/// released, calls that block the UI thread on iOS and macOS
+/// (docs/design.md §4.3, Fewer renderer calls). One view at a time: two
+/// views on screen at once each have their own renderer (on the web, a
+/// renderer's fit and mirroring are its own).
+abstract final class _RendererHandOver {
+  static const _linger = Duration(milliseconds: 500);
+  static final Map<MediaStream, (VideoRenderer, Timer)> _parked =
+      HashMap.identity();
+
+  static void park(MediaStream stream, VideoRenderer renderer) {
+    final previous = _parked.remove(stream);
+    if (previous != null) {
+      previous.$2.cancel();
+      unawaited(_quietly(previous.$1.dispose));
+    }
+    _parked[stream] = (
+      renderer,
+      Timer(_linger, () {
+        _parked.remove(stream);
+        unawaited(_quietly(renderer.dispose));
+      }),
+    );
+  }
+
+  static VideoRenderer? take(MediaStream stream) {
+    final parked = _parked.remove(stream);
+    parked?.$2.cancel();
+    return parked?.$1;
+  }
+
+  static Future<void> _quietly(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      // Best effort.
+    }
+  }
 }

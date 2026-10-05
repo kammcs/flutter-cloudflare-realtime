@@ -44,23 +44,51 @@ abstract interface class VideoRenderer {
 typedef VideoRendererFactory = VideoRenderer Function();
 
 /// A [VideoRenderer] backed by `flutter_webrtc`'s `RTCVideoRenderer`.
+///
+/// On iOS and macOS every stream change blocks the platform thread, which
+/// is also the UI thread there (docs/design.md §4.3, Fewer renderer
+/// calls), so it makes no platform call for a change that changes nothing:
+/// setting the stream it already shows, or none when it shows none.
 class FlutterWebrtcVideoRenderer implements VideoRenderer {
   /// Creates the renderer. It does nothing native until [initialize].
   FlutterWebrtcVideoRenderer();
 
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
 
-  /// Whether the renderer has ever been given a stream (and so may have
-  /// frames in flight).
-  bool _hadStream = false;
+  /// The stream the native renderer was last given, or `null` for none.
+  MediaStream? _attached;
+
+  /// Runs from the moment the native renderer last stopped showing a
+  /// stream (frames may still be in flight until then); `null` while it
+  /// shows one, and before it ever has.
+  Stopwatch? _sinceDetached;
 
   @override
   Future<void> initialize() => _renderer.initialize();
 
   @override
   Future<void> setStream(MediaStream? stream) async {
-    if (stream != null) _hadStream = true;
-    _renderer.srcObject = stream;
+    if (identical(stream, _attached)) return;
+    _attached = stream;
+    if (stream == null) {
+      await _detach();
+    } else {
+      _sinceDetached = null;
+      _renderer.srcObject = stream;
+    }
+  }
+
+  /// Detaches the stream and waits for the plugin's answer: after it, the
+  /// track no longer hands frames to the native renderer. Best effort, as
+  /// the `srcObject` setter was: a renderer that isn't initialized (or is
+  /// already released) has nothing to detach.
+  Future<void> _detach() async {
+    try {
+      await _renderer.setSrcObject(stream: null);
+    } catch (_) {
+      // Nothing attached natively.
+    }
+    _sinceDetached = Stopwatch()..start();
   }
 
   @override
@@ -82,21 +110,22 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
 
   @override
   Future<void> dispose() async {
-    try {
-      // Awaited: once the plugin has answered, the track no longer hands
-      // frames to the native renderer.
-      await _renderer.setSrcObject(stream: null);
-    } catch (_) {
-      // Not initialized (or already disposed): nothing to detach.
+    if (_attached != null) {
+      _attached = null;
+      await _detach();
     }
     // flutter_webrtc's Darwin renderer queues a block on the main queue
     // for each frame, which reads the renderer through a weak reference
     // without a nil check: a block that runs after the renderer is
     // released crashes the app. Let the blocks of the last frames run
-    // first (docs/design.md §4.3,
-    // Releasing a native renderer). Fixed upstream by flutter-webrtc
-    // PR #2190 (after 1.6.2+hotfix.3): drop the wait once a release has it.
-    if (_hadStream) await Future<void>.delayed(_releaseDelay);
+    // first (docs/design.md §4.3, Releasing a native renderer): 250 ms
+    // after the detach, which may have happened long ago (a muted
+    // camera). Fixed upstream by flutter-webrtc PR #2190 (after
+    // 1.6.2+hotfix.3): drop the wait once a release has it.
+    final since = _sinceDetached?.elapsed;
+    if (since != null && since < _releaseDelay) {
+      await Future<void>.delayed(_releaseDelay - since);
+    }
     await _renderer.dispose();
   }
 
