@@ -26,7 +26,11 @@ This repo is **`cloudflare_realtime`**, an unofficial Flutter client for the Clo
 ## Tooling
 
 - **Flutter:** 3.47.3 / Dart 3.13.3.
-- **Before committing:** `flutter analyze`, `dart format .` and `flutter test`. CI runs all three, plus gitleaks.
+- **Before committing:** `flutter analyze`, `dart format .` and `flutter test`.
+- **CI is off until launch:** GitHub Actions is disabled on the repo (to save CI minutes); `.github/workflows/ci.yml` is kept for later. Don't trigger `workflow_dispatch` runs. Run what CI ran locally before pushing:
+  - `dart format --output=none --set-exit-if-changed .`, `flutter analyze`, `flutter test`, and `flutter test` in `example/`;
+  - `gitleaks git --log-opts="origin/main..HEAD"` on the commits being pushed (the pre-commit hook covers each commit);
+  - when `broker/` or `tools/dev-server/` changed: `npm ci`, `npm run typecheck` and `npm test` in that folder.
 - **Pre-commit hook:** enable it once per clone with `git config core.hooksPath .githooks`. It runs `gitleaks git --staged`.
 
 ## This machine (Windows 11)
