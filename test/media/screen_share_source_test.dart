@@ -92,7 +92,10 @@ void main() {
     });
 
     test('ends with sourceClosed when the shared window goes away', () async {
-      final share = ScreenShareSource(backend: backend);
+      final share = ScreenShareSource(
+        backend: backend,
+        sourceRemovalGrace: Duration.zero,
+      );
       final reasons = <ScreenShareEndReason>[];
       share.ended.listen(reasons.add);
       await share.start(source: window1);
@@ -112,6 +115,39 @@ void main() {
       expect(video.stopped, isTrue);
       await share.dispose();
       expect(reasons, hasLength(1));
+    });
+
+    test('keeps sharing when a scan from scratch lists the source again', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(
+          backend: backend,
+          sourceRemovalGrace: const Duration(milliseconds: 500),
+        );
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        share.start(source: window1);
+        async.flushMicrotasks();
+
+        // getSources reports every source removed, then added again.
+        desktop.removed.add(window1);
+        async.elapse(const Duration(milliseconds: 100));
+        desktop.added.add(window1);
+        async.elapse(const Duration(seconds: 2));
+        expect(reasons, isEmpty);
+        expect(share.isEnabled, isTrue);
+
+        // Removed for good: ends once the grace period is over.
+        desktop.removed.add(window1);
+        async.elapse(const Duration(milliseconds: 400));
+        expect(share.isEnabled, isTrue);
+        async.elapse(const Duration(milliseconds: 200));
+        async.flushMicrotasks();
+        expect(reasons, [ScreenShareEndReason.sourceClosed]);
+        expect(share.isEnabled, isFalse);
+
+        share.dispose();
+        async.flushMicrotasks();
+      });
     });
 
     test('re-scans sources while sharing, so removals are reported', () {
@@ -157,6 +193,7 @@ void main() {
         async.elapse(const Duration(seconds: 3));
         expect(desktop.updateSourcesCalls, 1);
         desktop.removed.add(window1);
+        async.elapse(share.sourceRemovalGrace);
         async.flushMicrotasks();
         expect(share.isEnabled, isFalse);
         share.dispose();

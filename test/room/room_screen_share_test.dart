@@ -117,6 +117,8 @@ void main() {
       expect(bob.participant('alice')!.screenAudio, isNotNull);
 
       desktop.removed.add(_screen1);
+      // The share waits for the removal to be confirmed.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       await _settle();
       expect(share.isPublished, isFalse);
       expect(audio.isPublished, isFalse);
@@ -236,6 +238,8 @@ void main() {
       final share = await alice.localParticipant.publishScreen(
         source: _screen1,
       );
+      // The share waits for the removal to be confirmed.
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       await _settle();
       expect(share.isPublished, isFalse);
       expect(alice.localParticipant.screen, isNull);
