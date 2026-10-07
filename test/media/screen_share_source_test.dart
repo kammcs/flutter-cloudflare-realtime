@@ -150,6 +150,40 @@ void main() {
       });
     });
 
+    test('keeps sharing while the OS still reports a source a scan missed', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(
+          backend: backend,
+          sourceWatchInterval: const Duration(seconds: 3),
+          sourceRemovalGrace: const Duration(milliseconds: 500),
+        );
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        desktop.geometries['window-1'] = const ScreenGeometry(
+          bounds: Rect.fromLTWH(0, 0, 800, 600),
+          scaleFactor: 1,
+        );
+        share.start(source: window1);
+        async.flushMicrotasks();
+
+        // A re-scan misses the window, and nothing lists it again.
+        desktop.removed.add(window1);
+        async.elapse(const Duration(seconds: 10));
+        expect(reasons, isEmpty);
+        expect(share.isEnabled, isTrue);
+
+        // The window closes: ends at the next check.
+        desktop.geometries.remove('window-1');
+        async.elapse(const Duration(seconds: 3));
+        async.flushMicrotasks();
+        expect(reasons, [ScreenShareEndReason.sourceClosed]);
+        expect(share.isEnabled, isFalse);
+
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
     test('re-scans sources while sharing, so removals are reported', () {
       fakeAsync((async) {
         final share = ScreenShareSource(

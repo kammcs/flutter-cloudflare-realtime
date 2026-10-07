@@ -113,11 +113,14 @@ class ScreenShareSource extends LocalMediaSource {
   /// the platform reports geometry).
   final Duration geometryWatchInterval;
 
-  /// How long a reported removal of the shared source waits before the
-  /// share ends with [ScreenShareEndReason.sourceClosed]. Listing the
-  /// sources from scratch (`getSources`, which a source picker does when it
-  /// opens) reports every source removed and then added again, so a removal
-  /// followed by an addition of the same source within this time is ignored.
+  /// How long a reported removal of the shared source waits before it is
+  /// checked. A re-scan can report a source removed that still exists: a
+  /// scan from scratch reports every source removed and then added again,
+  /// and a scan can miss a window that is slow to answer. So a removal
+  /// followed by an addition of the same source within this time is
+  /// ignored. Otherwise the share ends with [ScreenShareEndReason.sourceClosed]
+  /// unless the operating system still reports the source's geometry; then
+  /// it is checked again every [sourceWatchInterval].
   final Duration sourceRemovalGrace;
 
   /// How long a release waits on iOS for the extension to report the end
@@ -133,6 +136,7 @@ class ScreenShareSource extends LocalMediaSource {
   StreamSubscription<ScreenSource>? _removedSubscription;
   StreamSubscription<ScreenSource>? _addedSubscription;
   Timer? _removalTimer;
+  int _removalGeneration = 0;
   StreamSubscription<String?>? _serviceStoppedSubscription;
   StreamSubscription<BroadcastExtensionEvent>? _broadcastSubscription;
   bool _broadcastFinished = false;
@@ -637,17 +641,19 @@ class ScreenShareSource extends LocalMediaSource {
     if (sourceId == null || capturer == null) return;
     _removedSubscription = capturer.onRemoved
         .where((source) => source.id == sourceId)
-        .listen((_) {
+        .listen((source) {
           _removalTimer?.cancel();
+          final generation = ++_removalGeneration;
           _removalTimer = Timer(
             sourceRemovalGrace,
-            () => _endedExternally(video, ScreenShareEndReason.sourceClosed),
+            () => _confirmRemoval(video, capturer, source, generation),
           );
         });
     // Listed again: the removal came from a scan from scratch.
     _addedSubscription = capturer.onAdded
         .where((source) => source.id == sourceId)
         .listen((_) {
+          _removalGeneration++;
           _removalTimer?.cancel();
           _removalTimer = null;
         });
@@ -666,6 +672,39 @@ class ScreenShareSource extends LocalMediaSource {
         RealtimeLog.warning('updateSources failed', error: error);
       }
     });
+  }
+
+  /// Ends the share for a removal that wasn't followed by an addition,
+  /// unless the operating system still reports the source. A re-scan that
+  /// missed a source has also dropped it from the plugin's list, so no
+  /// second removal will come: while the source is still there, check it
+  /// again every [sourceWatchInterval].
+  Future<void> _confirmRemoval(
+    CapturedTrack video,
+    DesktopCapturerBackend capturer,
+    ScreenSource source,
+    int generation,
+  ) async {
+    bool current() =>
+        generation == _removalGeneration &&
+        identical(track?.track, video.track) &&
+        !isDisposed;
+    if (!current()) return;
+    ScreenGeometry? geometry;
+    try {
+      geometry = await capturer.geometryOf(source);
+    } catch (error) {
+      RealtimeLog.warning('reading the screen geometry failed', error: error);
+    }
+    if (!current()) return;
+    if (geometry == null) {
+      _endedExternally(video, ScreenShareEndReason.sourceClosed);
+      return;
+    }
+    _removalTimer = Timer(
+      sourceWatchInterval,
+      () => _confirmRemoval(video, capturer, source, generation),
+    );
   }
 
   void _endedExternally(CapturedTrack video, ScreenShareEndReason reason) {
