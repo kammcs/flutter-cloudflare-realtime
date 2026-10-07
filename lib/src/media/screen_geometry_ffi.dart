@@ -2,6 +2,7 @@ import 'dart:ffi';
 import 'dart:io' show Platform;
 import 'dart:ui' show Rect;
 
+import 'media_types.dart';
 import 'screen_geometry.dart';
 
 /// The platform's [NativeScreenGeometry]: Core Graphics on macOS, user32
@@ -226,6 +227,13 @@ class MacOSScreenGeometry implements NativeScreenGeometry {
       _cfRelease(list);
     }
   }
+
+  /// [ScreenSourceEndCause.closed] when the window server no longer lists
+  /// the window. A minimized or hidden window is still listed (with a
+  /// frame), so there is no other cause on macOS.
+  @override
+  ScreenSourceEndCause? windowEndCause(String id) =>
+      windowFrame(id) == null ? ScreenSourceEndCause.closed : null;
 }
 
 // --- Windows ---------------------------------------------------------------
@@ -492,6 +500,19 @@ class WindowsScreenGeometry implements NativeScreenGeometry {
     } finally {
       _free(rect.cast());
     }
+  }
+
+  @override
+  ScreenSourceEndCause? windowEndCause(String id) {
+    final handle = int.tryParse(id);
+    if (handle == null || handle <= 0) return ScreenSourceEndCause.closed;
+    final window = Pointer<Void>.fromAddress(handle);
+    if (_isWindow(window) == 0) return ScreenSourceEndCause.closed;
+    // An app that closes to the tray may minimize the window and then hide
+    // it, so hidden is checked first.
+    if (_isWindowVisible(window) == 0) return ScreenSourceEndCause.hidden;
+    if (_isIconic(window) != 0) return ScreenSourceEndCause.minimized;
+    return null;
   }
 
   static String _wideString(Pointer<Uint8> at) {

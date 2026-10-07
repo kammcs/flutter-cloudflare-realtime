@@ -29,7 +29,9 @@ enum ScreenShareEndReason {
   userStopped,
 
   /// The shared window closed or the shared display went away (desktop), or
-  /// the platform ended the track.
+  /// the platform ended the track. On desktop the window may also have been
+  /// hidden or minimized; [ScreenShareSource.endCause] says which, where the
+  /// operating system can tell.
   sourceClosed,
 }
 
@@ -132,6 +134,8 @@ class ScreenShareSource extends LocalMediaSource {
   String? _capturedSourceId;
   ScreenShareOptions? _capturedOptions;
   ScreenShareEndReason? _endReason;
+  ScreenSourceEndCause? _pendingEndCause;
+  ScreenSourceEndCause? _endCause;
   bool _serviceRunning = false;
   StreamSubscription<ScreenSource>? _removedSubscription;
   StreamSubscription<ScreenSource>? _addedSubscription;
@@ -216,6 +220,13 @@ class ScreenShareSource extends LocalMediaSource {
 
   /// Emits once each time a running share ends, with the reason.
   Stream<ScreenShareEndReason> get ended => _ended.stream;
+
+  /// Why the shared desktop source went away, for the last share that
+  /// ended with [ScreenShareEndReason.sourceClosed]: its window was closed,
+  /// hidden or minimized, or its display disconnected. `null` after any
+  /// other end, before the first, and where the operating system can't
+  /// tell. Set before [ended] reports the end.
+  ScreenSourceEndCause? get endCause => _endCause;
 
   /// Where the shared display or window is on the desktop, and its scale,
   /// while a desktop share runs on macOS or Windows; `null` otherwise, and
@@ -698,7 +709,17 @@ class ScreenShareSource extends LocalMediaSource {
     }
     if (!current()) return;
     if (geometry == null) {
-      _endedExternally(video, ScreenShareEndReason.sourceClosed);
+      ScreenSourceEndCause? cause;
+      try {
+        cause = await capturer.endCauseOf(source);
+      } catch (error) {
+        RealtimeLog.warning(
+          'reading why the source ended failed',
+          error: error,
+        );
+      }
+      if (!current()) return;
+      _endedExternally(video, ScreenShareEndReason.sourceClosed, cause: cause);
       return;
     }
     _removalTimer = Timer(
@@ -707,9 +728,14 @@ class ScreenShareSource extends LocalMediaSource {
     );
   }
 
-  void _endedExternally(CapturedTrack video, ScreenShareEndReason reason) {
+  void _endedExternally(
+    CapturedTrack video,
+    ScreenShareEndReason reason, {
+    ScreenSourceEndCause? cause,
+  }) {
     if (!identical(track?.track, video.track) || isDisposed) return;
     _endReason = reason;
+    _pendingEndCause = cause;
     turnOff();
     requestReconcile();
   }
@@ -735,6 +761,8 @@ class ScreenShareSource extends LocalMediaSource {
     _stopBroadcastEvents();
     final current = track;
     _endReason = null;
+    final cause = _pendingEndCause;
+    _pendingEndCause = null;
     if (current == null) {
       await _stopService();
       return;
@@ -752,7 +780,10 @@ class ScreenShareSource extends LocalMediaSource {
     await releaseStream(current.stream);
     await broadcastEnded;
     await _stopService();
-    if (reason != null && !_ended.isClosed) _ended.add(reason);
+    if (reason != null && !_ended.isClosed) {
+      _endCause = reason == ScreenShareEndReason.sourceClosed ? cause : null;
+      _ended.add(reason);
+    }
   }
 
   Future<void> _stopService() async {

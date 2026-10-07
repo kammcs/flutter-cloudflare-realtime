@@ -127,6 +127,7 @@ export 'src/media/media_types.dart'
         MediaPlatform,
         ScreenGeometry,
         ScreenSource,
+        ScreenSourceEndCause,
         ScreenSourceType;
 export 'src/media/screen_share_source.dart'
     show ScreenShareEndReason, ScreenShareSource;

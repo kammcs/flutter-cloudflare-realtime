@@ -208,6 +208,25 @@ enum ScreenSourceType {
   window,
 }
 
+/// Why a shared desktop source went away, where the operating system can
+/// tell ([ScreenShareSource.endCause], [LocalTrackUnpublishedEvent]'s
+/// `sourceEndCause`).
+///
+/// Windows tells all three apart. macOS reports [closed] for a window or
+/// display that no longer exists (a minimized or hidden Mac window still
+/// exists, so its share goes on). Elsewhere the cause is unknown (`null`).
+enum ScreenSourceEndCause {
+  /// The window was closed or the display disconnected.
+  closed,
+
+  /// The window still exists but was hidden, for example by an app that
+  /// closes to the tray.
+  hidden,
+
+  /// The window was minimized.
+  minimized,
+}
+
 /// Where a shared display or window is on the desktop, and its scale.
 ///
 /// Coordinates are the operating system's own desktop coordinates, the ones

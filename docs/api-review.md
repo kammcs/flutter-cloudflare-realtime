@@ -74,7 +74,7 @@ Modifiers are shown where a class has them; "–" means a plain class. Events an
 
 - Sources: `LocalMediaSource` (abstract; `@protected` hooks for subclasses), `DeviceMediaSource` (abstract), `CameraSource`, `MicrophoneSource`, `ScreenShareSource`, `ScreenSourcePicker`, `MediaDeviceList`; `ScreenPickerState` (final), `MutePolicy`.
 - Options: `CameraOptions`, `MicrophoneOptions`, `ScreenShareOptions`, `VideoPreset` (final).
-- Types: `MediaDevice`, `CapturedTrack`, `ScreenSource`, `ScreenGeometry` (final; `ScreenGeometry` added after the cleanup); `MediaDeviceKind`, `CameraFacing`, `MediaPlatform`, `ScreenSourceType`, `ScreenShareEndReason`, `BroadcastSetupProblem` (enums).
+- Types: `MediaDevice`, `CapturedTrack`, `ScreenSource`, `ScreenGeometry` (final; `ScreenGeometry` added after the cleanup); `MediaDeviceKind`, `CameraFacing`, `MediaPlatform`, `ScreenSourceType`, `ScreenShareEndReason`, `ScreenSourceEndCause` (added after the cleanup), `BroadcastSetupProblem` (enums).
 - Exceptions: `MediaException` (sealed) → `MediaPermissionDeniedException` (→ `ScreenCapturePermissionException`), `ScreenShareSetupException`, `DevicesExhaustedException`, `MediaCaptureException`, `ScreenSourcesException`, `ScreenSourceNotFoundException`, all final.
 - **(testing):** `MediaBackend`, `DesktopCapturerBackend`, `ScreenCaptureServiceBackend`, `BroadcastExtensionBackend` (interfaces), `FlutterWebrtcMediaBackend`, `BroadcastExtensionStatus` (final), `BroadcastExtensionEvent`.
 

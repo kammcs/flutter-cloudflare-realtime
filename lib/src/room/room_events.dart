@@ -196,7 +196,11 @@ final class LocalTrackPublishedEvent extends RoomEvent {
 /// The local participant unpublished a track (or a screen share ended).
 final class LocalTrackUnpublishedEvent extends RoomEvent {
   /// Creates the event.
-  const LocalTrackUnpublishedEvent(this.publication, {this.endReason});
+  const LocalTrackUnpublishedEvent(
+    this.publication, {
+    this.endReason,
+    this.sourceEndCause,
+  });
 
   /// The closed publication.
   final LocalMediaPublication publication;
@@ -208,10 +212,17 @@ final class LocalTrackUnpublishedEvent extends RoomEvent {
   /// unpublished the track.
   final ScreenShareEndReason? endReason;
 
+  /// With [ScreenShareEndReason.sourceClosed] on desktop: whether the shared
+  /// window was closed, hidden or minimized, or its display disconnected,
+  /// where the operating system can tell (see [ScreenSourceEndCause]).
+  /// `null` otherwise.
+  final ScreenSourceEndCause? sourceEndCause;
+
   @override
   String toString() =>
       'LocalTrackUnpublishedEvent(${publication.trackName}'
-      '${endReason == null ? '' : ', ${endReason!.name}'})';
+      '${endReason == null ? '' : ', ${endReason!.name}'}'
+      '${sourceEndCause == null ? '' : ', ${sourceEndCause!.name}'})';
 }
 
 /// A local screen share sends no video: its capture delivered no frames

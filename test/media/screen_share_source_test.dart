@@ -184,6 +184,49 @@ void main() {
       });
     });
 
+    test('reports why the source went away, where the OS can tell', () {
+      fakeAsync((async) {
+        final share = ScreenShareSource(
+          backend: backend,
+          sourceRemovalGrace: const Duration(milliseconds: 500),
+        );
+        final seen = <(ScreenShareEndReason, ScreenSourceEndCause?)>[];
+        share.ended.listen((reason) => seen.add((reason, share.endCause)));
+
+        for (final cause in [
+          ScreenSourceEndCause.hidden,
+          ScreenSourceEndCause.minimized,
+          ScreenSourceEndCause.closed,
+          null,
+        ]) {
+          if (cause == null) {
+            desktop.endCauses.remove('window-1');
+          } else {
+            desktop.endCauses['window-1'] = cause;
+          }
+          share.start(source: window1);
+          async.flushMicrotasks();
+          desktop.removed.add(window1);
+          async.elapse(const Duration(milliseconds: 500));
+          async.flushMicrotasks();
+          expect(share.isEnabled, isFalse);
+          expect(seen.last, (ScreenShareEndReason.sourceClosed, cause));
+        }
+
+        // An end by the app carries no cause.
+        desktop.endCauses['window-1'] = ScreenSourceEndCause.hidden;
+        share.start(source: window1);
+        async.flushMicrotasks();
+        share.stop();
+        async.flushMicrotasks();
+        expect(seen.last, (ScreenShareEndReason.stopped, null));
+        expect(share.endCause, isNull);
+
+        share.dispose();
+        async.flushMicrotasks();
+      });
+    });
+
     test('re-scans sources while sharing, so removals are reported', () {
       fakeAsync((async) {
         final share = ScreenShareSource(

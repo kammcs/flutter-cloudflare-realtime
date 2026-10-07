@@ -33,8 +33,12 @@ abstract interface class NativeScreenGeometry {
 
   /// The frame of the window with `flutter_webrtc`'s window source ID [id]
   /// (a `CGWindowID` on macOS, an `HWND` on Windows), or `null` if there
-  /// is no such window (or, on Windows, it is minimized).
+  /// is no such window (or, on Windows, it is hidden or minimized).
   Rect? windowFrame(String id);
+
+  /// Why the window with source ID [id] has no frame: closed, hidden or
+  /// minimized. `null` if it has one, or if the platform can't tell.
+  ScreenSourceEndCause? windowEndCause(String id);
 }
 
 /// Looks up the [ScreenGeometry] of capture sources through a
@@ -82,6 +86,26 @@ class ScreenGeometryLookup {
             bounds: frame,
             scaleFactor: windowScaleFactor(frame, all),
           );
+      }
+    } catch (error) {
+      _warn(error);
+      return null;
+    }
+  }
+
+  /// Why the source with [id] and [type] has no geometry, or `null` if it
+  /// has, or if that isn't known. A display that is no longer listed was
+  /// disconnected ([ScreenSourceEndCause.closed]).
+  ScreenSourceEndCause? endCauseOf(ScreenSourceType type, String id) {
+    final native = _native;
+    if (native == null) return null;
+    try {
+      switch (type) {
+        case ScreenSourceType.screen:
+          final listed = native.displays().any((display) => display.id == id);
+          return listed ? null : ScreenSourceEndCause.closed;
+        case ScreenSourceType.window:
+          return native.windowEndCause(id);
       }
     } catch (error) {
       _warn(error);

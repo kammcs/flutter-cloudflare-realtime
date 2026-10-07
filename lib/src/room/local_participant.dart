@@ -344,7 +344,9 @@ class LocalParticipant implements Participant {
     void onEnded(ScreenShareEndReason reason) {
       // `stopped` is the app's own doing (mute or unpublish).
       if (reason == ScreenShareEndReason.stopped) return;
-      unawaited(_unpublish(video, endReason: reason));
+      unawaited(
+        _unpublish(video, endReason: reason, sourceEndCause: share.endCause),
+      );
     }
 
     video._endedListener = share.ended.listen(onEnded);
@@ -398,6 +400,7 @@ class LocalParticipant implements Participant {
   Future<void> _unpublish(
     LocalMediaPublication publication, {
     ScreenShareEndReason? endReason,
+    ScreenSourceEndCause? sourceEndCause,
   }) async {
     if (publication._unpublished || !_publications.contains(publication)) {
       return;
@@ -418,7 +421,13 @@ class LocalParticipant implements Participant {
     await Future.wait([for (final p in closing) _closeQuietly(p.publication)]);
     for (final p in closing) {
       if (p.ownsMediaSource) await _disposeQuietly(p.mediaSource);
-      _room._emit(LocalTrackUnpublishedEvent(p, endReason: endReason));
+      _room._emit(
+        LocalTrackUnpublishedEvent(
+          p,
+          endReason: endReason,
+          sourceEndCause: sourceEndCause,
+        ),
+      );
     }
   }
 
