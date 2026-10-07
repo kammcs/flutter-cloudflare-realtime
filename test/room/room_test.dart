@@ -867,8 +867,10 @@ void main() {
       await remote.subscribe();
       expect(h.pullsOf(bob), ['session-1/${share.trackName}']);
 
-      // The shared display disappears.
+      // The shared display disappears; the share waits for the removal to
+      // be confirmed.
       desktop.removed.add(screen1);
+      await Future<void>.delayed(const Duration(milliseconds: 600));
       await _settle();
       expect(share.isPublished, isFalse);
       expect(alice.localParticipant.screen, isNull);

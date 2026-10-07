@@ -86,13 +86,16 @@ class ScreenShareSource extends LocalMediaSource {
   /// On desktop, [sourceWatchInterval] is how often the source list is
   /// re-scanned while sharing, to notice the shared window closing (skipped
   /// while the operating system reports the source's [sourceGeometry]), and
-  /// [geometryWatchInterval] how often [sourceGeometry] is read again.
+  /// [geometryWatchInterval] how often [sourceGeometry] is read again, and
+  /// [sourceRemovalGrace] how long a removal of the shared source waits to
+  /// be confirmed before the share ends.
   ScreenShareSource({
     MediaBackend backend = const FlutterWebrtcMediaBackend(),
     ScreenShareOptions options = const ScreenShareOptions(),
     super.mutePolicy = MutePolicy.releaseCapture,
     this.sourceWatchInterval = const Duration(seconds: 3),
     this.geometryWatchInterval = const Duration(milliseconds: 500),
+    this.sourceRemovalGrace = const Duration(milliseconds: 500),
   }) : _media = backend,
        _wantedOptions = options,
        super(kind: TrackKind.video, source: TrackSource.screen);
@@ -110,6 +113,13 @@ class ScreenShareSource extends LocalMediaSource {
   /// the platform reports geometry).
   final Duration geometryWatchInterval;
 
+  /// How long a reported removal of the shared source waits before the
+  /// share ends with [ScreenShareEndReason.sourceClosed]. Listing the
+  /// sources from scratch (`getSources`, which a source picker does when it
+  /// opens) reports every source removed and then added again, so a removal
+  /// followed by an addition of the same source within this time is ignored.
+  final Duration sourceRemovalGrace;
+
   /// How long a release waits on iOS for the extension to report the end
   /// of the broadcast, so the next share doesn't find it still running.
   static const _broadcastEndTimeout = Duration(seconds: 3);
@@ -121,6 +131,8 @@ class ScreenShareSource extends LocalMediaSource {
   ScreenShareEndReason? _endReason;
   bool _serviceRunning = false;
   StreamSubscription<ScreenSource>? _removedSubscription;
+  StreamSubscription<ScreenSource>? _addedSubscription;
+  Timer? _removalTimer;
   StreamSubscription<String?>? _serviceStoppedSubscription;
   StreamSubscription<BroadcastExtensionEvent>? _broadcastSubscription;
   bool _broadcastFinished = false;
@@ -625,9 +637,20 @@ class ScreenShareSource extends LocalMediaSource {
     if (sourceId == null || capturer == null) return;
     _removedSubscription = capturer.onRemoved
         .where((source) => source.id == sourceId)
-        .listen(
-          (_) => _endedExternally(video, ScreenShareEndReason.sourceClosed),
-        );
+        .listen((_) {
+          _removalTimer?.cancel();
+          _removalTimer = Timer(
+            sourceRemovalGrace,
+            () => _endedExternally(video, ScreenShareEndReason.sourceClosed),
+          );
+        });
+    // Listed again: the removal came from a scan from scratch.
+    _addedSubscription = capturer.onAdded
+        .where((source) => source.id == sourceId)
+        .listen((_) {
+          _removalTimer?.cancel();
+          _removalTimer = null;
+        });
     // The capturer only reports removals while someone re-scans. A re-scan
     // is expensive: the plugin lists every window and screen and renders
     // their thumbnails on the platform thread (2–7 s each on a loaded Mac,
@@ -662,8 +685,12 @@ class ScreenShareSource extends LocalMediaSource {
     // Not awaited: cancelling a broadcast subscription takes effect at once,
     // and its future (the root zone's null future) never completes under
     // fake_async, which would stall the release in tests.
+    _removalTimer?.cancel();
+    _removalTimer = null;
     unawaited(_removedSubscription?.cancel());
     _removedSubscription = null;
+    unawaited(_addedSubscription?.cancel());
+    _addedSubscription = null;
     unawaited(_serviceStoppedSubscription?.cancel());
     _serviceStoppedSubscription = null;
     _stopBroadcastEvents();
