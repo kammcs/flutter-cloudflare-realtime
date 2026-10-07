@@ -319,7 +319,8 @@ int _onMonitor(
 /// - **Windows:** the window source ID is the `HWND` in decimal (as
 ///   `flutter_webrtc`'s loopback-audio code parses it). The frame is
 ///   `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`, else
-///   `GetWindowRect`; a minimized window (`IsIconic`) has none.
+///   `GetWindowRect`; a hidden window (not `IsWindowVisible`, such as one
+///   an app hid to the tray) or a minimized one (`IsIconic`) has none.
 ///
 /// Coordinates are physical pixels for a per-monitor DPI-aware process,
 /// which Flutter's Windows runner is (its manifest).
@@ -346,6 +347,8 @@ class WindowsScreenGeometry implements NativeScreenGeometry {
       .lookupFunction<_HwndPredicateNative, _HwndPredicate>('IsWindow');
   late final _isIconic = _user32
       .lookupFunction<_HwndPredicateNative, _HwndPredicate>('IsIconic');
+  late final _isWindowVisible = _user32
+      .lookupFunction<_HwndPredicateNative, _HwndPredicate>('IsWindowVisible');
   late final _getWindowRect = _user32
       .lookupFunction<_GetWindowRectNative, _GetWindowRect>('GetWindowRect');
   late final _GetDpiForMonitor? _getDpiForMonitor = () {
@@ -466,7 +469,11 @@ class WindowsScreenGeometry implements NativeScreenGeometry {
     final handle = int.tryParse(id);
     if (handle == null || handle <= 0) return null;
     final window = Pointer<Void>.fromAddress(handle);
-    if (_isWindow(window) == 0 || _isIconic(window) != 0) return null;
+    if (_isWindow(window) == 0 ||
+        _isWindowVisible(window) == 0 ||
+        _isIconic(window) != 0) {
+      return null;
+    }
     final rect = _alloc(16).cast<Int32>();
     if (rect == nullptr) return null;
     try {
