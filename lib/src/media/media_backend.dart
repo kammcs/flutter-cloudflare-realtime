@@ -233,4 +233,10 @@ abstract interface class DesktopCapturerBackend {
   /// while running (`ScreenShareSource.sourceGeometry`), so it should be
   /// cheap. A fake that has no geometry can answer `null`.
   Future<ScreenGeometry?> geometryOf(ScreenSource source);
+
+  /// Why [source] has no geometry now ([geometryOf] answers `null`): its
+  /// window was closed, hidden or minimized, or its display disconnected.
+  /// `null` if it still has geometry, or where the operating system can't
+  /// tell (see [ScreenSourceEndCause]). A fake can answer `null`.
+  Future<ScreenSourceEndCause?> endCauseOf(ScreenSource source);
 }

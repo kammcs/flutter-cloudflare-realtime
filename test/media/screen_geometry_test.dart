@@ -11,6 +11,7 @@ class FakeNativeGeometry implements NativeScreenGeometry {
 
   List<NativeDisplay> displayList;
   final Map<String, Rect> windows;
+  final Map<String, ScreenSourceEndCause> windowEndCauses = {};
   Object? error;
   int displayCalls = 0;
 
@@ -25,6 +26,12 @@ class FakeNativeGeometry implements NativeScreenGeometry {
   Rect? windowFrame(String id) {
     if (error case final error?) throw error;
     return windows[id];
+  }
+
+  @override
+  ScreenSourceEndCause? windowEndCause(String id) {
+    if (error case final error?) throw error;
+    return windowEndCauses[id];
   }
 }
 
@@ -138,6 +145,40 @@ void main() {
       final moved = lookup.geometryOf(ScreenSourceType.window, '100')!;
       expect(moved.bounds, const Rect.fromLTWH(1600, 0, 800, 600));
       expect(moved.scaleFactor, 1.5, reason: 'now on the right monitor');
+    });
+  });
+
+  group('end causes', () {
+    test('a display no longer listed was disconnected', () {
+      expect(lookup.endCauseOf(ScreenSourceType.screen, '1'), isNull);
+      expect(
+        lookup.endCauseOf(ScreenSourceType.screen, '9'),
+        ScreenSourceEndCause.closed,
+      );
+    });
+
+    test('a window answers what the platform says', () {
+      native.windowEndCauses['400'] = ScreenSourceEndCause.hidden;
+      native.windowEndCauses['500'] = ScreenSourceEndCause.minimized;
+      expect(lookup.endCauseOf(ScreenSourceType.window, '100'), isNull);
+      expect(
+        lookup.endCauseOf(ScreenSourceType.window, '400'),
+        ScreenSourceEndCause.hidden,
+      );
+      expect(
+        lookup.endCauseOf(ScreenSourceType.window, '500'),
+        ScreenSourceEndCause.minimized,
+      );
+    });
+
+    test('are null when the platform fails or there is none', () {
+      native.error = StateError('EnumDisplayMonitors failed');
+      expect(lookup.endCauseOf(ScreenSourceType.screen, '9'), isNull);
+      expect(lookup.endCauseOf(ScreenSourceType.window, '400'), isNull);
+      expect(
+        ScreenGeometryLookup(null).endCauseOf(ScreenSourceType.window, '1'),
+        isNull,
+      );
     });
   });
 

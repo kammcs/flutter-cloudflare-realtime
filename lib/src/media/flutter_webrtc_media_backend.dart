@@ -584,4 +584,8 @@ class _FlutterWebrtcDesktopCapturer implements DesktopCapturerBackend {
   @override
   Future<ScreenGeometry?> geometryOf(ScreenSource source) async =>
       _geometry.geometryOf(source.type, source.id);
+
+  @override
+  Future<ScreenSourceEndCause?> endCauseOf(ScreenSource source) async =>
+      _geometry.endCauseOf(source.type, source.id);
 }

@@ -65,6 +65,9 @@ class _Desktop implements DesktopCapturerBackend {
   Stream<ScreenSource> get onThumbnailChanged => const Stream.empty();
   @override
   Future<ScreenGeometry?> geometryOf(ScreenSource source) async => null;
+
+  @override
+  Future<ScreenSourceEndCause?> endCauseOf(ScreenSource source) async => null;
 }
 
 const _screen = ScreenSource(

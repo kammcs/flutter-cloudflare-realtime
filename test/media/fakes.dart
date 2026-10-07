@@ -435,6 +435,13 @@ class FakeDesktopCapturer implements DesktopCapturerBackend {
   /// What [geometryOf] answers, by source ID; `null` for the rest.
   final Map<String, ScreenGeometry?> geometries = {};
 
+  /// What [endCauseOf] answers, by source ID; `null` for the rest.
+  final Map<String, ScreenSourceEndCause> endCauses = {};
+
+  @override
+  Future<ScreenSourceEndCause?> endCauseOf(ScreenSource source) async =>
+      endCauses[source.id];
+
   /// The next [geometryOf] calls throw these, in order.
   final List<Object> geometryErrors = [];
 

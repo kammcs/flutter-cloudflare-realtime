@@ -116,6 +116,7 @@ void main() {
       expect(h.announced('alice')!.tracks, hasLength(2));
       expect(bob.participant('alice')!.screenAudio, isNotNull);
 
+      desktop.endCauses[_screen1.id] = ScreenSourceEndCause.closed;
       desktop.removed.add(_screen1);
       // The share waits for the removal to be confirmed.
       await Future<void>.delayed(const Duration(milliseconds: 600));
@@ -130,6 +131,10 @@ void main() {
       expect(
         unpublished.map((e) => e.endReason),
         everyElement(ScreenShareEndReason.sourceClosed),
+      );
+      expect(
+        unpublished.map((e) => e.sourceEndCause),
+        everyElement(ScreenSourceEndCause.closed),
       );
       expect(h.closesOf(alice), hasLength(2));
       await alice.leave();
