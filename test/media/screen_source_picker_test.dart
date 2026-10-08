@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
@@ -219,6 +220,28 @@ void main() {
       async.flushMicrotasks();
       async.elapse(const Duration(seconds: 30));
       expect(desktop.updateSourcesCalls, 3);
+    });
+  });
+
+  test('skips a re-scan while the last one is still running', () {
+    fakeAsync((async) {
+      final slow = Completer<void>();
+      desktop.updateSourcesGate = slow.future;
+      final timed = ScreenSourcePicker(
+        backend: backend,
+        refreshInterval: const Duration(seconds: 3),
+      );
+      timed.start();
+      async.flushMicrotasks();
+      expect(desktop.updateSourcesCalls, 1);
+      async.elapse(const Duration(seconds: 7));
+      expect(desktop.updateSourcesCalls, 1);
+      slow.complete();
+      desktop.updateSourcesGate = null;
+      async.elapse(const Duration(seconds: 3));
+      expect(desktop.updateSourcesCalls, 2);
+      timed.dispose();
+      async.flushMicrotasks();
     });
   });
 

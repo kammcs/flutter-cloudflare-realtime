@@ -161,6 +161,9 @@ class ScreenSourcePicker {
   bool _disposed = false;
   bool _listed = false;
 
+  /// Whether an `updateSources` re-scan is in flight.
+  bool _updating = false;
+
   /// The last non-empty thumbnail seen per source ID, so that a new listing
   /// (which carries none) keeps them.
   final Map<String, Uint8List> _thumbnails = {};
@@ -274,11 +277,16 @@ class ScreenSourcePicker {
   }
 
   Future<void> _update() async {
-    if (_disposed) return;
+    // A re-scan can outlast the interval (macOS waits for the thumbnails
+    // still being captured): skip the tick rather than queue another.
+    if (_disposed || _updating) return;
+    _updating = true;
     try {
       await _media.desktopCapturer!.updateSources(types: types);
     } catch (error) {
       RealtimeLog.warning('updateSources failed', error: error);
+    } finally {
+      _updating = false;
     }
   }
 
