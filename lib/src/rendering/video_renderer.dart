@@ -58,11 +58,6 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
   /// The stream the native renderer was last given, or `null` for none.
   MediaStream? _attached;
 
-  /// Runs from the moment the native renderer last stopped showing a
-  /// stream (frames may still be in flight until then); `null` while it
-  /// shows one, and before it ever has.
-  Stopwatch? _sinceDetached;
-
   @override
   Future<void> initialize() => _renderer.initialize();
 
@@ -73,7 +68,6 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
     if (stream == null) {
       await _detach();
     } else {
-      _sinceDetached = null;
       _renderer.srcObject = stream;
     }
   }
@@ -88,7 +82,6 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
     } catch (_) {
       // Nothing attached natively.
     }
-    _sinceDetached = Stopwatch()..start();
   }
 
   @override
@@ -114,22 +107,6 @@ class FlutterWebrtcVideoRenderer implements VideoRenderer {
       _attached = null;
       await _detach();
     }
-    // flutter_webrtc's Darwin renderer queues a block on the main queue
-    // for each frame, which reads the renderer through a weak reference
-    // without a nil check: a block that runs after the renderer is
-    // released crashes the app. Let the blocks of the last frames run
-    // first (docs/design.md §4.3, Releasing a native renderer): 250 ms
-    // after the detach, which may have happened long ago (a muted
-    // camera). Fixed upstream by flutter-webrtc PR #2190 (after
-    // 1.6.2+hotfix.3): drop the wait once a release has it.
-    final since = _sinceDetached?.elapsed;
-    if (since != null && since < _releaseDelay) {
-      await Future<void>.delayed(_releaseDelay - since);
-    }
     await _renderer.dispose();
   }
-
-  /// How long [dispose] waits between detaching the stream and releasing
-  /// the native renderer.
-  static const _releaseDelay = Duration(milliseconds: 250);
 }

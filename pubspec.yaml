@@ -41,7 +41,7 @@ dependencies:
   collection: ^1.19.0
   # The web audio sink reads the JS track behind flutter_webrtc's web track.
   dart_webrtc: ^1.8.0
-  flutter_webrtc: ^1.6.2
+  flutter_webrtc: ^1.6.2+hotfix.4
   http: ^1.6.0
   web: ^1.1.0
 
