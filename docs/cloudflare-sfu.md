@@ -157,7 +157,7 @@ From source 4c, checked 2026-10-04 for the media-state proposal ([design.md §9.
 
 ## `flutter_webrtc` baseline
 
-- **Version:** 1.6.2+hotfix.3 (2026-09-15, libwebrtc m150).
+- **Version:** 1.6.2+hotfix.4 (2026-10-07, libwebrtc m150), the package's lower bound: it fixes a Darwin renderer crash ([design.md §4.3](design.md#43-room), Releasing a native renderer).
 - **Supports:** audio and video, data channels, screen capture, simulcast and E2EE on Android, iOS, Web, macOS and Windows.
 - **Maturity:** production-grade. LiveKit and Stream sponsor it and build their SDKs on it.
 - **macOS:** 1.6.0 removed a private API so apps pass App Store review.

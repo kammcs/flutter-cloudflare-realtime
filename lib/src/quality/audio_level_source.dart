@@ -67,8 +67,8 @@ typedef InboundAudioResolver = String? Function(InboundAudioStream stream);
 /// polls, so the first poll of such a stream has no reading; if the
 /// duration didn't grow (no audio arrived), the level is 0.
 ///
-/// **What `flutter_webrtc` 1.6.x reports** (checked against 1.6.2+hotfix.3
-/// and `dart_webrtc` 1.8.2):
+/// **What `flutter_webrtc` 1.6.x reports** (checked against 1.6.2+hotfix.3,
+/// unchanged in hotfix.4, and `dart_webrtc` 1.8.2):
 ///
 /// - All platforms return the standard W3C stats: `type`, then the
 ///   members in `values` (native platforms copy libwebrtc's members,

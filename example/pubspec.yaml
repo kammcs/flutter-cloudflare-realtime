@@ -12,7 +12,7 @@ dependencies:
     path: ../
   flutter:
     sdk: flutter
-  flutter_webrtc: ^1.6.2
+  flutter_webrtc: ^1.6.2+hotfix.4
   web_socket_channel: ^3.0.3
 
 dev_dependencies:
