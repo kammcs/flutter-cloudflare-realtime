@@ -414,9 +414,13 @@ class FakeDesktopCapturer implements DesktopCapturerBackend {
     return sources.where((s) => types.contains(s.type)).toList();
   }
 
+  /// While set, [updateSources] waits for it, like a slow re-scan.
+  Future<void>? updateSourcesGate;
+
   @override
   Future<bool> updateSources({required Set<ScreenSourceType> types}) async {
     updateSourcesCalls++;
+    await updateSourcesGate;
     return true;
   }
 
