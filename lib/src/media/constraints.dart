@@ -163,6 +163,7 @@ final class ScreenShareOptions {
     this.frameRate = 15,
     this.captureAudio = false,
     this.showCursor,
+    this.hideSystemBorder = false,
     this.broadcastScale = 0.5,
     this.broadcastStartTimeout = const Duration(seconds: 60),
   }) : assert(
@@ -190,6 +191,16 @@ final class ScreenShareOptions {
   /// default (`Helper.screenCaptureShowCursor` on desktop).
   final bool? showCursor;
 
+  /// Windows only: ask Windows not to draw its yellow capture border around
+  /// a shared window, for an app that draws its own frame. Windows removes
+  /// it only on Windows 11, through Windows.Graphics.Capture, and only when
+  /// it grants the app borderless capture; elsewhere the border stays.
+  /// [ScreenShareSource.systemBorderHidden] says whether it is off for the
+  /// running share. Needs a `flutter_webrtc` with window capture through
+  /// Windows.Graphics.Capture (`docs/design.md` §10); stock 1.6.2 ignores
+  /// it. Ignored for screens and on other platforms.
+  final bool hideSystemBorder;
+
   /// iOS only: the factor the broadcast extension scales the screen by
   /// before sending it to the app, in (0, 1]. The default, 0.5, sends a
   /// 1179×2556 screen as 590×1278: legible text at a fraction of the work,
@@ -209,12 +220,14 @@ final class ScreenShareOptions {
     int? frameRate,
     bool? captureAudio,
     bool? showCursor,
+    bool? hideSystemBorder,
     double? broadcastScale,
     Duration? broadcastStartTimeout,
   }) => ScreenShareOptions(
     frameRate: frameRate ?? this.frameRate,
     captureAudio: captureAudio ?? this.captureAudio,
     showCursor: showCursor ?? this.showCursor,
+    hideSystemBorder: hideSystemBorder ?? this.hideSystemBorder,
     broadcastScale: broadcastScale ?? this.broadcastScale,
     broadcastStartTimeout: broadcastStartTimeout ?? this.broadcastStartTimeout,
   );
@@ -225,6 +238,7 @@ final class ScreenShareOptions {
       other.frameRate == frameRate &&
       other.captureAudio == captureAudio &&
       other.showCursor == showCursor &&
+      other.hideSystemBorder == hideSystemBorder &&
       other.broadcastScale == broadcastScale &&
       other.broadcastStartTimeout == broadcastStartTimeout;
 
@@ -233,6 +247,7 @@ final class ScreenShareOptions {
     frameRate,
     captureAudio,
     showCursor,
+    hideSystemBorder,
     broadcastScale,
     broadcastStartTimeout,
   );
@@ -314,6 +329,7 @@ Map<String, dynamic> desktopScreenConstraints(
     'mandatory': {'frameRate': options.frameRate.toDouble()},
     if (options.showCursor != null)
       'cursor': options.showCursor! ? 'always' : 'never',
+    if (options.hideSystemBorder) 'borderless': true,
   },
 };
 

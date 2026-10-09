@@ -132,6 +132,7 @@ class ScreenShareSource extends LocalMediaSource {
   ScreenShareOptions _wantedOptions;
   ScreenSource? _selected;
   String? _capturedSourceId;
+  bool _systemBorderHidden = false;
   ScreenShareOptions? _capturedOptions;
   ScreenShareEndReason? _endReason;
   ScreenSourceEndCause? _pendingEndCause;
@@ -243,6 +244,15 @@ class ScreenShareSource extends LocalMediaSource {
   /// [sourceGeometry], replaying the current value to each new listener,
   /// then each change.
   Stream<ScreenGeometry?> get sourceGeometryChanges => _sourceGeometry.stream;
+
+  /// Whether the operating system's own capture border is off for the
+  /// running share: on Windows, when [ScreenShareOptions.hideSystemBorder]
+  /// was asked for and Windows granted it (`MediaStreamTrack.getSettings()`
+  /// `borderless`). `false` everywhere else, and while nothing is shared.
+  /// Set before the share's track, so it is current when [trackChanges]
+  /// reports the track. An app that draws its own frame around the shared
+  /// window should draw it only when this is `true`.
+  bool get systemBorderHidden => _systemBorderHidden;
 
   /// Sets the source (desktop) and options for the next capture. If a share
   /// is running, it switches to the new source and waits for that.
@@ -405,6 +415,7 @@ class ScreenShareSource extends LocalMediaSource {
     }
     _capturedSourceId = wantedId;
     _capturedOptions = _wantedOptions;
+    _systemBorderHidden = videoTracks.first.getSettings()['borderless'] == true;
     _endReason = null;
     final audioTracks = stream.getAudioTracks();
     final video = CapturedTrack(track: videoTracks.first, stream: stream);
@@ -769,6 +780,7 @@ class ScreenShareSource extends LocalMediaSource {
     }
     _capturedSourceId = null;
     _capturedOptions = null;
+    _systemBorderHidden = false;
     _audioTrack.set(null);
     setTrack(null);
     // The capture first, then its foreground service (Android) or the

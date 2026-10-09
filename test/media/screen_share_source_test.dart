@@ -62,6 +62,40 @@ void main() {
       },
     );
 
+    test('reports whether the system border is off for the share', () async {
+      var borderless = true;
+      backend.onDisplayMedia = (constraints) async => FakeStream([
+        FakeTrack(kind: 'video', settings: {'borderless': borderless}),
+      ]);
+      final share = ScreenShareSource(
+        backend: backend,
+        options: const ScreenShareOptions(hideSystemBorder: true),
+      );
+      expect(share.systemBorderHidden, isFalse);
+      bool? whenTrackSet;
+      final subscription = share.trackChanges.listen((track) {
+        if (track != null) whenTrackSet = share.systemBorderHidden;
+      });
+      await share.start(source: window1);
+      expect(
+        (backend.displayMediaCalls.single['video'] as Map)['borderless'],
+        isTrue,
+      );
+      expect(share.systemBorderHidden, isTrue);
+      await pumpEventQueue();
+      expect(whenTrackSet, isTrue);
+
+      await share.stop();
+      expect(share.systemBorderHidden, isFalse);
+
+      // Windows kept its border (Windows 10, or borderless not granted).
+      borderless = false;
+      await share.start(source: window1);
+      expect(share.systemBorderHidden, isFalse);
+      await subscription.cancel();
+      await share.dispose();
+    });
+
     test('requires a source', () async {
       final share = ScreenShareSource(backend: backend);
       expect(() => share.start(), throwsArgumentError);

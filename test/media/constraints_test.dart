@@ -151,6 +151,31 @@ void main() {
     );
   });
 
+  test('desktop screen constraints ask for borderless only when wanted', () {
+    expect(
+      desktopScreenConstraints(
+        const ScreenShareOptions(hideSystemBorder: true),
+        sourceId: '42',
+      ),
+      {
+        'audio': false,
+        'video': {
+          'deviceId': {'exact': '42'},
+          'mandatory': {'frameRate': 15.0},
+          'borderless': true,
+        },
+      },
+    );
+    expect(
+      (desktopScreenConstraints(
+            const ScreenShareOptions(),
+            sourceId: '42',
+          )['video']
+          as Map),
+      isNot(contains('borderless')),
+    );
+  });
+
   test('web screen constraints leave the source to the browser', () {
     expect(
       webScreenConstraints(
