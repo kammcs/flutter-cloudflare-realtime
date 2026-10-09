@@ -57,6 +57,8 @@ your app ── Signaling (your presence transport) ──► other participants
 flutter pub add cloudflare_realtime
 ```
 
+Until 0.1.0 is on pub.dev, depend on it from git and pin a `v0.1.0-dev.N` tag: [doc/versioning.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/versioning.md) says how, and what each version change means.
+
 Then follow the setup for each platform you ship: [Android](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/android.md), [iOS](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/ios.md), [macOS](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/macos.md), [Windows](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/windows.md) and [web](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md). At a minimum: camera and microphone permissions (Android) or usage descriptions (iOS, macOS), and the sandbox entitlements on macOS.
 
 ## Quick start
@@ -198,6 +200,7 @@ Widget tests (`testWidgets`, or anything under `fake_async`) run in fake time, a
 |---|---|
 | [API reference](https://pub.dev/documentation/cloudflare_realtime/latest/) | Every public class and member |
 | [doc/](https://github.com/kammcs/flutter-cloudflare-realtime/tree/main/doc) | Setup for each platform |
+| [doc/versioning.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/versioning.md) | Dev tags before 0.1.0, semantic versions after, and the `flutter_webrtc` fork's tags |
 | [doc/migrating-to-0.1.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/migrating-to-0.1.md) | The renames of the 0.1.0 API cleanup, for code written against the pre-release API |
 | [docs/design.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md) | Architecture, the broker contract, simulcast, reconnection, DataChannels, platform notes |
 | [docs/cloudflare-sfu.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/cloudflare-sfu.md) | What the SFU API provides, and its rules |
