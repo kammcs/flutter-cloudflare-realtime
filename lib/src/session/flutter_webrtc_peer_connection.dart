@@ -5,6 +5,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../broker/models/common.dart';
 import '../util/native_negotiation.dart';
+import 'data_channel_retransmits_native.dart'
+    if (dart.library.js_interop) 'data_channel_retransmits_web.dart';
 import 'peer_connection.dart';
 import 'publish_options.dart';
 
@@ -268,7 +270,11 @@ class FlutterWebrtcPeerConnection implements PeerConnection {
       // decoding can reorder messages).
       ..binaryType = 'binary';
     if (maxRetransmits != null) init.maxRetransmits = maxRetransmits;
-    final channel = await _pc.createDataChannel(label, init);
+    // On the web, dart_webrtc drops maxRetransmits: 0 (docs/design.md §9).
+    final channel = await withBrowserMaxRetransmits(
+      maxRetransmits,
+      () => _pc.createDataChannel(label, init),
+    );
     _dataChannels
       ..removeWhere(
         (c) => c.state == webrtc.RTCDataChannelState.RTCDataChannelClosed,
@@ -504,8 +510,8 @@ class _FlutterWebrtcTransceiver implements PeerTransceiver {
 /// become reliable on native platforms, breaking the SFU's rule that every
 /// endpoint mirrors the channel's delivery policy. Android, Darwin and the
 /// C++ desktop plugin all apply the key when present. (The web
-/// implementation doesn't use `toMap()` and drops 0 as well; see
-/// `docs/design.md` §9.)
+/// implementation doesn't use `toMap()` and drops 0 as well; there
+/// `withBrowserMaxRetransmits` adds it. See `docs/design.md` §9.)
 class _NegotiatedDataChannelInit extends webrtc.RTCDataChannelInit {
   @override
   Map<String, dynamic> toMap() => {

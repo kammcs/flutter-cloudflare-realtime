@@ -28,6 +28,8 @@ Dev tags (`v0.1.0-dev.N`, [doc/versioning.md](https://github.com/kammcs/flutter-
 - **Breaking: DataChannel sends report failure and never throw** (`docs/design.md` §9, Sending; [doc/migrating-to-0.1.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/migrating-to-0.1.md) §6). `send` and `sendText` on `SfuDataChannel` and `RemoteDataSubscription` return `Future<bool>`: `false` when the channel isn't open, a subscriber lacks `canReply`, or the platform refuses the message. They used to throw a `StateError` synchronously. Code that ignored the result still compiles and works; replace a `try`/`catch` on `StateError` with a check of the result.
 - **`isOpen` and `state` see a DataChannel's close at once.** The platforms mark a channel closed a microtask before its state event reaches the package, and in that window `isOpen` said open, so a send right after a close threw even when the app checked first (a consuming app's viewer crashed from a timer on this). The channel is now interrupted as soon as its underlying channel reads closing or closed; `stateChanges` follows as before.
 
+- **Web: unreliable DataChannels are no longer retransmitted** (`docs/design.md` §9, Web). `dart_webrtc` (1.8.2) passes `maxRetransmits` to the browser only when it is above 0, so a channel with `DataChannelProfile.unreliable` was unordered but still retransmitted in a browser, while native ends weren't. The package now adds `maxRetransmits: 0` itself, checked in Chrome under DDC and WebAssembly.
+
 #### v0.1.0-dev.1 (2026-10-09)
 
 The first dev tag: everything below. Code written against the API before the 0.1.0 cleanup: [doc/migrating-to-0.1.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/migrating-to-0.1.md).
