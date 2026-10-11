@@ -170,11 +170,12 @@ class RemoteDataSubscription {
   /// [SfuDataChannel.whenOpen].
   Future<void> whenOpen() => _channel.whenOpen();
 
-  /// Sends [data] back to the publisher. Needs [canReply].
-  Future<void> send(Uint8List data) => _channel.send(data);
+  /// Sends [data] back to the publisher. Needs [canReply]. Completes with
+  /// false if it couldn't be sent; never throws. See [SfuDataChannel.send].
+  Future<bool> send(Uint8List data) => _channel.send(data);
 
-  /// Sends [text] back to the publisher. Needs [canReply].
-  Future<void> sendText(String text) => _channel.sendText(text);
+  /// Sends [text] back to the publisher. See [send].
+  Future<bool> sendText(String text) => _channel.sendText(text);
 
   /// Grants or revokes [canReply]. See [RemoteDataChannel.setCanReply].
   Future<void> setCanReply(bool canReply) => _channel.setCanReply(canReply);
