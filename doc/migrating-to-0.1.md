@@ -5,6 +5,7 @@ Before its first release on pub.dev, the API was cleaned up in one breaking pass
 The analyzer finds almost everything: a stream used as a value, or a value used as a stream, no longer type-checks. Two kinds of change it can't flag on their own:
 
 - **A getter that kept its name but changed meaning.** `room.participants`, `room.connectionState`, `room.activeSpeakers`, `room.dominantSpeaker`, `room.stats`, `room.audioRoutes`, `publication.track` and `publication.stats` (and the others marked "now the value" below) used to be streams and are now values. Code that only passes them to something taking `Object?` (string interpolation, `print`, `expect(x, isNotNull)`) still compiles. Search for them.
+- **DataChannel sends that used to throw.** `send` and `sendText` (on `SfuDataChannel` and `RemoteDataSubscription`) complete with `false` instead of throwing a `StateError` (section 6). A `try`/`catch` around them still compiles but never catches. Search for them.
 - **Polling of stats.** Reading `room.stats` (now a `RoomStats?`) doesn't start polling; listening to `room.statsChanges` does, as listening to the old `room.stats` stream did.
 
 A safe order: rename the streams first (`.participants` → `.participantsChanges`), then the `current…` getters (`.currentParticipants` → `.participants`).
@@ -159,3 +160,17 @@ These classes are now `final`: they can't be extended or implemented outside the
 - **Exceptions:** every subtype of `BrokerException` and `SfuSessionException`, `AudioRouteUnavailableException`, `SystemCallException`, and the new `AudioOutputException`.
 
 Still open for mocking (`class MockRoom extends Mock implements Room`): `CloudflareRealtime`, `Room`, `LocalParticipant`, `RemoteParticipant`, `LocalMediaPublication`, `RemoteTrackPublication`, `RemoteTrackLease`, `RoomData`, `RemoteDataSubscription`, the media sources, `MediaDeviceList`, `ScreenSourcePicker`, `SystemCalls`, `SystemCall`, `VoipPush`, and in `broker.dart` `SfuSession`, `LocalTrackPublication`, `RemoteTrackSubscription` and `HttpBrokerClient`. The interfaces you implement (`Signaling`, `BrokerClient`, `MediaBackend` and its parts, `VideoRenderer`, `NetworkChangeSource`, `AppLifecycleSource`, `LayerDemandReporter`) are unchanged.
+
+## 6. DataChannel sends
+
+`send` and `sendText` on `SfuDataChannel` (`LocalDataChannel`, `RemoteDataChannel`) and on `RemoteDataSubscription` return `Future<bool>` and never throw. They used to throw a `StateError` synchronously when the channel wasn't open, or when a subscriber without `canReply` sent. A channel the other end closes could still read as open for a microtask, so a send that checked `isOpen` first could still throw ([docs/design.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/docs/design.md) §9, Sending).
+
+| Before | After |
+|---|---|
+| `try { await channel.send(bytes); } on StateError { ... }` | `if (!await channel.send(bytes)) { ... }` |
+| `send()` throws a `StateError` while the channel isn't open | completes with `false` |
+| `send()` on a `RemoteDataChannel` without `canReply` throws a `StateError` | completes with `false` |
+| A send the platform refuses (the channel closed under it) fails its `Future` | completes with `false` |
+| `isOpen` and `state` follow a close a microtask after the platform reports it | at once |
+
+Code that ignored the result needs no change: `await channel.send(bytes);` still compiles, and drops a message the channel can't take, as before.

@@ -397,15 +397,15 @@ void main() {
       final dc = h.pc.dataChannels.single;
 
       expect(pub.isOpen, isFalse);
-      expect(() => pub.sendText('early'), throwsStateError);
+      expect(await pub.sendText('early'), isFalse);
 
       final opened = pub.whenOpen();
       dc.open();
       await opened;
       expect(pub.state, SfuDataChannelState.open);
 
-      await pub.sendText('hi');
-      await pub.send(Uint8List.fromList([9]));
+      expect(await pub.sendText('hi'), isTrue);
+      expect(await pub.send(Uint8List.fromList([9])), isTrue);
       expect(dc.sent.map((m) => m.isBinary ? m.binary : m.text), [
         'hi',
         [9],
@@ -422,9 +422,46 @@ void main() {
         canReply: true,
       );
       expect(listener.isOpen, isTrue);
-      expect(() => listener.sendText('x'), throwsStateError);
-      await replier.sendText('ack');
+      expect(await listener.sendText('x'), isFalse);
+      expect(h.pc.dataChannels[0].sent, isEmpty);
+      expect(await replier.sendText('ack'), isTrue);
       expect(h.pc.dataChannels[1].sent.single.text, 'ack');
+    });
+
+    test('a close shows at once, before its state event', () async {
+      final session = await h.connect();
+      h.pc.openDataChannelsImmediately = true;
+      final pub = await session.publishDataChannel('input');
+      final dc = h.pc.dataChannels.single;
+      expect(pub.isOpen, isTrue);
+      final states = <SfuDataChannelState>[];
+      pub.stateChanges.listen(states.add);
+      await Future<void>.delayed(Duration.zero);
+
+      // A state read just before the close, then a send just after it.
+      final wasOpen = pub.isOpen;
+      dc.markClosedSilently();
+      final sent = pub.sendText('late');
+
+      expect(wasOpen, isTrue);
+      expect(pub.isOpen, isFalse);
+      expect(pub.state, SfuDataChannelState.interrupted);
+      expect(await sent, isFalse);
+      expect(dc.sent, isEmpty);
+      await Future<void>.delayed(Duration.zero);
+      expect(states, [
+        SfuDataChannelState.open,
+        SfuDataChannelState.interrupted,
+      ]);
+    });
+
+    test('a send the platform refuses completes with false', () async {
+      final session = await h.connect();
+      h.pc.openDataChannelsImmediately = true;
+      final pub = await session.publishDataChannel('input');
+      h.pc.dataChannels.single.failNextSend = StateError('closed');
+      expect(await pub.sendText('x'), isFalse);
+      expect(await pub.sendText('y'), isTrue);
     });
 
     test('bufferedAmount and the low-water mark', () async {

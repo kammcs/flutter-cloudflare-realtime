@@ -66,7 +66,15 @@ sealed class SfuDataChannel {
   int? get id => _id;
 
   /// The channel's state.
-  SfuDataChannelState get state => _state.value;
+  ///
+  /// It follows the underlying channel synchronously: once the platform
+  /// marks that channel closing or closed, this is
+  /// [SfuDataChannelState.interrupted] at once, a microtask before
+  /// [stateChanges] reports it.
+  SfuDataChannelState get state {
+    _checkStillOpen();
+    return _state.value;
+  }
 
   /// [state], replaying the current value to each new listener, then each
   /// change.
@@ -107,26 +115,47 @@ sealed class SfuDataChannel {
 
   /// Sends [data] as a binary message.
   ///
-  /// Throws a [StateError] unless the channel is open (and, on a
-  /// [RemoteDataChannel], subscribed with `canReply`). Check
+  /// Completes with true once the platform accepted the message, and with
+  /// false if it couldn't be sent: the channel isn't open (check [isOpen]),
+  /// a [RemoteDataChannel] lacks `canReply`, or the platform refused it.
+  /// Never throws, so a send racing a close needs no error handling. Check
   /// [bufferedAmount] to avoid queuing too much; see
   /// [bufferedAmountLowThreshold].
-  Future<void> send(Uint8List data) =>
+  Future<bool> send(Uint8List data) =>
       _send(RTCDataChannelMessage.fromBinary(data));
 
   /// Sends [text] as a text message. See [send].
-  Future<void> sendText(String text) => _send(RTCDataChannelMessage(text));
+  Future<bool> sendText(String text) => _send(RTCDataChannelMessage(text));
 
-  Future<void> _send(RTCDataChannelMessage message) {
-    _checkCanSend();
+  Future<bool> _send(RTCDataChannelMessage message) async {
     final channel = _channel;
-    if (channel == null || !isOpen) {
-      throw StateError('The data channel "$name" is not open (${state.name}).');
+    if (channel == null || !isOpen || !_canSend) return false;
+    try {
+      await channel.send(message);
+      return true;
+    } catch (_) {
+      // Closed under us: the platforms throw on a send after a close.
+      return false;
     }
-    return channel.send(message);
   }
 
-  void _checkCanSend() {}
+  /// Whether this end may send at all (a subscriber needs `canReply`).
+  bool get _canSend => true;
+
+  // The platform marks a channel closed before its state event reaches
+  // [_activate]'s listener. Act on the close at once, so [state], [isOpen]
+  // and [send] never see a closed channel as open.
+  void _checkStillOpen() {
+    final channel = _channel;
+    final manager = _manager;
+    if (channel == null || manager == null) return;
+    switch (channel.state) {
+      case RTCDataChannelState.RTCDataChannelClosing ||
+          RTCDataChannelState.RTCDataChannelClosed:
+        manager._lost(this);
+      case _:
+    }
+  }
 
   /// Bytes queued for sending on the current channel. On native platforms
   /// it's the last amount the platform reported, so it lags slightly.
@@ -304,15 +333,10 @@ final class RemoteDataChannel extends SfuDataChannel {
   @override
   String? get _fromSessionId => _remoteSessionId;
 
+  /// Without [canReply], only the publisher sends on the channel. For
+  /// two-way traffic, publish a channel on each side.
   @override
-  void _checkCanSend() {
-    if (!_canReply) {
-      throw StateError(
-        'Subscribed to "$name" without canReply: only the publisher sends '
-        'on it. For two-way traffic, publish a channel on each side.',
-      );
-    }
-  }
+  bool get _canSend => _canReply;
 
   @override
   String toString() =>

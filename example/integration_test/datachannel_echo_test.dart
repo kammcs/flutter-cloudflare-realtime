@@ -20,12 +20,12 @@ import 'broker_settings.dart';
 /// start forwarding shortly after both ends report open.
 Future<T> _sendUntil<T>(
   Future<T> received,
-  Future<void> Function() send,
+  Future<bool> Function() send,
   Duration timeout,
 ) async {
   final timer = Timer.periodic(
     const Duration(milliseconds: 200),
-    (_) => unawaited(send().catchError((Object _) {})),
+    (_) => unawaited(send()),
   );
   try {
     await send();

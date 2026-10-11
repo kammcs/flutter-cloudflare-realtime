@@ -151,6 +151,10 @@ Every `RoomEvent` subtype ends in `Event` and starts with what it is about: `Par
 - **File names** under `lib/src/` (`broker_config.dart`, `active_speaker_config.dart`) still say "config"; they are internal.
 - **Debug hooks** (below).
 
+### 7. DataChannel sends report failure (RTC-24, after the cleanup)
+
+`SfuDataChannel.send`/`sendText` and `RemoteDataSubscription.send`/`sendText` return `Future<bool>` and never throw; `isOpen` and `state` see a close at once. Options weighed: (a) update the state synchronously on a close, (b) report a failed send instead of throwing, (c) keep the API and document the window. (b) is breaking, and before 0.1.0 is the cheap time; (a) alone still left a throw for a subscriber without `canReply` and for a platform's refusal. Chosen: both (b) and (a). `docs/design.md` §9, Sending, has the reasoning; `doc/migrating-to-0.1.md` §6 the change.
+
 ## Kept on purpose
 
 - **Debug hooks.** `Room.debugSimulateConnectionFailure()` and `SfuSession.debugSimulateFailure()` stay public and unannotated: the example app's "simulate network drop" uses them in normal builds, and the integration tests too, so `@visibleForTesting` would flag legitimate demo use. Their docs say "debug and demo only" and that they exercise the real failure path; the `debug` prefix follows Flutter's convention. `SystemCalls.debugReset()` stays `@visibleForTesting`: only tests need to forget the singleton.

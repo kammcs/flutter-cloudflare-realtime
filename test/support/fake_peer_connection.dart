@@ -606,6 +606,10 @@ class FakeDataChannel implements PeerDataChannel {
   /// Closes the channel from the remote side (not through [close]).
   void remoteClose() => _setState(RTCDataChannelState.RTCDataChannelClosed);
 
+  /// Marks the channel closed without firing [onStateChange], as the real
+  /// channel is for a microtask after the platform reports a close.
+  void markClosedSilently() => state = RTCDataChannelState.RTCDataChannelClosed;
+
   void _setState(RTCDataChannelState next) {
     state = next;
     _states.add(next);
