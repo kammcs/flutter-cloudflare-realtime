@@ -9,13 +9,20 @@ dependencies:
   cloudflare_realtime:
     git:
       url: https://github.com/kammcs/flutter-cloudflare-realtime
-      ref: v0.1.0-dev.1
+      ref: v0.1.0-dev.2
 ```
 
 - **Dev tags** are named `v0.1.0-dev.N`, with N counting up. They mark commits that are ready to pin: every check passes, and the changes in them were tested as described in the changelog. Semver orders them before `v0.1.0`.
 - **The changelog says what each tag brings.** In `CHANGELOG.md`, under "Unreleased", the "Development history" list has a heading for each dev tag. The entries under a heading, down to the next one, are what that tag added. Entries above the newest heading are not in any tag yet. Breaking changes are listed first under a heading and start with **Breaking**.
 - **Moving to a newer tag:** read the entries between your tag and the new one. A breaking change names what to change in your code.
 - The `version` in `pubspec.yaml` stays as it is until the 0.1.0 release.
+
+The dev tags so far:
+
+| Tag | Date | Breaking changes |
+|---|---|---|
+| `v0.1.0-dev.1` | 2026-10-09 | None (the first tag). Code from before the 0.1.0 API cleanup: [doc/migrating-to-0.1.md](migrating-to-0.1.md) §1 to §5 |
+| `v0.1.0-dev.2` | 2026-10-11 | DataChannel `send` and `sendText` return `Future<bool>` and never throw: [doc/migrating-to-0.1.md](migrating-to-0.1.md) §6 |
 
 ## From 0.1.0: semantic versions
 
