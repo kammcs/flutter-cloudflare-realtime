@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'broker_settings.dart';
+import 'support/browser_data_channels.dart';
 
 /// Sends with [send] every 200 ms until [received] completes: the SFU may
 /// start forwarding shortly after both ends report open.
@@ -91,6 +92,8 @@ void main() {
 
       // Unreliable (unordered, no retransmits): a loss is fine, so keep
       // sending until one arrives.
+      final browserChannels = BrowserDataChannels();
+      addTearDown(browserChannels.stop);
       final fastLocal = await publisher.publishDataChannel(
         'pointer',
         profile: DataChannelProfile.unreliable,
@@ -102,6 +105,11 @@ void main() {
       );
       await Future.wait([fastLocal.whenOpen(), fastRemote.whenOpen()])
           .timeout(timeout);
+      if (kIsWeb) {
+        // Both ends are in this page. dart_webrtc alone drops a 0
+        // (docs/design.md §9).
+        expect(browserChannels.maxRetransmitsOf('pointer'), [0, 0]);
+      }
       final move = await _sendUntil(
         fastRemote.messages.first,
         () => fastLocal.sendText('move'),
