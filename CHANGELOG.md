@@ -25,6 +25,10 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 
 Dev tags (`v0.1.0-dev.N`, [doc/versioning.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/versioning.md)) head the entries they added. Entries above the newest heading are not in a tag yet.
 
+#### v0.1.0-dev.3 (2026-11-05)
+
+Linux: the platform declared, the screen kept on, the platform in diagnostics, and the Wayland share through the system's dialog. No breaking API change. One behaviour change on Linux in a Wayland session: `FlutterWebrtcMediaBackend.desktopCapturer` is `null` there, so code that assumed a source list on every desktop must check `ScreenShareSource.usesSystemPicker` (or `desktopCapturer != null`).
+
 - **Linux** is a supported platform ([doc/linux.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/linux.md); `docs/design.md` §4.7, §10). It's declared in `pubspec.yaml`, and the example has a Linux runner that builds with the template's `-Wall -Werror`.
   - **Keeping the screen on:** an idle inhibitor through GDBus (`dart:ffi`, no plugin code). The Inhibit portal goes first when it can name the app (a Flatpak, a Snap, or a host app launched under its application ID), else `org.freedesktop.ScreenSaver`, each falling back to the other. GNOME's portal backend refuses host apps without an application ID while the portal still answers.
   - **Wayland screen share through the system's dialog:** in a Wayland session (libwebrtc's rule: `XDG_SESSION_TYPE=wayland` and `WAYLAND_DISPLAY` set), `FlutterWebrtcMediaBackend.desktopCapturer` is `null`. The package never lists sources there, `ScreenSourcePicker.isSupported` is `false`, and `ScreenShareSource.usesSystemPicker` is `true`. `start()` and `publishScreen()` without a source call `getDisplayMedia` with no `deviceId`, so the ScreenCast portal picks. A cancelled dialog isn't an error, and the stream ending ends the share as `userStopped`. This needs the `flutter_webrtc` fork's portal capture.

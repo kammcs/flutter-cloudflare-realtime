@@ -23,6 +23,7 @@ The dev tags so far:
 |---|---|---|
 | `v0.1.0-dev.1` | 2026-10-09 | None (the first tag). Code from before the 0.1.0 API cleanup: [doc/migrating-to-0.1.md](migrating-to-0.1.md) §1 to §5 |
 | `v0.1.0-dev.2` | 2026-10-11 | DataChannel `send` and `sendText` return `Future<bool>` and never throw: [doc/migrating-to-0.1.md](migrating-to-0.1.md) §6 |
+| `v0.1.0-dev.3` | 2026-11-05 | None. On Linux in a Wayland session there's no desktop source list (`desktopCapturer` is `null`; the system's dialog picks) |
 
 ## From 0.1.0: semantic versions
 
