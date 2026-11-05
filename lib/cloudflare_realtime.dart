@@ -27,6 +27,11 @@ export 'src/diagnostics/log.dart'
         CloudflareRealtimeLogRecord,
         CloudflareRealtimeLogger;
 
+// What the package reads about the platform: the OS, and on Linux the
+// display server and the desktop (CloudflareRealtime.platformInfo).
+export 'src/diagnostics/platform_info.dart'
+    show LinuxDisplayServer, LinuxPlatformInfo, RealtimePlatformInfo;
+
 // A debug aid: timing platform calls and event-loop gaps
 // (CloudflareRealtime.debugPlatformCallTiming; design.md §4.2).
 export 'src/diagnostics/platform_call_timing.dart'
