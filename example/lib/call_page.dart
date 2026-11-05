@@ -314,6 +314,34 @@ class _CallPageState extends State<CallPage> {
       await _local.publishScreen();
       return;
     }
+    if (platform.isDesktop && widget.mediaBackend.desktopCapturer == null) {
+      // Linux in a Wayland session: the system's ScreenCast dialog is the
+      // picker. Offer the last pick again, which needs no dialog.
+      final last = _local.lastSystemScreenPick;
+      var restore = false;
+      if (last != null) {
+        final again = await showDialog<bool>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: const Text('Share screen'),
+            children: [
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Share the same again'),
+              ),
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Choose something else…'),
+              ),
+            ],
+          ),
+        );
+        if (again == null) return;
+        restore = again;
+      }
+      await _local.publishScreen(restore: restore ? last : null);
+      return;
+    }
     ScreenSourcePicker? picker;
     if (!web) {
       picker = ScreenSourcePicker(backend: widget.mediaBackend);

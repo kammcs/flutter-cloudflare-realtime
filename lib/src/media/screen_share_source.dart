@@ -15,6 +15,7 @@ import 'media_backend.dart';
 import 'media_errors.dart';
 import 'media_types.dart';
 import 'release.dart';
+import 'system_screen_pick.dart';
 
 /// Why a screen share ended.
 enum ScreenShareEndReason {
@@ -38,9 +39,21 @@ enum ScreenShareEndReason {
 /// A screen, window or browser-tab share, with the same mute model as the
 /// camera and microphone.
 ///
-/// - **Desktop** (Windows, macOS, Linux): pick a [ScreenSource] with a
-///   [ScreenSourcePicker], then [start] with it. The share is captured with
-///   `getDisplayMedia` and `deviceId: {exact: source.id}`.
+/// - **Desktop** (Windows, macOS, Linux on X11): pick a [ScreenSource] with
+///   a [ScreenSourcePicker], then [start] with it. The share is captured
+///   with `getDisplayMedia` and `deviceId: {exact: source.id}`.
+/// - **Linux in a Wayland session:** [start] without a source; the
+///   system's ScreenCast dialog (the portal) is the picker, for screens and
+///   windows alike, and the package never lists sources (its
+///   `desktopCapturer` is `null`, so [ScreenSourcePicker.isSupported] is
+///   `false`). Cancelling the dialog is like cancelling the browser's
+///   picker. [systemPick] then remembers the pick: pass it to [start] as
+///   `restore` to share the same screen or window again with no dialog
+///   ("share it again"), or start without it to let the user choose
+///   ("share something else"). Unmuting with [MutePolicy.releaseCapture]
+///   restores the pick by itself. Another component's PipeWire stream (a
+///   remote-control portal session) can be shared with no dialog:
+///   [start] with a [PipeWireScreenStream].
 /// - **Web:** [start] without a source; the browser shows its own picker.
 ///   If the user cancels it, [start] returns `false` and nothing is
 ///   reported on [errors].
@@ -131,6 +144,15 @@ class ScreenShareSource extends LocalMediaSource {
 
   ScreenShareOptions _wantedOptions;
   ScreenSource? _selected;
+  // Linux: the system's dialog (Wayland) or another component's PipeWire
+  // stream. Each start() is a new request: a running share is captured
+  // again for it.
+  SystemScreenPick? _wantedPick;
+  PipeWireScreenStream? _wantedStream;
+  int _systemRequest = 0;
+  int? _capturedRequest;
+  PipeWireScreenStream? _capturedStream;
+  SystemScreenPick? _systemPick;
   String? _capturedSourceId;
   bool _systemBorderHidden = false;
   ScreenShareOptions? _capturedOptions;
@@ -174,14 +196,48 @@ class ScreenShareSource extends LocalMediaSource {
       _service != null ||
       _broadcast != null;
 
-  /// Whether the browser (web), the system's consent dialog (Android) or
-  /// its broadcast picker (iOS) picks what to share, rather than the app
-  /// passing a [ScreenSource] (desktop). When `true`, call [start] without
-  /// a source.
+  /// Whether the browser (web), the system's consent dialog (Android), its
+  /// broadcast picker (iOS) or its ScreenCast dialog (Linux in a Wayland
+  /// session) picks what to share, rather than the app passing a
+  /// [ScreenSource] (other desktops). When `true`, call [start] without a
+  /// source.
   bool get usesSystemPicker =>
       _media.platform == MediaPlatform.web ||
       _service != null ||
-      _broadcast != null;
+      _broadcast != null ||
+      _desktopSystemPicker;
+
+  /// A desktop with no source list: Linux in a Wayland session, where the
+  /// backend has no `desktopCapturer` and the ScreenCast portal picks.
+  bool get _desktopSystemPicker =>
+      _media.platform.isDesktop && _media.desktopCapturer == null;
+
+  /// What the user picked in the system's ScreenCast dialog for the running
+  /// share, or the last one (Linux in a Wayland session); `null` elsewhere,
+  /// before the first such share, and when `flutter_webrtc` reported no
+  /// restore ID. Pass it to [start] as `restore` to share it again with no
+  /// dialog.
+  SystemScreenPick? get systemPick => _systemPick;
+
+  /// Replaces the geometry of the shared [PipeWireScreenStream] (say, once
+  /// the remote-control session knows the monitor's scale): it becomes
+  /// [sourceGeometry] while that stream is shared, and is kept for a
+  /// capture again of the same stream. Does nothing for other shares.
+  void updatePipeWireGeometry(ScreenGeometry? geometry) {
+    final wanted = _wantedStream;
+    if (wanted == null) return;
+    _wantedStream = PipeWireScreenStream(
+      fd: wanted.fd,
+      nodeId: wanted.nodeId,
+      geometry: geometry,
+      type: wanted.type,
+    );
+    if (_capturedStream == wanted &&
+        track != null &&
+        !_sourceGeometry.isClosed) {
+      _sourceGeometry.set(geometry);
+    }
+  }
 
   /// Whether the browser picks the source (web). See [usesSystemPicker],
   /// which also covers Android's consent dialog.
@@ -230,8 +286,11 @@ class ScreenShareSource extends LocalMediaSource {
   ScreenSourceEndCause? get endCause => _endCause;
 
   /// Where the shared display or window is on the desktop, and its scale,
-  /// while a desktop share runs on macOS or Windows; `null` otherwise, and
-  /// while the operating system can't say (on Windows, a minimized window).
+  /// while a desktop share runs on macOS or Windows, or a
+  /// [PipeWireScreenStream] with a geometry on Linux (in the compositor's
+  /// logical coordinates, as its owner gave them); `null` otherwise
+  /// (a share picked in Linux's ScreenCast dialog has none), and while the
+  /// operating system can't say (on Windows, a minimized window).
   ///
   /// Read when the share starts, then every [geometryWatchInterval], so it
   /// follows a window that moves or is resized and a display whose
@@ -267,16 +326,61 @@ class ScreenShareSource extends LocalMediaSource {
       );
     }
     _selected = source;
+    _wantedStream = null;
     if (options != null) _wantedOptions = options;
     return requestReconcile();
   }
 
-  /// Starts sharing [source] (desktop), or asks the browser to show its
-  /// picker (web), the system its consent dialog (Android) or its
-  /// broadcast picker (iOS); there [source] must be `null`
-  /// ([usesSystemPicker]).
+  /// Sets what the next capture shares on Linux, without starting it:
+  /// [restore], a pick from the system's ScreenCast dialog to share again
+  /// with no dialog (in a Wayland session; ignored elsewhere), or
+  /// [pipewireStream], a stream another component opened. With neither, in
+  /// a Wayland session, the next capture opens the dialog. [start] calls
+  /// it; call it yourself before [startBroadcasting] or `enable`.
   ///
-  /// If a share is already running, switches it to [source] and [options].
+  /// Throws an [ArgumentError] for both at once, and [UnsupportedError] for
+  /// a [pipewireStream] off Linux.
+  void prepareShare({
+    SystemScreenPick? restore,
+    PipeWireScreenStream? pipewireStream,
+    ScreenShareOptions? options,
+  }) {
+    if (restore != null && pipewireStream != null) {
+      throw ArgumentError('Pass restore or pipewireStream, not both.');
+    }
+    if (pipewireStream != null && _media.platform != MediaPlatform.linux) {
+      throw UnsupportedError(
+        'PipeWire streams are shared on Linux only, not on '
+        '${_media.platform.name}.',
+      );
+    }
+    if (options != null) _wantedOptions = options;
+    if (pipewireStream != null) {
+      _wantedStream = pipewireStream;
+      _wantedPick = null;
+      _systemRequest++;
+    } else if (_desktopSystemPicker) {
+      _wantedStream = null;
+      _wantedPick = restore;
+      _systemRequest++;
+    }
+  }
+
+  /// Starts sharing [source] (desktop), or asks the browser to show its
+  /// picker (web), the system its consent dialog (Android), its broadcast
+  /// picker (iOS) or its ScreenCast dialog (Linux in a Wayland session);
+  /// there [source] must be `null` ([usesSystemPicker]).
+  ///
+  /// On Linux in a Wayland session, [restore] shares a [systemPick] again
+  /// with no dialog (an unknown or stale pick opens the dialog). On Linux,
+  /// [pipewireStream] shares a stream another component opened through the
+  /// portal, with no dialog ([PipeWireScreenStream] says who closes what).
+  /// See [prepareShare].
+  ///
+  /// If a share is already running, switches it to [source] and [options]
+  /// (in a Wayland session: to a new pick, [restore] or [pipewireStream]),
+  /// in place: the track changes, and a publication of this source stays
+  /// published.
   /// Returns whether the share is running afterwards (`false` too when the
   /// user cancels the picker or dialog, or on iOS doesn't start the
   /// broadcast within [ScreenShareOptions.broadcastStartTimeout]); failures
@@ -284,7 +388,12 @@ class ScreenShareSource extends LocalMediaSource {
   /// Throws an [ArgumentError] on desktop if no source was given or
   /// selected before, and [UnsupportedError] where screen share isn't
   /// available ([isSupported]).
-  Future<bool> start({ScreenSource? source, ScreenShareOptions? options}) {
+  Future<bool> start({
+    ScreenSource? source,
+    ScreenShareOptions? options,
+    SystemScreenPick? restore,
+    PipeWireScreenStream? pipewireStream,
+  }) {
     _checkSupported();
     if (source != null && usesSystemPicker) {
       throw ArgumentError.value(
@@ -294,8 +403,18 @@ class ScreenShareSource extends LocalMediaSource {
             '${_media.platform.name}; pass none.',
       );
     }
-    if (source != null) _selected = source;
-    if (options != null) _wantedOptions = options;
+    if (source != null && pipewireStream != null) {
+      throw ArgumentError('Pass a source or a pipewireStream, not both.');
+    }
+    if (source != null) {
+      _selected = source;
+      _wantedStream = null;
+    }
+    prepareShare(
+      restore: restore,
+      pipewireStream: pipewireStream,
+      options: options,
+    );
     return enable();
   }
 
@@ -306,7 +425,10 @@ class ScreenShareSource extends LocalMediaSource {
   @override
   Future<bool> enable() {
     _checkSupported();
-    if (!usesSystemPicker && _selected == null && !isDisposed) {
+    if (!usesSystemPicker &&
+        _selected == null &&
+        _wantedStream == null &&
+        !isDisposed) {
       throw ArgumentError(
         'Choose a ScreenSource first: start(source: ...) or select(...).',
       );
@@ -339,10 +461,16 @@ class ScreenShareSource extends LocalMediaSource {
       await _release(_endReason ?? ScreenShareEndReason.stopped);
       return;
     }
-    final wantedId = usesSystemPicker ? null : _selected?.id;
+    final pipewire = _wantedStream;
+    final systemPicked = pipewire == null && _desktopSystemPicker;
+    final wantedId = usesSystemPicker || pipewire != null
+        ? null
+        : _selected?.id;
+    final request = pipewire != null || systemPicked ? _systemRequest : null;
     if (track != null &&
         _capturedSourceId == wantedId &&
-        _capturedOptions == _wantedOptions) {
+        _capturedOptions == _wantedOptions &&
+        _capturedRequest == request) {
       return;
     }
     // Switching: release first. On Windows, stopping any desktop capturer
@@ -374,9 +502,26 @@ class ScreenShareSource extends LocalMediaSource {
             return;
           }
         }
-        stream = wantedId == null
-            ? await _media.getDisplayMedia(webScreenConstraints(_wantedOptions))
-            : await _captureDesktop(wantedId);
+        if (pipewire != null) {
+          stream = await _media.getDisplayMedia(
+            pipewireScreenConstraints(
+              _wantedOptions,
+              fd: pipewire.fd,
+              nodeId: pipewire.nodeId,
+            ),
+          );
+        } else if (systemPicked) {
+          // The ScreenCast dialog, or the pick to restore.
+          stream = await _media.getDisplayMedia(
+            desktopScreenConstraints(_wantedOptions, sourceId: _wantedPick?.id),
+          );
+        } else {
+          stream = wantedId == null
+              ? await _media.getDisplayMedia(
+                  webScreenConstraints(_wantedOptions),
+                )
+              : await _captureDesktop(wantedId);
+        }
       }
     } on ScreenSourceNotFoundException catch (error) {
       fail(error);
@@ -384,8 +529,9 @@ class ScreenShareSource extends LocalMediaSource {
     } catch (error) {
       _stopBroadcastEvents();
       await _stopService();
-      if (usesBrowserPicker && isPermissionError(error)) {
-        // The user closed the browser's picker: not an error.
+      if ((usesBrowserPicker || systemPicked) && isPermissionError(error)) {
+        // The user closed the browser's picker or the system's dialog: not
+        // an error.
         turnOff();
       } else if (isPermissionError(error)) {
         fail(
@@ -415,7 +561,20 @@ class ScreenShareSource extends LocalMediaSource {
     }
     _capturedSourceId = wantedId;
     _capturedOptions = _wantedOptions;
-    _systemBorderHidden = videoTracks.first.getSettings()['borderless'] == true;
+    _capturedRequest = request;
+    _capturedStream = pipewire;
+    final settings = videoTracks.first.getSettings();
+    _systemBorderHidden = settings['borderless'] == true;
+    if (systemPicked) {
+      // The restore ID: a capture again (unmuting, new options) shares the
+      // same pick with no dialog.
+      final id = settings['deviceId'];
+      _systemPick = id is String && id.isNotEmpty ? SystemScreenPick(id) : null;
+      _wantedPick = _systemPick;
+    }
+    if (pipewire != null && !_sourceGeometry.isClosed) {
+      _sourceGeometry.set(pipewire.geometry);
+    }
     _endReason = null;
     final audioTracks = stream.getAudioTracks();
     final video = CapturedTrack(track: videoTracks.first, stream: stream);
@@ -435,7 +594,12 @@ class ScreenShareSource extends LocalMediaSource {
   void _watchGeometry() {
     final capturer = _media.desktopCapturer;
     final source = _selected;
-    if (usesSystemPicker || capturer == null || source == null) return;
+    if (usesSystemPicker ||
+        _capturedStream != null ||
+        capturer == null ||
+        source == null) {
+      return;
+    }
     final generation = ++_geometryGeneration;
 
     Future<bool> read() async {
@@ -624,9 +788,12 @@ class ScreenShareSource extends LocalMediaSource {
   }
 
   Future<void> _watchForEnd(CapturedTrack video, String? sourceId) async {
+    // In a browser, and for Linux's portal shares, the end is the user's:
+    // the browser's "Stop sharing", the system's sharing indicator, or the
+    // remote-control session that owned the stream closing.
     video.track.onEnded = () => _endedExternally(
       video,
-      usesBrowserPicker
+      usesBrowserPicker || _desktopSystemPicker || _capturedStream != null
           ? ScreenShareEndReason.userStopped
           : ScreenShareEndReason.sourceClosed,
     );
@@ -780,6 +947,8 @@ class ScreenShareSource extends LocalMediaSource {
     }
     _capturedSourceId = null;
     _capturedOptions = null;
+    _capturedRequest = null;
+    _capturedStream = null;
     _systemBorderHidden = false;
     _audioTrack.set(null);
     setTrack(null);

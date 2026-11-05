@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import '../diagnostics/log.dart';
+import '../diagnostics/platform_info.dart';
 import '../util/native_negotiation.dart';
 import 'media_backend.dart';
 import 'media_types.dart';
@@ -98,9 +99,17 @@ class FlutterWebrtcMediaBackend implements MediaBackend {
   @override
   Stream<void> get deviceChanges => _DeviceChangeHub.stream;
 
+  /// `null` on the web, on phones, and on Linux in a Wayland session
+  /// (WebRTC's rule, [isWaylandSession]): there the system's ScreenCast
+  /// dialog picks what to share, and listing sources would only open it
+  /// (or hang), so `ScreenShareSource` goes straight to `getDisplayMedia`.
   @override
-  DesktopCapturerBackend? get desktopCapturer =>
-      platform.isDesktop ? const _FlutterWebrtcDesktopCapturer() : null;
+  DesktopCapturerBackend? get desktopCapturer {
+    final platform = this.platform;
+    if (!platform.isDesktop) return null;
+    if (platform == MediaPlatform.linux && runsInWaylandSession) return null;
+    return const _FlutterWebrtcDesktopCapturer();
+  }
 
   @override
   ScreenCaptureServiceBackend? get screenCaptureService =>

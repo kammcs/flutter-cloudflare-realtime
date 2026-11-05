@@ -30,6 +30,9 @@ migration:
     - platform: windows
       create_revision: e8113bf45620cbeb8aff64947ee4c93e16adb4cf
       base_revision: e8113bf45620cbeb8aff64947ee4c93e16adb4cf
+    - platform: linux
+      create_revision: 24de9caa6c48af1e6e80532006d631618ce838b8
+      base_revision: 24de9caa6c48af1e6e80532006d631618ce838b8
 
   # User provided section
 

@@ -16,10 +16,11 @@ publish_to: none
 
 # The platforms the package supports and has been verified on (README,
 # "Platforms"). The plugin has native code on Android and iOS only; macOS,
-# Windows and the web run the Dart code on flutter_webrtc.
+# Windows, Linux and the web run the Dart code on flutter_webrtc.
 platforms:
   android:
   ios:
+  linux:
   macos:
   web:
   windows:

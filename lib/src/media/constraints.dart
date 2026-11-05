@@ -319,17 +319,38 @@ Map<String, dynamic> microphoneConstraints(
 /// `getDisplayMedia` constraints for a desktop source, in the shape the
 /// `flutter_webrtc` desktop implementations read: `deviceId: {exact: id}`
 /// and a `mandatory.frameRate` double.
+///
+/// On Linux in a Wayland session, [sourceId] is a pick to restore
+/// (`SystemScreenPick.id`), or `null` for no `deviceId` at all, which opens
+/// the system's ScreenCast dialog.
 Map<String, dynamic> desktopScreenConstraints(
   ScreenShareOptions options, {
-  required String sourceId,
+  required String? sourceId,
 }) => {
   'audio': options.captureAudio,
   'video': {
-    'deviceId': {'exact': sourceId},
+    if (sourceId != null) 'deviceId': {'exact': sourceId},
     'mandatory': {'frameRate': options.frameRate.toDouble()},
     if (options.showCursor != null)
       'cursor': options.showCursor! ? 'always' : 'never',
     if (options.hideSystemBorder) 'borderless': true,
+  },
+};
+
+/// `getDisplayMedia` constraints for a PipeWire stream that is already open
+/// (Linux): `video.pipewireStream: {fd, nodeId}`, which `flutter_webrtc`
+/// captures with no dialog, plus the desktop's frame rate and cursor.
+Map<String, dynamic> pipewireScreenConstraints(
+  ScreenShareOptions options, {
+  required int fd,
+  required int nodeId,
+}) => {
+  'audio': options.captureAudio,
+  'video': {
+    'pipewireStream': {'fd': fd, 'nodeId': nodeId},
+    'mandatory': {'frameRate': options.frameRate.toDouble()},
+    if (options.showCursor != null)
+      'cursor': options.showCursor! ? 'always' : 'never',
   },
 };
 

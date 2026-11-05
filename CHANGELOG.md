@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter client for the Cloudflare Realtime SFU, on `flutter_webrtc`, for Android, iOS, macOS, Windows and the web.
+The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter client for the Cloudflare Realtime SFU, on `flutter_webrtc`, for Android, iOS, macOS, Windows, Linux and the web.
 
 - **Rooms** (`CloudflareRealtime.join`, `Room`, `LocalParticipant`, `RemoteParticipant`) on top of an app-provided `Signaling` interface, with `InMemorySignaling` (in `testing.dart`) for tests and demos. Participants are diffed, and only what is subscribed is pulled.
 - **Publishing** the camera, microphone and screen, with mute, camera switching that behaves the same on every platform, and device selection with fallback.
@@ -11,7 +11,7 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 - **Automatic reconnection:** the room replaces a failed or expired SFU session, republishes under the same names and pulls again, with backoff.
 - **Screen share** on desktops (a source picker), the web (the browser's picker), Android (MediaProjection under the package's foreground service) and iOS (a Broadcast Upload Extension from the package's templates).
 - **Calls on phones:** one audio-route API, a foreground service on Android, interruptions, the proximity sensor, and system calls through Android Telecom and CallKit/PushKit.
-- **The screen stays on during video calls** on Android, iOS, macOS, Windows and the web (`RoomOptions.keepScreenAwake`).
+- **The screen stays on during video calls** on Android, iOS, macOS, Windows, Linux and the web (`RoomOptions.keepScreenAwake`).
 - **DataChannels**, reliable and unreliable, that follow participants across sessions.
 - **The broker client** (`HttpBrokerClient`, in `broker.dart`) for the broker contract; reference brokers (a Cloudflare Worker and a Supabase Edge Function) live in the repository, not in the package.
 - **Safe logging:** the package's log lines and its exceptions' `toString()` carry an error's type and code, never its text; `CloudflareRealtime.logger` (a `CloudflareRealtimeLogger` receiving `CloudflareRealtimeLogRecord`s) sends them, with the full error, to the app's own logging.
@@ -24,6 +24,18 @@ The first public release, prepared for 0.1.0 (roadmap M8). An unofficial Flutter
 ### Development history
 
 Dev tags (`v0.1.0-dev.N`, [doc/versioning.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/versioning.md)) head the entries they added. Entries above the newest heading are not in a tag yet.
+
+#### v0.1.0-dev.3 (2026-11-05)
+
+Linux: the platform declared, the screen kept on, the platform in diagnostics, and the Wayland share through the system's dialog. No breaking API change. One behaviour change on Linux in a Wayland session: `FlutterWebrtcMediaBackend.desktopCapturer` is `null` there, so code that assumed a source list on every desktop must check `ScreenShareSource.usesSystemPicker` (or `desktopCapturer != null`).
+
+- **Linux** is a supported platform ([doc/linux.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/linux.md); `docs/design.md` §4.7, §10). It's declared in `pubspec.yaml`, and the example has a Linux runner that builds with the template's `-Wall -Werror`.
+  - **Keeping the screen on:** an idle inhibitor through GDBus (`dart:ffi`, no plugin code). The Inhibit portal goes first when it can name the app (a Flatpak, a Snap, or a host app launched under its application ID), else `org.freedesktop.ScreenSaver`, each falling back to the other. GNOME's portal backend refuses host apps without an application ID while the portal still answers.
+  - **Wayland screen share through the system's dialog:** in a Wayland session (libwebrtc's rule: `XDG_SESSION_TYPE=wayland` and `WAYLAND_DISPLAY` set), `FlutterWebrtcMediaBackend.desktopCapturer` is `null`. The package never lists sources there, `ScreenSourcePicker.isSupported` is `false`, and `ScreenShareSource.usesSystemPicker` is `true`. `start()` and `publishScreen()` without a source call `getDisplayMedia` with no `deviceId`, so the ScreenCast portal picks. A cancelled dialog isn't an error, and the stream ending ends the share as `userStopped`. This needs the `flutter_webrtc` fork's portal capture.
+  - **`SystemScreenPick`:** a pick from that dialog, from the video track's `settings.deviceId`. `LocalParticipant.lastSystemScreenPick` keeps the room's last one, and `publishScreen(restore:)` / `ScreenShareSource.start(restore:)` share it again with no dialog. Unmuting a share restores its pick by itself.
+  - **`PipeWireScreenStream`:** a stream another component opened (a remote-control session that combines RemoteDesktop and ScreenCast), shared with no dialog through `video.pipewireStream: {fd, nodeId}`, with its geometry in the compositor's logical coordinates (`ScreenShareSource.updatePipeWireGeometry`). On a running share, `start(pipewireStream:)` switches in place, without an unpublish.
+  - **`CloudflareRealtime.platformInfo`** (`RealtimePlatformInfo`, `LinuxPlatformInfo`): the OS and its version, and on Linux the display server (Wayland, XWayland or X11), the session type and the desktop, for support reports. It's logged once when the first room joins.
+  - `ScreenShareSource.start` gains `restore` and `pipewireStream`, `LocalParticipant.publishScreen` too, and `ScreenShareSource.prepareShare` sets them before `startBroadcasting`. `desktopScreenConstraints` takes a nullable `sourceId`. Code that implements `MediaBackend` is unchanged.
 
 #### v0.1.0-dev.2 (2026-10-11)
 

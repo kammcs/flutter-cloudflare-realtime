@@ -3,6 +3,7 @@ import '../broker/broker_config.dart';
 import '../broker/http_broker_client.dart';
 import '../diagnostics/log.dart';
 import '../diagnostics/platform_call_timing.dart';
+import '../diagnostics/platform_info.dart';
 import '../media/flutter_webrtc_media_backend.dart';
 import '../media/media_backend.dart';
 import '../reconnect/app_lifecycle_source.dart';
@@ -242,6 +243,15 @@ class CloudflareRealtime {
 
   static set debugLogFullErrors(bool value) => RealtimeLog.fullErrors = value;
 
+  /// What the package reads about the platform, for diagnostics and
+  /// support reports: the operating system and its version, and on Linux
+  /// the display server (Wayland, XWayland or X11), the session type and
+  /// the desktop ([LinuxPlatformInfo]). Read once and kept; logged at the
+  /// `info` level when the first room joins. It holds no identifiers.
+  static RealtimePlatformInfo get platformInfo => readPlatformInfo();
+
+  static bool _platformLogged = false;
+
   final BrokerClientFactory _createBrokerClient;
   final SfuSessionConnector _connectSession;
   final MediaStreamWrapper _wrapTrack;
@@ -277,6 +287,10 @@ class CloudflareRealtime {
         'participantId',
         'must not be empty',
       );
+    }
+    if (!_platformLogged) {
+      _platformLogged = true;
+      RealtimeLog.info('platform: ${platformInfo.describe()}');
     }
     final client = _createBrokerClient(broker, roomId);
     final SfuSession session;

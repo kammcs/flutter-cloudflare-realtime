@@ -554,6 +554,287 @@ void main() {
     });
   });
 
+  group('linux in a Wayland session (no source list)', () {
+    var picks = 0;
+
+    setUp(() {
+      picks = 0;
+      // No desktopCapturer: what the production backend answers on Wayland.
+      backend = FakeMediaBackend(platform: MediaPlatform.linux);
+      backend.onDisplayMedia = (constraints) async {
+        final video = constraints['video'] as Map;
+        final restored = (video['deviceId'] as Map?)?['exact'];
+        // The fork reports the pick's restore ID; a restore keeps the
+        // pick, a dialog makes a new one.
+        final id = restored ?? 'pick-${++picks}';
+        final stream = FakeStream([
+          FakeTrack(kind: 'video', settings: {'deviceId': id}),
+        ]);
+        backend.streams.add(stream);
+        return stream;
+      };
+    });
+
+    test('goes straight to the portal, with no deviceId', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(share.isSupported, isTrue);
+      expect(share.usesSystemPicker, isTrue);
+      expect(share.usesBrowserPicker, isFalse);
+      expect(() => share.start(source: screen1), throwsArgumentError);
+      expect(() => share.select(screen1), throwsUnsupportedError);
+
+      expect(await share.start(), isTrue);
+      expect(backend.displayMediaCalls.single, {
+        'audio': false,
+        'video': {
+          'mandatory': {'frameRate': 15.0},
+        },
+      });
+      expect(share.systemPick, const SystemScreenPick('pick-1'));
+      expect(share.sourceGeometry, isNull);
+      await share.dispose();
+    });
+
+    test('passes the cursor and audio options', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(
+        await share.start(
+          options: const ScreenShareOptions(
+            captureAudio: true,
+            showCursor: false,
+            frameRate: 30,
+          ),
+        ),
+        isTrue,
+      );
+      expect(backend.displayMediaCalls.single, {
+        'audio': true,
+        'video': {
+          'mandatory': {'frameRate': 30.0},
+          'cursor': 'never',
+        },
+      });
+      await share.dispose();
+    });
+
+    test('restore shares the same pick again with no dialog', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(await share.start(), isTrue);
+      final pick = share.systemPick!;
+      await share.stop();
+
+      expect(await share.start(restore: pick), isTrue);
+      final video = backend.displayMediaCalls.last['video'] as Map;
+      expect(video['deviceId'], {'exact': pick.id});
+      expect(share.systemPick, pick);
+      await share.dispose();
+    });
+
+    test('start() without restore opens the dialog again, even while '
+        'sharing, and switches in place', () async {
+      final share = ScreenShareSource(backend: backend);
+      final tracks = <CapturedTrack?>[];
+      share.trackChanges.listen(tracks.add);
+      expect(await share.start(), isTrue);
+      final first = videoOf(share);
+
+      expect(await share.start(), isTrue);
+      expect(backend.displayMediaCalls, hasLength(2));
+      expect(
+        (backend.displayMediaCalls.last['video'] as Map).containsKey(
+          'deviceId',
+        ),
+        isFalse,
+      );
+      expect(first.stopped, isTrue);
+      expect(share.systemPick, const SystemScreenPick('pick-2'));
+      expect(share.isEnabled, isTrue);
+      await share.dispose();
+    });
+
+    test('unmuting with releaseCapture restores the pick', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(await share.startBroadcasting(), isTrue);
+      await share.stopBroadcasting();
+      expect(share.track, isNull);
+
+      expect(await share.startBroadcasting(), isTrue);
+      final video = backend.displayMediaCalls.last['video'] as Map;
+      expect(video['deviceId'], {'exact': 'pick-1'});
+      await share.dispose();
+    });
+
+    test('cancelling the dialog is not an error', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      backend.onDisplayMedia = (constraints) async =>
+          throw 'Unable to '
+              'getDisplayMedia: NotAllowedError: Permission denied: the screen share '
+              'was cancelled';
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors, isEmpty);
+      expect(share.isEnabled, isFalse);
+      await share.dispose();
+    });
+
+    test('a portal or PipeWire failure is reported', () async {
+      final share = ScreenShareSource(backend: backend);
+      final errors = <MediaException>[];
+      share.errors.listen(errors.add);
+      backend.onDisplayMedia = (constraints) async =>
+          throw 'Unable to '
+              'getDisplayMedia: NotReadableError: no ScreenCast portal';
+
+      expect(await share.start(), isFalse);
+      await pumpEventQueue();
+      expect(errors.single, isA<MediaCaptureException>());
+      await share.dispose();
+    });
+
+    test(
+      'the system ending the stream ends the share as userStopped',
+      () async {
+        final share = ScreenShareSource(backend: backend);
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        await share.startBroadcasting();
+
+        videoOf(share).endExternally();
+        await pumpEventQueue();
+        expect(reasons, [ScreenShareEndReason.userStopped]);
+        expect(share.isEnabled, isFalse);
+        await share.dispose();
+      },
+    );
+  });
+
+  group('linux: a PipeWire stream from another component', () {
+    const geometry = ScreenGeometry(
+      bounds: Rect.fromLTWH(1920, 0, 1280, 720),
+      scaleFactor: 1,
+    );
+    const stream = PipeWireScreenStream(
+      fd: 42,
+      nodeId: 77,
+      geometry: geometry,
+      type: ScreenSourceType.screen,
+    );
+
+    setUp(() {
+      backend = FakeMediaBackend(platform: MediaPlatform.linux);
+    });
+
+    test('is captured from its fd and node, with its geometry', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(
+        await share.start(
+          pipewireStream: stream,
+          options: const ScreenShareOptions(showCursor: true),
+        ),
+        isTrue,
+      );
+      expect(backend.displayMediaCalls.single, {
+        'audio': false,
+        'video': {
+          'pipewireStream': {'fd': 42, 'nodeId': 77},
+          'mandatory': {'frameRate': 15.0},
+          'cursor': 'always',
+        },
+      });
+      // Logical coordinates, as given: not scaled.
+      expect(share.sourceGeometry, geometry);
+
+      const scaled = ScreenGeometry(
+        bounds: Rect.fromLTWH(1920, 0, 1280, 720),
+        scaleFactor: 2,
+      );
+      share.updatePipeWireGeometry(scaled);
+      expect(share.sourceGeometry, scaled);
+      await share.dispose();
+    });
+
+    test('a running portal share switches to it in place', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(await share.startBroadcasting(), isTrue);
+      final first = videoOf(share);
+      final broadcast = <CapturedTrack?>[];
+      share.broadcastTrackChanges.listen(broadcast.add);
+
+      expect(await share.start(pipewireStream: stream), isTrue);
+      expect(first.stopped, isTrue);
+      expect(share.isBroadcasting, isTrue);
+      expect(share.isEnabled, isTrue);
+      expect(
+        (backend.displayMediaCalls.last['video'] as Map)['pipewireStream'],
+        {'fd': 42, 'nodeId': 77},
+      );
+      // The sender saw the old track, a gap, then the new one.
+      expect(broadcast.last?.track, same(videoOf(share)));
+      await share.dispose();
+    });
+
+    test('also works with a source list (X11), and back', () async {
+      final desktop = FakeDesktopCapturer([screen1, window1]);
+      backend = FakeMediaBackend(
+        platform: MediaPlatform.linux,
+        desktop: desktop,
+      );
+      final share = ScreenShareSource(backend: backend);
+      expect(share.usesSystemPicker, isFalse);
+      expect(await share.start(pipewireStream: stream), isTrue);
+      expect(share.sourceGeometry, geometry);
+
+      expect(await share.start(source: window1), isTrue);
+      final video = backend.displayMediaCalls.last['video'] as Map;
+      expect(video['deviceId'], {'exact': window1.id});
+      await share.dispose();
+    });
+
+    test('is Linux only, and not with a restore or a source', () async {
+      final share = ScreenShareSource(backend: backend);
+      expect(
+        () => share.start(
+          pipewireStream: stream,
+          restore: const SystemScreenPick('x'),
+        ),
+        throwsArgumentError,
+      );
+      await share.dispose();
+
+      final windows = ScreenShareSource(
+        backend: FakeMediaBackend(desktop: FakeDesktopCapturer([screen1])),
+      );
+      expect(
+        () => windows.start(pipewireStream: stream),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => windows.start(source: screen1, pipewireStream: stream),
+        throwsArgumentError,
+      );
+      await windows.dispose();
+    });
+
+    test(
+      'the owner closing the session ends the share as userStopped',
+      () async {
+        final share = ScreenShareSource(backend: backend);
+        final reasons = <ScreenShareEndReason>[];
+        share.ended.listen(reasons.add);
+        await share.start(pipewireStream: stream);
+
+        videoOf(share).endExternally();
+        await pumpEventQueue();
+        expect(reasons, [ScreenShareEndReason.userStopped]);
+        expect(share.sourceGeometry, isNull);
+        await share.dispose();
+      },
+    );
+  });
+
   group('web', () {
     setUp(() {
       backend = FakeMediaBackend(platform: MediaPlatform.web);

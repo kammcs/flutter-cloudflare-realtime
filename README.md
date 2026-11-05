@@ -1,6 +1,6 @@
 # cloudflare_realtime
 
-An **unofficial** Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/), built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc). One Dart API for calls, video conferences and screen sharing on Android, iOS, macOS, Windows and the web.
+An **unofficial** Flutter client for the [Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/), built on [`flutter_webrtc`](https://pub.dev/packages/flutter_webrtc). One Dart API for calls, video conferences and screen sharing on Android, iOS, macOS, Windows, Linux and the web.
 
 > **Unofficial.** This project isn't affiliated with, endorsed by or supported by Cloudflare. "Cloudflare" is a trademark of Cloudflare, Inc.
 
@@ -24,17 +24,17 @@ It doesn't include a signaling server, push delivery or a meeting UI: your app b
 
 ## Platforms
 
-| | Android | iOS | macOS | Windows | Web |
-|---|---|---|---|---|---|
-| Camera and microphone calls, simulcast | Yes | Yes | Yes | Yes | Yes |
-| Screen share | Yes (no audio) | Yes, with a Broadcast Upload Extension in your app (no audio) | Yes (no audio) | Yes, with system audio | Yes, the browser's picker (tab audio) |
-| Calls in the background | Yes (foreground service) | Audio yes; the camera pauses | n/a | n/a | n/a |
-| Audio routes (speaker, earpiece, headsets) | Yes | Yes | Output device | Output device | Output device where the browser allows |
-| System calls | Telecom | CallKit, PushKit | In Dart only | In Dart only | In Dart only |
-| Verified against the real SFU | Pixel 10 (Android 16), emulator (API 34) | iPhone (iOS 27) | MacBook Pro (macOS 27) | Windows 11 | Chrome, Firefox, Safari (JS and Wasm) |
+| | Android | iOS | macOS | Windows | Linux | Web |
+|---|---|---|---|---|---|---|
+| Camera and microphone calls, simulcast | Yes | Yes | Yes | Yes | Yes | Yes |
+| Screen share | Yes (no audio) | Yes, with a Broadcast Upload Extension in your app (no audio) | Yes (no audio) | Yes, with system audio | X11: a source picker; Wayland: the system's dialog, with the `flutter_webrtc` fork (system audio through PulseAudio) | Yes, the browser's picker (tab audio) |
+| Calls in the background | Yes (foreground service) | Audio yes; the camera pauses | n/a | n/a | n/a | n/a |
+| Audio routes (speaker, earpiece, headsets) | Yes | Yes | Output device | Output device | Output device | Output device where the browser allows |
+| System calls | Telecom | CallKit, PushKit | In Dart only | In Dart only | In Dart only | In Dart only |
+| Verified against the real SFU | Pixel 10 (Android 16), emulator (API 34) | iPhone (iOS 27) | MacBook Pro (macOS 27) | Windows 11 | Not yet (built and unit-tested on Ubuntu 24.04, GNOME 46) | Chrome, Firefox, Safari (JS and Wasm) |
 
 - **Minimums:** Flutter 3.41 (Dart 3.11); Android 7.0 (API 24); iOS 15; macOS 10.15.
-- **Not verified yet:** VoIP pushes through APNs (CallKit is verified on an iPhone, by test and by hand), wired headsets and headset buttons on the phones (AirPods are verified on both), and screen share and speaker choice in Safari (both need a user gesture, which the tests can't give). Linux isn't supported.
+- **Not verified yet:** VoIP pushes through APNs (CallKit is verified on an iPhone, by test and by hand), wired headsets and headset buttons on the phones (AirPods are verified on both), screen share and speaker choice in Safari (both need a user gesture, which the tests can't give), and on Linux calls against the real SFU and the Wayland share (keeping the screen on is verified on GNOME 46).
 - "In Dart only" means the `SystemCalls` API works and emits the same events, without a system call UI.
 
 ## How it fits together
@@ -181,6 +181,7 @@ Presence data is only as trustworthy as your transport: the broker, not signalin
 | iOS | [doc/ios.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/ios.md) | Camera and microphone usage descriptions; the `audio` background mode (plus `voip` for CallKit and VoIP pushes); a Broadcast Upload Extension target, from the package's templates, for screen sharing, with an App Group and the same signing team on both targets. |
 | macOS | [doc/macos.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/macos.md) | The camera, audio-input and network-client entitlements, the usage descriptions, and the user's Screen Recording permission for sharing. |
 | Windows | [doc/windows.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/windows.md) | Visual Studio 2022 17.14+ with the C++ ATL component. Nothing to declare. |
+| Linux | [doc/linux.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/linux.md) | The Flutter Linux toolchain and `libpulse-dev`. On Wayland, one "Share screen" button: the system's dialog picks (`ScreenShareSource.usesSystemPicker`), and `lastSystemScreenPick` shares the same again with no dialog. Name the `.desktop` file after your application ID, so the Inhibit portal can keep the screen on. |
 | Web | [doc/web.md](https://github.com/kammcs/flutter-cloudflare-realtime/blob/main/doc/web.md) | HTTPS, your web origins in the broker's CORS list, and a "tap to enable audio" button for the autoplay policy (`Room.isAudioPlaybackBlocked`, `Room.startAudio()`). |
 
 ## Testing your app

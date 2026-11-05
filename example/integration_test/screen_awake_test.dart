@@ -15,6 +15,13 @@
 //   (ES_DISPLAY_REQUIRED while held) and the system's
 //   (CallNtPowerInformation, which `powercfg /requests` details from an
 //   elevated prompt).
+// - Linux on GNOME: the test reads gnome-session's InhibitedActions, whose
+//   idle bit (8) must be set while held (another app may set it too, so a
+//   release is logged, not asserted). In a Wayland session the video is a
+//   share picked in the system's ScreenCast dialog: pick a screen. Run the
+//   app under an application ID (see test/screen_awake/
+//   linux_screen_awake_live_test.dart) to exercise the portal; from a
+//   terminal the package goes through org.freedesktop.ScreenSaver.
 // - Elsewhere it checks Room.keepingScreenAwake only.
 //
 // Skipped unless CF_REALTIME_BROKER_URL is set (see broker_settings.dart).
@@ -27,6 +34,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
 import 'broker_settings.dart';
+import 'support/linux_idle.dart';
 import 'support/windows_power.dart';
 
 const _timeout = Duration(seconds: 30);
@@ -55,6 +63,16 @@ int? _windowsState(String when) {
   return state.thread;
 }
 
+/// Logs gnome-session's inhibited actions and returns them, or `null` off
+/// GNOME.
+Future<int?> _linuxIdle(String when) async {
+  final actions = await readGnomeInhibitedActions();
+  if (actions != null) _log('$when: gnome-session inhibits $actions');
+  return actions;
+}
+
+const _gnomeIdle = 8;
+
 final _desktop =
     !kIsWeb &&
     (defaultTargetPlatform == TargetPlatform.windows ||
@@ -68,9 +86,13 @@ Future<LocalMediaPublication> _publishVideo(Room room) async {
       options: const CameraOptions(preset: VideoPreset.h360),
     );
   }
-  final sources = await FlutterWebrtcMediaBackend().desktopCapturer!.getSources(
-    types: {ScreenSourceType.screen},
-  );
+  final capturer = FlutterWebrtcMediaBackend().desktopCapturer;
+  if (capturer == null) {
+    // Linux in a Wayland session: pick a screen in the system's dialog.
+    _log('sharing through the ScreenCast dialog: pick a screen');
+    return room.localParticipant.publishScreen();
+  }
+  final sources = await capturer.getSources(types: {ScreenSourceType.screen});
   _log('sharing the first of ${sources.length} screens');
   return room.localParticipant.publishScreen(source: sources.first);
 }
@@ -108,6 +130,7 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 1));
       expect(room.isKeepingScreenAwake, isFalse, reason: 'a voice call');
       final voice = _windowsState('voice call');
+      await _linuxIdle('voice call');
       if (voice != null) expect(voice & _esDisplayRequired, 0);
       await _check('voice call: expect no KEEP_SCREEN_ON');
 
@@ -122,6 +145,8 @@ void main() {
           expect(video & _esContinuous, _esContinuous);
           expect(video & _esDisplayRequired, _esDisplayRequired);
         }
+        final idle = await _linuxIdle('video call');
+        if (idle != null) expect(idle & _gnomeIdle, _gnomeIdle);
         await _check('video call: expect KEEP_SCREEN_ON');
         await Future<void>.delayed(_holdFor);
         expect(room.isKeepingScreenAwake, isTrue);
@@ -137,6 +162,7 @@ void main() {
           .firstWhere((held) => !held)
           .timeout(_timeout);
       final muted = _windowsState('video muted');
+      await _linuxIdle('video muted');
       if (muted != null) expect(muted & _esDisplayRequired, 0);
       await _check('video muted: expect no KEEP_SCREEN_ON');
 
@@ -151,6 +177,7 @@ void main() {
       await room.leave();
       expect(room.isKeepingScreenAwake, isFalse);
       final left = _windowsState('left');
+      await _linuxIdle('left');
       if (left != null) expect(left & _esDisplayRequired, 0);
       await _check('left: expect no KEEP_SCREEN_ON');
     },
