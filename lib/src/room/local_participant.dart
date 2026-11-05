@@ -44,6 +44,27 @@ class LocalParticipant implements Participant {
   /// The published screen share, if any.
   LocalMediaPublication? get screen => _first(TrackSource.screen);
 
+  SystemScreenPick? _lastScreenPick;
+
+  /// The last screen or window picked in the system's ScreenCast dialog in
+  /// this room (Linux in a Wayland session): the running share's, or the
+  /// last one's. `null` before the first, and on other platforms.
+  ///
+  /// Pass it to [publishScreen] as `restore` to share the same thing again
+  /// with no dialog, for "share it again"; publish without it for "share
+  /// something else". It lasts as long as the room.
+  SystemScreenPick? get lastSystemScreenPick {
+    if (screen case final screen?) _keepScreenPick(screen);
+    return _lastScreenPick;
+  }
+
+  void _keepScreenPick(LocalMediaPublication publication) {
+    final source = publication.mediaSource;
+    if (source is ScreenShareSource) {
+      _lastScreenPick = source.systemPick ?? _lastScreenPick;
+    }
+  }
+
   /// The published screen-share audio, if any.
   LocalMediaPublication? get screenAudio => _first(TrackSource.screenAudio);
 
@@ -300,6 +321,8 @@ class LocalParticipant implements Participant {
     ScreenShareOptions options = const ScreenShareOptions(),
     List<SendEncoding>? encodings,
     VideoCodec? codec,
+    SystemScreenPick? restore,
+    PipeWireScreenStream? pipewireStream,
   }) async {
     _room._checkNotLeft();
     final share = ScreenShareSource(
@@ -308,6 +331,7 @@ class LocalParticipant implements Participant {
     );
     await _startCapture(share, () async {
       if (source != null) await share.select(source);
+      share.prepareShare(restore: restore, pipewireStream: pipewireStream);
       return share.startBroadcasting();
     });
     // A share that ends while it is being pushed is unpublished right after.
@@ -405,6 +429,7 @@ class LocalParticipant implements Participant {
     if (publication._unpublished || !_publications.contains(publication)) {
       return;
     }
+    _keepScreenPick(publication);
     final closing = [
       publication,
       if (publication._companion case final companion?

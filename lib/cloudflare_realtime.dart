@@ -138,6 +138,8 @@ export 'src/media/screen_share_source.dart'
     show ScreenShareEndReason, ScreenShareSource;
 export 'src/media/screen_source_picker.dart'
     show ScreenPickerState, ScreenSourcePicker;
+export 'src/media/system_screen_pick.dart'
+    show PipeWireScreenStream, SystemScreenPick;
 
 // Signaling (design.md §4.4). InMemorySignaling is in testing.dart.
 export 'src/signaling/participant_state.dart'

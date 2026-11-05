@@ -20,6 +20,11 @@
 // red status-bar indicator or Control Center), which must unpublish it
 // with ScreenShareEndReason.userStopped.
 //
+// On Linux in a Wayland session the system's ScreenCast dialog is the
+// picker: pick a screen or window and press Share within 2 minutes of the
+// "sharing" line. A second share then restores the pick with no dialog
+// (SystemScreenPick), so it must start without a click.
+//
 // In a browser it runs only with CF_REALTIME_SCREEN_SHARE_WEB=true, as
 // the browser's picker needs a person unless the browser accepts it by
 // itself: Chrome with --use-fake-ui-for-media-stream (and
@@ -28,8 +33,8 @@
 // command lines.
 //
 // Skipped unless CF_REALTIME_BROKER_URL is set (see broker_settings.dart),
-// and on desktops, where the app picks the source. The test never prints
-// the settings.
+// and on desktops that list sources, where the app picks the source. The
+// test never prints the settings.
 
 import 'package:cloudflare_realtime/cloudflare_realtime.dart';
 import 'package:cloudflare_realtime/testing.dart';
@@ -61,6 +66,11 @@ void main() {
   final settings = BrokerSettings.read();
   final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   final ios = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  // Linux in a Wayland session: no source list, the portal picks.
+  final wayland =
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.linux &&
+      const FlutterWebrtcMediaBackend().desktopCapturer == null;
   // On iOS the broadcast picker waits for a person: give them as long as
   // the test waits.
   const shareOptions = ScreenShareOptions(
@@ -145,6 +155,21 @@ void main() {
 
       if (_web) await _webScreenAudio(alice, bob);
 
+      if (wayland) {
+        // The same pick again, restored with no dialog: it must start well
+        // before anyone could answer one.
+        final pick = alice.localParticipant.lastSystemScreenPick;
+        expect(pick, isNotNull, reason: 'the fork reports a restore ID');
+        final again = Stopwatch()..start();
+        final restored = await alice.localParticipant
+            .publishScreen(options: shareOptions, restore: pick)
+            .timeout(const Duration(seconds: 10));
+        await restored.publication.whenSending().timeout(_timeout);
+        _log('restored with no dialog in ${again.elapsedMilliseconds} ms');
+        await _outboundRising(alice, 'Alice sends the restored pick');
+        await restored.unpublish();
+      }
+
       if (!_externalStop) return;
 
       // Second share: stopped outside the app.
@@ -169,7 +194,7 @@ void main() {
       expect(alice.localParticipant.screen, isNull);
       _log('stopped outside the app: ${ended.endReason!.name}');
     },
-    skip: settings.skip || !(android || ios || _web),
+    skip: settings.skip || !(android || ios || wayland || _web),
     timeout: const Timeout(Duration(minutes: 8)),
   );
 }

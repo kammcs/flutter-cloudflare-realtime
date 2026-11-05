@@ -275,6 +275,102 @@ void main() {
     );
   });
 
+  group('linux in a Wayland session', () {
+    var picks = 0;
+
+    setUp(() {
+      picks = 0;
+      // No desktopCapturer, as on Wayland: the portal picks.
+      media = FakeMediaBackend(
+        platform: MediaPlatform.linux,
+        devices: [cam1, mic1],
+      );
+      media.onDisplayMedia = (constraints) async {
+        final video = constraints['video'] as Map;
+        final id = (video['deviceId'] as Map?)?['exact'] ?? 'pick-${++picks}';
+        final stream = FakeStream([
+          FakeTrack(kind: 'video', settings: {'deviceId': id}),
+        ]);
+        media.streams.add(stream);
+        return stream;
+      };
+      h = RoomHarness(media: media);
+    });
+
+    test('publishScreen without a source opens the dialog; the room keeps '
+        'the pick for "share it again"', () async {
+      final alice = await h.join('alice');
+      expect(alice.localParticipant.lastSystemScreenPick, isNull);
+      final first = await alice.localParticipant.publishScreen();
+      expect(
+        (media.displayMediaCalls.single['video'] as Map).containsKey(
+          'deviceId',
+        ),
+        isFalse,
+      );
+      expect(
+        alice.localParticipant.lastSystemScreenPick,
+        const SystemScreenPick('pick-1'),
+      );
+      await first.unpublish();
+      expect(
+        alice.localParticipant.lastSystemScreenPick,
+        const SystemScreenPick('pick-1'),
+      );
+
+      // Share it again: no dialog.
+      await alice.localParticipant.publishScreen(
+        restore: alice.localParticipant.lastSystemScreenPick,
+      );
+      expect((media.displayMediaCalls.last['video'] as Map)['deviceId'], {
+        'exact': 'pick-1',
+      });
+      await alice.leave();
+    });
+
+    test(
+      'a cancelled dialog fails publishScreen and publishes nothing',
+      () async {
+        final alice = await h.join('alice');
+        media.onDisplayMedia = (constraints) async =>
+            throw 'Unable to '
+                'getDisplayMedia: NotAllowedError: Permission denied: the screen share '
+                'was cancelled';
+        await expectLater(
+          alice.localParticipant.publishScreen(),
+          throwsA(isA<MediaException>()),
+        );
+        expect(alice.localParticipant.screen, isNull);
+        await alice.leave();
+      },
+    );
+
+    test('a running share switches to a PipeWire stream without an '
+        'unpublish', () async {
+      final alice = await h.join('alice');
+      final events = _record(alice);
+      final share = await alice.localParticipant.publishScreen();
+      final source = share.mediaSource as ScreenShareSource;
+      final before = h.announced('alice')!.tracks.keys.single;
+
+      expect(
+        await source.start(
+          pipewireStream: const PipeWireScreenStream(fd: 9, nodeId: 51),
+        ),
+        isTrue,
+      );
+      await _settle();
+      expect(share.isPublished, isTrue);
+      expect(events.whereType<LocalTrackUnpublishedEvent>(), isEmpty);
+      expect(h.announced('alice')!.tracks.keys.single, before);
+      expect(
+        h.pcOf(alice).transceivers.single.sentTrack,
+        same(source.track!.track),
+      );
+      await alice.leave();
+    });
+  });
+
   group('no-frames watchdog', () {
     /// Runs [body] on fake time with Alice sharing her screen.
     void run(

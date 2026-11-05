@@ -31,6 +31,7 @@ import '../media/media_device_list.dart';
 import '../media/media_errors.dart';
 import '../media/media_types.dart';
 import '../media/screen_share_source.dart';
+import '../media/system_screen_pick.dart';
 import '../quality/active_speaker_config.dart';
 import '../quality/active_speaker_monitor.dart';
 import '../quality/call_stats.dart';

@@ -1,7 +1,6 @@
 import 'dart:convert' show LineSplitter, utf8;
 import 'dart:ffi';
 import 'dart:io' show File, Platform;
-import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 
@@ -83,7 +82,10 @@ String? appIdFromSystemdUnit(String unit) {
 ///
 /// Both are D-Bus calls through GLib's GDBus (`libgio-2.0`, which every
 /// Flutter Linux app links through GTK), with `dart:ffi` and no plugin code.
-/// The calls run on a short-lived isolate, so a slow bus never blocks the UI.
+/// The calls are synchronous on the calling isolate, as the Windows and
+/// macOS backends' are (a call to a running service answers in a few
+/// milliseconds), and give up after 2 s. On a helper isolate they would
+/// leave work that fake-time widget tests can't finish.
 /// The inhibitor belongs to the process's shared session-bus connection, so
 /// it ends with the process even if it isn't released. On GNOME,
 /// `busctl --user call org.gnome.SessionManager /org/gnome/SessionManager
@@ -104,29 +106,23 @@ class LinuxScreenAwakeBackend implements ScreenAwakeBackend {
 
   _Hold? _hold;
 
-  // One change at a time, in order.
-  Future<bool> _last = Future.value(false);
-
   /// Which inhibitor holds the screen on now, or `null` while none does.
   LinuxInhibitor? get activeInhibitor => _hold?.kind;
 
   @override
   bool get supported => true;
 
+  // The calls are synchronous, so changes can't interleave.
   @override
-  Future<bool> setKeepAwake(bool on) {
-    final next = _last.then((_) => on ? _take() : _letGo());
-    _last = next.then((held) => held, onError: (Object _) => false);
-    return next;
-  }
+  Future<bool> setKeepAwake(bool on) async => on ? _take() : _letGo();
 
-  Future<bool> _take() async {
+  bool _take() {
     if (_hold != null) return true;
     for (final kind in inhibitors) {
       final _InhibitResult result;
       try {
         final portalBus = portalBusName;
-        result = await Isolate.run(() => _inhibit(kind, portalBus));
+        result = _inhibit(kind, portalBus);
       } catch (error) {
         RealtimeLog.warning('screen awake: ${kind.name} failed', error: error);
         continue;
@@ -142,16 +138,14 @@ class LinuxScreenAwakeBackend implements ScreenAwakeBackend {
     return false;
   }
 
-  Future<bool> _letGo() async {
+  bool _letGo() {
     final hold = _hold;
     _hold = null;
     if (hold == null) return false;
     String? error;
     final portalBus = portalBusName;
     try {
-      error = await Isolate.run(
-        () => _uninhibit(hold.kind, hold.handle, hold.cookie, portalBus),
-      );
+      error = _uninhibit(hold.kind, hold.handle, hold.cookie, portalBus);
     } catch (e) {
       error = '$e';
     }
@@ -202,7 +196,6 @@ const _screenSaverBus = 'org.freedesktop.ScreenSaver';
 const _screenSaverPath = '/org/freedesktop/ScreenSaver';
 const _screenSaverInterface = 'org.freedesktop.ScreenSaver';
 
-// Runs on a helper isolate.
 _InhibitResult _inhibit(LinuxInhibitor kind, String portalBus) {
   final GDBus bus;
   try {
@@ -244,7 +237,7 @@ _InhibitResult _inhibit(LinuxInhibitor kind, String portalBus) {
   });
 }
 
-// Runs on a helper isolate. Returns the error, or null.
+// Returns the error, or null.
 String? _uninhibit(
   LinuxInhibitor kind,
   String handle,
@@ -352,7 +345,7 @@ final class _GError extends Struct {
 }
 
 const _gBusTypeSession = 2;
-const _callTimeoutMs = 5000;
+const _callTimeoutMs = 2000;
 
 /// A D-Bus reply: the value, or the error's message.
 final class GDBusReply {
@@ -367,8 +360,7 @@ final class GDBusReply {
 
 /// Synchronous calls on the session bus through GDBus (`libgio-2.0`), with
 /// `GVariant` built from its typed constructors (no varargs). Internal: used
-/// by [LinuxScreenAwakeBackend] and the Linux diagnostics, from helper
-/// isolates.
+/// by [LinuxScreenAwakeBackend].
 final class GDBus {
   GDBus._(DynamicLibrary gio, DynamicLibrary libc)
     : _busGetSync = gio.lookupFunction<_GBusGetSyncNative, _GBusGetSync>(
@@ -499,7 +491,7 @@ final class GDBus {
     }
   }
 
-  /// Calls [method] and waits for the reply, at most 5 s. [parameters] is
+  /// Calls [method] and waits for the reply, at most 2 s. [parameters] is
   /// a floating tuple, consumed by the call. A [replyType] that doesn't
   /// match the reply is an error.
   GDBusReply call(

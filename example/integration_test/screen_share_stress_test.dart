@@ -278,7 +278,11 @@ void main() {
       }
       _log('stalls: $stalls');
     },
-    skip: settings.skip || !_desktop,
+    // Not on Linux in a Wayland session, which has no source list.
+    skip:
+        settings.skip ||
+        !_desktop ||
+        const FlutterWebrtcMediaBackend().desktopCapturer == null,
     timeout: const Timeout(Duration(minutes: 30)),
   );
 }
