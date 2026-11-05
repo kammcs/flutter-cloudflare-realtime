@@ -4,15 +4,17 @@ import 'dart:io' show Platform;
 
 import '../diagnostics/log.dart';
 import 'screen_awake_backend.dart';
+import 'screen_awake_linux.dart';
 
 /// The backend for this platform: the plugin on Android and iOS,
-/// `dart:ffi` on Windows and macOS, nothing on Linux.
+/// `dart:ffi` on Windows, macOS and Linux.
 ScreenAwakeBackend createPlatformScreenAwakeBackend() {
   if (Platform.isAndroid || Platform.isIOS) {
     return const MethodChannelScreenAwakeBackend();
   }
   if (Platform.isWindows) return WindowsScreenAwakeBackend();
   if (Platform.isMacOS) return MacOSScreenAwakeBackend();
+  if (Platform.isLinux) return LinuxScreenAwakeBackend();
   return const UnsupportedScreenAwakeBackend();
 }
 

@@ -17,7 +17,9 @@ import 'screen_awake_platform.dart';
 ///   (`dart:ffi`, kernel32), on the root isolate's thread.
 /// - **Web:** the Screen Wake Lock API, taken again when the tab becomes
 ///   visible (the browser releases it when the tab is hidden).
-/// - **Linux:** not supported.
+/// - **Linux:** an idle inhibitor through the Inhibit portal
+///   (`org.freedesktop.portal.Inhibit`), with `org.freedesktop.ScreenSaver`
+///   as the fallback where no portal answers (`dart:ffi`, GDBus).
 ///
 /// Internal.
 abstract interface class ScreenAwakeBackend {
@@ -47,7 +49,7 @@ ScreenAwakeBackendFactory? debugScreenAwakeBackendFactory;
 ScreenAwakeBackend createScreenAwakeBackend() =>
     (debugScreenAwakeBackendFactory ?? createPlatformScreenAwakeBackend)();
 
-/// Platforms that can't keep the screen on (Linux): does nothing.
+/// Platforms that can't keep the screen on (Fuchsia): does nothing.
 class UnsupportedScreenAwakeBackend implements ScreenAwakeBackend {
   /// Creates the backend.
   const UnsupportedScreenAwakeBackend();
